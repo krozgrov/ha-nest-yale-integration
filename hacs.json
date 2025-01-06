@@ -1,0 +1,7 @@
+{
+    "name": "Nest Yale",
+    "domains": ["lock"],
+    "render_readme": true,
+    "homeassistant": "2024.1.0",
+    "hacs": "1.0.0"
+}

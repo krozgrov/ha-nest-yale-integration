@@ -1,0 +1,12 @@
+{
+    "domain": "Nest Yale",
+    "name": "Nest Yale",
+    "codeowners": ["@krozgrov"],
+    "config_flow": true,
+    "dependencies": [],
+    "documentation": "https://github.com/krozgrov/ha-nest-yale-integration/blob/main/README.md",
+    "iot_class": "cloud_polling",
+    "issue_tracker": "https://github.com/krozgrov/ha-nest-yale-integration/issues",
+    "requirements": [],
+    "version": "2025.1.0"
+  }

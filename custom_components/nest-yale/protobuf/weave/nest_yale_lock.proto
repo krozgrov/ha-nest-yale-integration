@@ -1,0 +1,151 @@
+syntax = "proto3";
+
+package weave.trait.security;
+
+// Import common dependencies
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "../../weave/common.proto";
+
+// BoltLockTrait defines the main lock functionalities
+message BoltLockTrait {
+    // Current state of the bolt
+    BoltState state = 1;
+
+    // State of the bolt actuator (e.g., locking, unlocking)
+    BoltActuatorState actuatorState = 2;
+
+    // State of whether the lock is locked or unlocked
+    BoltLockedState lockedState = 3;
+
+    // Metadata about the lock command actor
+    BoltLockActorStruct boltLockActor = 4;
+
+    // Timestamp for when the lock state was last changed
+    google.protobuf.Timestamp lockedStateLastChangedAt = 5;
+
+    // Enumeration for bolt states (locked or unlocked)
+    enum BoltState {
+        BOLT_STATE_UNSPECIFIED = 0;
+        BOLT_STATE_RETRACTED = 1;  // Unlocked
+        BOLT_STATE_EXTENDED = 2;  // Locked
+    }
+
+    // Enumeration for bolt actuator states
+    enum BoltActuatorState {
+        BOLT_ACTUATOR_STATE_UNSPECIFIED = 0;
+        BOLT_ACTUATOR_STATE_OK = 1;
+        BOLT_ACTUATOR_STATE_LOCKING = 2;
+        BOLT_ACTUATOR_STATE_UNLOCKING = 3;
+        BOLT_ACTUATOR_STATE_MOVING = 4;
+        BOLT_ACTUATOR_STATE_JAMMED_LOCKING = 5;
+        BOLT_ACTUATOR_STATE_JAMMED_UNLOCKING = 6;
+        BOLT_ACTUATOR_STATE_JAMMED_OTHER = 7;
+    }
+
+    // Enumeration for locked states
+    enum BoltLockedState {
+        BOLT_LOCKED_STATE_UNSPECIFIED = 0;
+        BOLT_LOCKED_STATE_UNLOCKED = 1;
+        BOLT_LOCKED_STATE_LOCKED = 2;
+        BOLT_LOCKED_STATE_UNKNOWN = 3;
+    }
+
+    // Structure for bolt lock actor details
+    message BoltLockActorStruct {
+        BoltLockActorMethod method = 1;
+        weave.common.ResourceId originator = 2;  // Who triggered the lock command
+        weave.common.ResourceId agent = 3;      // Optional agent metadata
+    }
+
+    // Enumeration for actor methods
+    enum BoltLockActorMethod {
+        BOLT_LOCK_ACTOR_METHOD_UNSPECIFIED = 0;
+        BOLT_LOCK_ACTOR_METHOD_OTHER = 1;
+        BOLT_LOCK_ACTOR_METHOD_PHYSICAL = 2;
+        BOLT_LOCK_ACTOR_METHOD_KEYPAD_PIN = 3;
+        BOLT_LOCK_ACTOR_METHOD_LOCAL_IMPLICIT = 4;
+        BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_EXPLICIT = 5;
+        BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_IMPLICIT = 6;
+        BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_OTHER = 7;
+        BOLT_LOCK_ACTOR_METHOD_REMOTE_DELEGATE = 8;
+        BOLT_LOCK_ACTOR_METHOD_LOW_POWER_SHUTDOWN = 9;
+        BOLT_LOCK_ACTOR_METHOD_VOICE_ASSISTANT = 10;
+    }
+
+    // Request to change the bolt state (lock/unlock)
+    message BoltLockChangeRequest {
+        BoltState state = 1;  // Desired state (locked/unlocked)
+        BoltLockActorStruct boltLockActor = 4;  // Actor initiating the command
+    }
+
+    // Event for actuator state changes
+    message BoltActuatorStateChangeEvent {
+        BoltState state = 1;
+        BoltActuatorState actuatorState = 2;
+        BoltLockedState lockedState = 3;
+        BoltLockActorStruct boltLockActor = 4;
+    }
+}
+
+// UserPincodesTrait handles user pincode management
+message UserPincodesTrait {
+    map<uint32, UserPincode> userPincodes = 1;
+
+    // Represents an individual user pincode
+    message UserPincode {
+        weave.common.ResourceId userId = 1;
+        bytes pincode = 2;
+        google.protobuf.BoolValue pincodeCredentialEnabled = 3;
+    }
+
+    // Request to set a user pincode
+    message SetUserPincodeRequest {
+        UserPincode userPincode = 1;
+    }
+
+    // Response for setting a user pincode
+    message SetUserPincodeResponse {
+        PincodeErrorCodes status = 1;
+    }
+
+    // Enumeration for pincode error codes
+    enum PincodeErrorCodes {
+        PINCODE_ERROR_CODES_UNSPECIFIED = 0;
+        PINCODE_ERROR_CODES_DUPLICATE_PINCODE = 1;
+        PINCODE_ERROR_CODES_TOO_MANY_PINCODES = 2;
+        PINCODE_ERROR_CODES_INVALID_PINCODE = 3;
+        PINCODE_ERROR_CODES_SUCCESS_PINCODE_DELETED = 4;
+    }
+}
+
+// Battery status trait for monitoring battery health
+message BatteryStatusTrait {
+    BatteryLevel level = 1;
+
+    // Enumeration for battery levels
+    enum BatteryLevel {
+        BATTERY_LEVEL_UNSPECIFIED = 0;
+        BATTERY_LEVEL_NORMAL = 1;
+        BATTERY_LEVEL_LOW = 2;
+    }
+}
+
+// TamperTrait for detecting tampering events
+message TamperTrait {
+    TamperState tamperState = 1;
+    google.protobuf.Timestamp firstObservedAt = 2;
+
+    // Enumeration for tamper states
+    enum TamperState {
+        TAMPER_STATE_UNSPECIFIED = 0;
+        TAMPER_STATE_CLEAR = 1;
+        TAMPER_STATE_TAMPERED = 2;
+    }
+
+    // Event for tamper state changes
+    message TamperStateChangeEvent {
+        TamperState tamperState = 1;
+    }
+}
