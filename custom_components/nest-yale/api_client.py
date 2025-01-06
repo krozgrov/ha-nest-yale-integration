@@ -1,103 +1,117 @@
-import requests
-import time
+import aiohttp
+from .const import (
+    FIELD_TEST_MODE,
+    PRODUCTION_HOSTNAME,
+    FIELD_TEST_HOSTNAME,
+    USER_AGENT_STRING,
+    REST_ENDPOINTS,
+    PROTOBUF_ENDPOINTS,
+    REQUEST_TIMEOUT,
+    SUCCESS_STATUS_CODES,
+    RETRY_COUNT,
+)
+
 
 class APIClient:
-    def __init__(self, issue_token: str, cookies: dict, api_key: str):
-        """
-        Initialize the API client with the required authentication parameters.
-
-        :param issue_token: Bearer token for authentication.
-        :param cookies: Cookies dictionary for the session.
-        :param api_key: API key for the service.
-        """
+    def __init__(self, session, issue_token, api_key, cookies, field_test_mode=FIELD_TEST_MODE):
+        """Initialize the API client."""
+        self.session = session
         self.issue_token = issue_token
-        self.cookies = cookies
         self.api_key = api_key
-        self.base_url = "https://your-api-endpoint"  # Replace with the actual endpoint
-        self.auth_header = {"Authorization": f"Bearer {self.issue_token}"}
-        self.headers = {
-            **self.auth_header,
+        self.cookies = cookies
+
+        # Set environment mode (Field Test or Production)
+        self.environment = FIELD_TEST_HOSTNAME if field_test_mode else PRODUCTION_HOSTNAME
+
+        # Hostnames and Cookie Configuration
+        self.api_hostname = self.environment["api_hostname"]
+        self.grpc_hostname = self.environment["grpc_hostname"]
+        self.cam_auth_cookie = self.environment["cam_auth_cookie"]
+
+        # User-Agent
+        self.user_agent = USER_AGENT_STRING
+
+    async def send_request(self, method, endpoint, json=None, data=None, headers=None, retries=RETRY_COUNT):
+        """Send a generic REST API request."""
+        url = f"https://{self.api_hostname}{endpoint}"
+        headers = headers or {}
+        headers.update({"User-Agent": self.user_agent, "Authorization": f"Bearer {self.issue_token}"})
+        try:
+            for attempt in range(retries):
+                async with self.session.request(
+                    method, url, json=json, data=data, headers=headers, cookies=self.cookies, timeout=REQUEST_TIMEOUT
+                ) as response:
+                    if response.status in SUCCESS_STATUS_CODES:
+                        return await response.json()
+                    else:
+                        if attempt < retries - 1:
+                            continue
+                        raise Exception(f"API request failed with status {response.status}: {await response.text()}")
+        except Exception as e:
+            raise Exception(f"Error in {method} request to {endpoint}: {str(e)}")
+
+    async def send_protobuf_request(self, endpoint, protobuf_data):
+        """Send a Protobuf API request."""
+        url = f"https://{self.grpc_hostname}{endpoint}"
+        headers = {
+            "Authorization": f"Bearer {self.issue_token}",
             "Content-Type": "application/x-protobuf",
             "x-goog-api-key": self.api_key,
+            "User-Agent": self.user_agent,
         }
-
-    def refresh_token(self):
-        """
-        Placeholder method for refreshing the authentication token.
-        Implement the actual logic here if needed.
-        """
-        # Example: Request a new token using a refresh endpoint
-        refresh_url = "https://accounts.google.com/o/oauth2/token"  # Example URL
-        payload = {
-            "grant_type": "refresh_token",
-            "refresh_token": "your_refresh_token",
-            "client_id": "your_client_id",
-            "client_secret": "your_client_secret",
-        }
-        response = requests.post(refresh_url, data=payload)
-
-        if response.status_code == 200:
-            new_token = response.json().get("access_token")
-            self.issue_token = new_token
-            self.auth_header = {"Authorization": f"Bearer {self.issue_token}"}
-            self.headers.update(self.auth_header)
-            print("Token refreshed successfully.")
-        else:
-            print("Failed to refresh token:", response.status_code, response.text)
-
-    def send_protobuf_request(self, endpoint: str, protobuf_data: bytes):
-        """
-        Send a protobuf API request.
-
-        :param endpoint: API endpoint (relative to the base URL).
-        :param protobuf_data: Serialized protobuf data.
-        :return: Response object.
-        """
-        url = f"{self.base_url}/{endpoint}"
         try:
-            response = requests.post(url, headers=self.headers, cookies=self.cookies, data=protobuf_data)
-            response.raise_for_status()
-            return response
-        except requests.exceptions.RequestException as e:
-            print(f"Request failed: {e}")
-            return None
+            async with self.session.post(
+                url, headers=headers, data=protobuf_data, cookies=self.cookies, timeout=REQUEST_TIMEOUT
+            ) as response:
+                if response.status not in SUCCESS_STATUS_CODES:
+                    raise Exception(f"Protobuf request failed with status {response.status}: {await response.text()}")
+                return await response.read()
+        except Exception as e:
+            raise Exception(f"Error in Protobuf request to {endpoint}: {str(e)}")
 
-    def handle_response(self, response):
-        """
-        Handle the response from the API.
-        Customize based on the expected protobuf response structure.
+    async def authenticate(self):
+        """Authenticate with the Nest API."""
+        return await self.send_request("GET", REST_ENDPOINTS["auth"])
 
-        :param response: Response object from the API.
-        :return: Parsed response data or error.
-        """
-        if response and response.status_code == 200:
-            # Assuming the response is protobuf serialized, deserialize it here
-            # Example:
-            # parsed_data = YourProtoMessage().ParseFromString(response.content)
-            # return parsed_data
-            print("Success:", response.content)
-        else:
-            print("Error:", response.status_code, response.text)
+    async def verify_pin(self, pin):
+        """Verify the 2FA pin."""
+        json_data = {"pin": pin}
+        return await self.send_request("POST", REST_ENDPOINTS["verify_pin"], json=json_data)
 
+    async def observe_traits(self, resource_id):
+        """Observe traits using Protobuf."""
+        from .protobuf.compiled import ObserveTraits_pb2
 
-# Example Usage
-if __name__ == "__main__":
-    # Replace with your actual credentials
-    ISSUE_TOKEN = "your_issue_token"
-    COOKIES = {"__Secure-3PSID": "your_secure_cookie_value"}
-    API_KEY = "your_api_key"
+        request = ObserveTraits_pb2.ObserveTraitsRequest()
+        request.resource_id = resource_id
+        serialized_request = request.SerializeToString()
 
-    client = APIClient(issue_token=ISSUE_TOKEN, cookies=COOKIES, api_key=API_KEY)
+        # Use Protobuf endpoint
+        return await self.send_protobuf_request(PROTOBUF_ENDPOINTS["observe"], serialized_request)
 
-    # Example Protobuf payload (replace with your actual protobuf serialized data)
-    # from your_protobuf_schema import YourProtoMessage
-    # proto_message = YourProtoMessage()
-    # proto_message.field_name = "value"
-    # protobuf_data = proto_message.SerializeToString()
+    async def send_command(self, resource_id, command):
+        """Send a command to a resource."""
+        from .protobuf.compiled import ResourceCommand_pb2
 
-    # Simulated payload
-    protobuf_data = b"\x0a\x07example"
+        request = ResourceCommand_pb2.SendCommandRequest()
+        request.resource_id = resource_id
+        request.command.CopyFrom(command)  # Assuming `command` is already a Protobuf message
+        serialized_request = request.SerializeToString()
 
-    # Send API request
-    response = client.send_protobuf_request(endpoint="your_endpoint", protobuf_data=protobuf_data)
-    client.handle_response(response)
+        # Use Protobuf endpoint
+        return await self.send_protobuf_request(PROTOBUF_ENDPOINTS["send_command"], serialized_request)
+
+    async def get_devices(self):
+        """Fetch devices using Protobuf."""
+        from .protobuf.compiled import GetDevices_pb2
+
+        request = GetDevices_pb2.GetDevicesRequest()
+        serialized_request = request.SerializeToString()
+
+        # Send request to discover devices
+        response = await self.send_protobuf_request(PROTOBUF_ENDPOINTS["observe"], serialized_request)
+
+        # Parse response
+        devices_response = GetDevices_pb2.GetDevicesResponse()
+        devices_response.ParseFromString(response)
+        return devices_response.devices
