@@ -137,8 +137,28 @@ class NestYaleLock(LockEntity):
         }
 
         try:
-            _LOGGER.debug("Sending %s command to %s with cmd_any (user_id=%s, structure_id=%s): %s",
-                          "lock" if lock else "unlock", self._attr_unique_id, self._user_id, self._structure_id, cmd_any)
+            if not self._structure_id:
+                _LOGGER.warning(
+                    "Structure ID missing for %s, refreshing state before command",
+                    self._attr_unique_id,
+                )
+                await self._coordinator.async_request_refresh()
+                self._structure_id = self._coordinator.api_client.structure_id
+                if not self._structure_id:
+                    _LOGGER.error(
+                        "Structure ID is not available for %s, cannot send command.",
+                        self._attr_entity_id,
+                    )
+                    return
+
+            _LOGGER.debug(
+                "Sending %s command to %s with cmd_any (user_id=%s, structure_id=%s): %s",
+                "lock" if lock else "unlock",
+                self._attr_unique_id,
+                self._user_id,
+                self._structure_id,
+                cmd_any,
+            )
             response = await self._coordinator.api_client.send_command(cmd_any, self._device_id)
             _LOGGER.debug("Lock command response: %s", response.hex())
             if response.hex() == "12020802":  # Updated to match actual response
