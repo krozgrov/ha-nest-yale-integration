@@ -50,19 +50,20 @@ class NestProtobufHandler:
         shift = 0
         start = pos
         max_bytes = 10
-        while pos < len(buffer) and shift < 64:
+        while pos < len(buffer):
             byte = buffer[pos]
             value |= (byte & 0x7F) << shift
             pos += 1
-            shift += 7
             if not (byte & 0x80):
-                _LOGGER.debug(f"Decoded varint: {value} from position {start} using {pos - start} bytes")
+                _LOGGER.debug("Decoded varint: %s from position %s using %s bytes", value, start, pos - start)
                 return value, pos
-            if pos - start >= max_bytes:
-                _LOGGER.error(f"Varint too long at pos {start}")
+            shift += 7
+            if shift >= 64 or pos - start >= max_bytes:
+                _LOGGER.error("Varint too long at pos %s", start)
                 return None, pos
-        _LOGGER.error(f"Incomplete varint at pos {start}")
-        return None, pos
+        # Not enough bytes yet to decode the varint; wait for more data.
+        _LOGGER.debug("Incomplete varint at pos %s; awaiting additional data", start)
+        return None, start
 
     async def _process_message(self, message):
         _LOGGER.debug(f"Raw chunk (length={len(message)}): {message.hex()}")
@@ -167,32 +168,41 @@ class NestProtobufHandler:
                         _LOGGER.error(f"Received non-bytes data: {data}")
                         continue
 
-                    if self.pending_length is None:
-                        self.pending_length, offset = self._decode_varint(data, 0)
-                        if self.pending_length is None or offset >= len(data):
-                            _LOGGER.warning(f"Invalid varint in chunk: {data.hex()[:200]}... skipping")
-                            continue
-                        self.buffer.extend(data[offset:])
-                    else:
-                        self.buffer.extend(data)
+                    # Accumulate the raw bytes first; varints/messages are carved out below.
+                    self.buffer.extend(data)
 
                     _LOGGER.debug(f"Buffer size: {len(self.buffer)} bytes, pending_length: {self.pending_length}")
 
-                    while self.pending_length and len(self.buffer) >= self.pending_length:
+                    while True:
+                        if self.pending_length is None:
+                            result = self._decode_varint(self.buffer, 0)
+                            if result[0] is None:
+                                break
+                            self.pending_length, offset = result
+                            if offset > len(self.buffer):
+                                break
+                            del self.buffer[:offset]
+
+                        if self.pending_length is None or len(self.buffer) < self.pending_length:
+                            break
+
                         message = self.buffer[:self.pending_length]
-                        self.buffer = self.buffer[self.pending_length:]
+                        del self.buffer[:self.pending_length]
+                        self.pending_length = None
                         locks_data = await self._process_message(message)
-                        self.pending_length = None if len(self.buffer) < 5 else self._decode_varint(self.buffer, 0)[0]
 
                         if locks_data.get("yale"):
                             yield locks_data
                             continue
+                        # Fall through to attempt parsing additional messages in buffer.
 
                     if len(self.buffer) >= CATALOG_THRESHOLD and self.pending_length:
+                        if len(self.buffer) < self.pending_length:
+                            continue
                         message = self.buffer[:self.pending_length]
-                        self.buffer = self.buffer[self.pending_length:]
+                        del self.buffer[:self.pending_length]
+                        self.pending_length = None
                         locks_data = await self._process_message(message)
-                        self.pending_length = None if len(self.buffer) < 5 else self._decode_varint(self.buffer, 0)[0]
 
                         if locks_data.get("yale"):
                             yield locks_data

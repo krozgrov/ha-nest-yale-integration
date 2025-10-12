@@ -22,9 +22,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api_key = entry.data.get("api_key")
     cookies = entry.data.get("cookies")
 
-    if not issue_token or not api_key or not cookies:
-        _LOGGER.error("Missing required authentication credentials: issue_token=%s, api_key=%s, cookies=%s",
-                      issue_token, api_key, cookies)
+    if not issue_token or not cookies:
+        _LOGGER.error("Missing required authentication credentials: issue_token=%s, cookies=%s",
+                      issue_token, cookies)
         return False
 
     try:

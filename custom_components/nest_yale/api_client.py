@@ -176,7 +176,7 @@ class NestAPIClient:
         }
         async with self.session.get(url, headers=headers) as resp:
             if resp.status != 200:
-                _LOGGER.error(f"Failed to fetch structureId. Status: {resp.status}")
+                _LOGGER.debug("StructureId fetch returned status %s; continuing without explicit structure id", resp.status)
                 return None
             user_data = await resp.json()
             # Optionally update user_id if available in user_data
