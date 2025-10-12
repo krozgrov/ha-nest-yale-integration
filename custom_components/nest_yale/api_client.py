@@ -202,7 +202,11 @@ class NestAPIClient:
             "Content-Type": "application/x-protobuf",
             "User-Agent": USER_AGENT_STRING,
             "X-Accept-Response-Streaming": "true",
+            "X-Accept-Content-Transfer-Encoding": "binary",
             "Accept": "application/x-protobuf",
+            "Accept-Encoding": "gzip, deflate, br",
+            "referer": "https://home.nest.com/",
+            "origin": "https://home.nest.com",
         }
 
         observe_payload = self._get_observe_payload()
@@ -259,7 +263,11 @@ class NestAPIClient:
             "Content-Type": "application/x-protobuf",
             "User-Agent": USER_AGENT_STRING,
             "X-Accept-Response-Streaming": "true",
+            "X-Accept-Content-Transfer-Encoding": "binary",
             "Accept": "application/x-protobuf",
+            "Accept-Encoding": "gzip, deflate, br",
+            "referer": "https://home.nest.com/",
+            "origin": "https://home.nest.com",
         }
 
         observe_payload = self._get_observe_payload()
