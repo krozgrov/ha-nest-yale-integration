@@ -18,6 +18,13 @@ class NestYaleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
+            # Normalize optional values
+            api_key = user_input.get(CONF_API_KEY) or None
+            if api_key is None:
+                user_input.pop(CONF_API_KEY, None)
+            else:
+                user_input[CONF_API_KEY] = api_key
+
             try:
                 # Validate credentials asynchronously
                 await self._validate_credentials(user_input)
@@ -43,7 +50,7 @@ class NestYaleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         api_client = NestAPIClient(
             self.hass,
             issue_token=user_input[CONF_ISSUE_TOKEN],
-            api_key=user_input[CONF_API_KEY],
+            api_key=user_input.get(CONF_API_KEY),
             cookies=user_input[CONF_COOKIES]
         )
 
@@ -59,7 +66,7 @@ class NestYaleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return vol.Schema(
             {
                 vol.Required(CONF_ISSUE_TOKEN): str,
-                vol.Required(CONF_API_KEY): str,
+                vol.Optional(CONF_API_KEY, default=""): str,
                 vol.Required(CONF_COOKIES): str,
             }
         )
