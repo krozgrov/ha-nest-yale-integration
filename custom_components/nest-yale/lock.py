@@ -121,6 +121,10 @@ class NestYaleLock(LockEntity):
         await self._send_command(False)
 
     async def _send_command(self, lock: bool):
+        # Refresh identifiers before issuing the command to keep payload accurate.
+        self._user_id = self._coordinator.api_client.user_id
+        self._structure_id = self._coordinator.api_client.structure_id
+
         state = weave_security_pb2.BoltLockTrait.BOLT_STATE_EXTENDED if lock else weave_security_pb2.BoltLockTrait.BOLT_STATE_RETRACTED
         request = weave_security_pb2.BoltLockTrait.BoltLockChangeRequest()
         request.state = state
@@ -138,14 +142,13 @@ class NestYaleLock(LockEntity):
         try:
             _LOGGER.debug("Sending %s command to %s with cmd_any (user_id=%s, structure_id=%s): %s",
                           "lock" if lock else "unlock", self._attr_unique_id, self._user_id, self._structure_id, cmd_any)
-            #response = await self._coordinator.api_client.send_command(cmd_any, self._device_id)
-            response = await self._coordinator.api_client.send_command(
-                cmd_any,
-                self._device_id,
-                structure_id="2ce65ea0-9f27-11ee-9b42-122fc90603fd"
-            )
-            _LOGGER.debug("Lock command response: %s", response.hex())
-            if response.hex() == "12020802":  # Updated to match actual response
+            response = await self._coordinator.api_client.send_command(cmd_any, self._device_id)
+            response_hex = response.hex() if isinstance(response, bytes) else None
+            if response_hex is not None:
+                _LOGGER.debug("Lock command response: %s", response_hex)
+            else:
+                _LOGGER.debug("Lock command response (non-bytes): %s", response)
+            if response_hex == "12020802":  # Updated to match actual response
                 _LOGGER.warning("Command failed with 12020802, not updating local state")
                 return
 
@@ -172,6 +175,8 @@ class NestYaleLock(LockEntity):
             if new_data:
                 old_state = self._device.copy()
                 self._device.update(new_data)
+                self._user_id = self._coordinator.api_client.user_id
+                self._structure_id = self._coordinator.api_client.structure_id
                 if "bolt_moving" in new_data and new_data["bolt_moving"]:
                     self._device["bolt_moving"] = True
                     asyncio.create_task(self._clear_bolt_moving())

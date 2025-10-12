@@ -1,12 +1,12 @@
 import os
 import logging
-import uuid
 import asyncio
-import aiofiles
 from google.protobuf.message import DecodeError
 from google.protobuf.any_pb2 import Any
+
 from .proto.weave.trait import security_pb2 as weave_security_pb2
-from .proto import root_pb2
+from .proto.nest.trait import structure_pb2 as nest_structure_pb2
+from .proto.nest import rpc_pb2 as rpc_pb2
 from .protobuf_manager import read_protobuf_file
 from .const import (
     USER_AGENT_STRING,
@@ -25,11 +25,25 @@ STREAM_TIMEOUT_SECONDS = 600  # 10min
 PING_INTERVAL_SECONDS = 60
 CATALOG_THRESHOLD = 20000  # 20KB
 
+
+def _normalize_any_type(any_message: Any) -> Any:
+    """Map legacy Nest type URLs onto googleapis prefix so Unpack succeeds."""
+    if not isinstance(any_message, Any):
+        return any_message
+    type_url = any_message.type_url or ""
+    if type_url.startswith("type.nestlabs.com/"):
+        normalized = Any()
+        normalized.value = any_message.value
+        normalized.type_url = type_url.replace("type.nestlabs.com/", "type.googleapis.com/", 1)
+        return normalized
+    return any_message
+
+
 class NestProtobufHandler:
     def __init__(self):
         self.buffer = bytearray()
         self.pending_length = None
-        self.stream_body = root_pb2.StreamBody()
+        self.stream_body = rpc_pb2.StreamBody()
 
     def _decode_varint(self, buffer, pos):
         value = 0
@@ -69,55 +83,66 @@ class NestProtobufHandler:
                     obj_id = get_op.object.id if get_op.object.id else None
                     obj_key = get_op.object.key if get_op.object.key else "unknown"
 
-                    type_url = getattr(get_op.data.property, "type_url", None)
+                    property_any = getattr(get_op.data, "property", None)
+                    property_any = _normalize_any_type(property_any) if property_any else None
+                    type_url = getattr(property_any, "type_url", None) if property_any else None
                     if not type_url and 7 in get_op:
                         type_url = "weave.trait.security.BoltLockTrait"
 
-                    _LOGGER.debug(f"Extracting `{type_url}` for `{obj_id}` with key `{obj_key}`")
+                    _LOGGER.debug("Extracting `%s` for `%s` with key `%s`", type_url, obj_id, obj_key)
 
-                    if "BoltLockTrait" in type_url and obj_id:
+                    if "BoltLockTrait" in (type_url or "") and obj_id:
                         bolt_lock = weave_security_pb2.BoltLockTrait()
                         try:
-                            unpacked = get_op.data.property.Unpack(bolt_lock)
+                            if not property_any:
+                                _LOGGER.warning("No property payload for %s, skipping BoltLockTrait decode", obj_id)
+                                continue
+                            unpacked = property_any.Unpack(bolt_lock)
                             if not unpacked:
-                                _LOGGER.warning(f"Unpacking failed for {obj_id}, skipping")
+                                _LOGGER.warning("Unpacking BoltLockTrait failed for %s, skipping", obj_id)
                                 continue
 
                             locks_data["yale"][obj_id] = {
                                 "device_id": obj_id,
                                 "bolt_locked": bolt_lock.lockedState == weave_security_pb2.BoltLockTrait.BOLT_LOCKED_STATE_LOCKED,
-                                "bolt_moving": bolt_lock.actuatorState not in [weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_OK],
-                                "actuator_state": bolt_lock.actuatorState
+                                "bolt_moving": bolt_lock.actuatorState
+                                not in [weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_OK],
+                                "actuator_state": bolt_lock.actuatorState,
                             }
                             if bolt_lock.boltLockActor.originator.resourceId:
                                 locks_data["user_id"] = bolt_lock.boltLockActor.originator.resourceId
-                            _LOGGER.debug(f"Parsed BoltLockTrait for {obj_id}: {locks_data['yale'][obj_id]}, user_id={locks_data['user_id']}")
+                            _LOGGER.debug("Parsed BoltLockTrait for %s: %s, user_id=%s", obj_id, locks_data["yale"][obj_id], locks_data["user_id"])
 
-                        except DecodeError as e:
-                            _LOGGER.error(f"Failed to decode BoltLockTrait for {obj_id}: {e}")
+                        except DecodeError as err:
+                            _LOGGER.error("Failed to decode BoltLockTrait for %s: %s", obj_id, err)
                             continue
-                        except Exception as e:
-                            _LOGGER.error(f"Unexpected error unpacking BoltLockTrait for {obj_id}: {e}")
+                        except Exception as err:
+                            _LOGGER.error("Unexpected error unpacking BoltLockTrait for %s: %s", obj_id, err, exc_info=True)
                             continue
 
-                    elif "structure_info" in type_url and obj_id:
+                    elif "StructureInfoTrait" in (type_url or "") and obj_id:
                         try:
-                            # Log raw structure_info for debugging
-                            _LOGGER.debug(f"Raw structure_info data for {obj_id}: {get_op.data.property}")
-                            # Extract legacyId or use obj_id as fallback
-                            structure_id = None
-                            if hasattr(get_op.data.property, "value"):
-                                value = get_op.data.property.value
-                                if isinstance(value, dict) and "legacyId" in value:
-                                    structure_id = value["legacyId"].split('.')[1]
-                                elif hasattr(value, "legacyId"):
-                                    structure_id = value.legacyId.split('.')[1]
-                            if not structure_id:
-                                structure_id = obj_id.replace("STRUCTURE_", "")
-                            locks_data["structure_id"] = structure_id
-                            _LOGGER.debug(f"Parsed structure_info for {obj_id}: structure_id={structure_id}")
-                        except Exception as e:
-                            _LOGGER.error(f"Failed to parse structure_info for {obj_id}: {e}")
+                            if not property_any:
+                                _LOGGER.warning("No StructureInfo payload for %s", obj_id)
+                                continue
+                            structure = nest_structure_pb2.StructureInfoTrait()
+                            unpacked = property_any.Unpack(structure)
+                            if not unpacked:
+                                _LOGGER.warning("Unpacking StructureInfoTrait failed for %s, skipping", obj_id)
+                                continue
+                            if structure.legacy_id:
+                                locks_data["structure_id"] = structure.legacy_id.split(".")[1]
+                            elif obj_id.startswith("STRUCTURE_"):
+                                locks_data["structure_id"] = obj_id.replace("STRUCTURE_", "")
+                            _LOGGER.debug("Parsed StructureInfoTrait for %s: structure_id=%s", obj_id, locks_data["structure_id"])
+                        except Exception as err:
+                            _LOGGER.error("Failed to parse StructureInfoTrait for %s: %s", obj_id, err, exc_info=True)
+
+                    elif "UserInfoTrait" in (type_url or ""):
+                        try:
+                            locks_data["user_id"] = obj_id
+                        except Exception as err:
+                            _LOGGER.error("Failed to parse UserInfoTrait: %s", err, exc_info=True)
 
             _LOGGER.debug(f"Final lock data: {locks_data}")
             return locks_data

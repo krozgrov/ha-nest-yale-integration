@@ -1,14 +1,11 @@
-import os
 import logging
 import uuid
 import aiohttp
 import asyncio
 import jwt
-from aiohttp import ClientSession
 from google.protobuf import any_pb2
 from .auth import NestAuthenticator
 from .protobuf_handler import NestProtobufHandler
-from .protobuf_manager import read_protobuf_file
 from .const import (
     API_RETRY_DELAY_SECONDS,
     URL_PROTOBUF,
@@ -17,8 +14,25 @@ from .const import (
     PRODUCTION_HOSTNAME,
     USER_AGENT_STRING,
 )
-#from .proto import root_pb2
 from .proto.nestlabs.gateway import v1_pb2
+from .proto.nestlabs.gateway import v2_pb2
+
+
+def _normalize_base(url):
+    if not url:
+        return None
+    return url.rstrip("/")
+
+
+def _transport_candidates(session_base):
+    candidates = []
+    normalized_session = _normalize_base(session_base)
+    if normalized_session:
+        candidates.append(normalized_session)
+    default = _normalize_base(URL_PROTOBUF.format(grpc_hostname=PRODUCTION_HOSTNAME["grpc_hostname"]))
+    if default and default not in candidates:
+        candidates.append(default)
+    return candidates
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,7 +46,9 @@ class ConnectionShim:
             _LOGGER.debug(f"Response headers: {dict(response.headers)}")
             if response.status != 200:
                 _LOGGER.error(f"HTTP {response.status}: {await response.text()}")
+                self.connected = False
                 raise Exception(f"Stream failed with status {response.status}")
+            self.connected = True
             async for chunk in response.content.iter_chunked(1024):
                 _LOGGER.debug(f"Stream chunk received (length={len(chunk)}): {chunk[:100].hex()}...")
                 yield chunk
@@ -44,7 +60,9 @@ class ConnectionShim:
             _LOGGER.debug(f"Post response status: {response.status}, response: {response_data.hex()}")
             if response.status != 200:
                 _LOGGER.error(f"HTTP {response.status}: {await response.text()}")
+                self.connected = False
                 raise Exception(f"Post failed with status {response.status}")
+            self.connected = True
             return response_data
 
     async def close(self):
@@ -66,6 +84,7 @@ class NestAPIClient:
         self.current_state = {"devices": {"locks": {}}, "user_id": self._user_id, "structure_id": self._structure_id}
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600))
         self.connection = ConnectionShim(self.session)
+        self._observe_payload = self._build_observe_payload()
         _LOGGER.debug("NestAPIClient initialized with session")
 
     @property
@@ -75,6 +94,28 @@ class NestAPIClient:
     @property
     def structure_id(self):
         return self._structure_id
+
+    def _build_observe_payload(self):
+        request = v2_pb2.ObserveRequest(version=2, subscribe=True)
+        trait_names = [
+            "nest.trait.user.UserInfoTrait",
+            "nest.trait.structure.StructureInfoTrait",
+            "weave.trait.security.BoltLockTrait",
+            "weave.trait.security.BoltLockSettingsTrait",
+            "weave.trait.security.BoltLockCapabilitiesTrait",
+            "weave.trait.security.PincodeInputTrait",
+            "weave.trait.security.TamperTrait",
+        ]
+        for trait in trait_names:
+            observe_filter = request.filter.add()
+            observe_filter.trait_type = trait
+        return request.SerializeToString()
+
+    def _get_observe_payload(self):
+        return self._observe_payload or self._build_observe_payload()
+
+    def _candidate_bases(self):
+        return _transport_candidates(self.transport_url)
 
     @classmethod
     async def create(cls, hass, issue_token, api_key, cookies, user_id=None):
@@ -162,49 +203,52 @@ class NestAPIClient:
             "User-Agent": USER_AGENT_STRING,
             "X-Accept-Response-Streaming": "true",
             "Accept": "application/x-protobuf",
-            "x-nl-webapp-version": "NlAppSDKVersion/8.15.0 NlSchemaVersion/2.1.20-87-gce5742894",
-            "referer": "https://home.nest.com/",
-            "origin": "https://home.nest.com",
         }
 
-        api_url = f"{URL_PROTOBUF.format(grpc_hostname=PRODUCTION_HOSTNAME['grpc_hostname'])}{ENDPOINT_OBSERVE}"
-        observe_data = await read_protobuf_file(os.path.join(os.path.dirname(__file__), "proto", "ObserveTraits.bin"))
-
-        _LOGGER.debug("Starting refresh_state with URL: %s", api_url)
+        observe_payload = self._get_observe_payload()
         retries = 0
         max_retries = 3
+        last_error = None
+
         while retries < max_retries:
-            try:
-                async with self.session.post(api_url, headers=headers, data=observe_data) as response:
-                    if response.status != 200:
-                        _LOGGER.error(f"HTTP {response.status}: {await response.text()}")
-                        return {}
-                    async for chunk in response.content.iter_chunked(1024):
-                        locks_data = await self.protobuf_handler._process_message(chunk)
-                        if "yale" in locks_data:
+            for base_url in self._candidate_bases():
+                api_url = f"{base_url}{ENDPOINT_OBSERVE}"
+                _LOGGER.debug("Starting refresh_state with URL: %s", api_url)
+                try:
+                    async with self.session.post(api_url, headers=headers, data=observe_payload) as response:
+                        if response.status != 200:
+                            body = await response.text()
+                            _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
+                            continue
+                        async for chunk in response.content.iter_chunked(1024):
+                            locks_data = await self.protobuf_handler._process_message(chunk)
+                            if "yale" not in locks_data:
+                                continue
                             self.current_state["devices"]["locks"] = locks_data["yale"]
                             if locks_data.get("user_id"):
                                 old_user_id = self._user_id
                                 self._user_id = locks_data["user_id"]
                                 self.current_state["user_id"] = self._user_id
                                 if old_user_id != self._user_id:
-                                    _LOGGER.info(f"Updated user_id from stream: {self._user_id} (was {old_user_id})")
+                                    _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
                             if locks_data.get("structure_id"):
                                 old_structure_id = self._structure_id
                                 self._structure_id = locks_data["structure_id"]
                                 self.current_state["structure_id"] = self._structure_id
                                 if old_structure_id != self._structure_id:
-                                    _LOGGER.info(f"Updated structure_id from stream: {self._structure_id} (was {old_structure_id})")
+                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                            self.transport_url = base_url
                             return locks_data["yale"]
-                return {}
-            except Exception as e:
-                retries += 1
-                _LOGGER.error(f"Refresh state failed (attempt {retries}/{max_retries}): {e}", exc_info=True)
-                if retries < max_retries:
-                    await asyncio.sleep(API_RETRY_DELAY_SECONDS)
-                else:
-                    _LOGGER.error("Max retries reached, giving up on refresh_state")
-                    return {}
+                except Exception as err:
+                    last_error = err
+                    _LOGGER.error("Refresh state failed via %s: %s", api_url, err, exc_info=True)
+                    continue
+            retries += 1
+            if retries < max_retries:
+                await asyncio.sleep(API_RETRY_DELAY_SECONDS)
+        if last_error:
+            _LOGGER.error("Max retries reached, giving up on refresh_state: %s", last_error)
+        return {}
 
     async def observe(self):
         if not self.access_token or not self.connection.connected:
@@ -216,60 +260,62 @@ class NestAPIClient:
             "User-Agent": USER_AGENT_STRING,
             "X-Accept-Response-Streaming": "true",
             "Accept": "application/x-protobuf",
-            "x-nl-webapp-version": "NlAppSDKVersion/8.15.0 NlSchemaVersion/2.1.20-87-gce5742894",
-            "referer": "https://home.nest.com/",
-            "origin": "https://home.nest.com",
         }
 
-        api_url = f"{URL_PROTOBUF.format(grpc_hostname=PRODUCTION_HOSTNAME['grpc_hostname'])}{ENDPOINT_OBSERVE}"
-        observe_data = await read_protobuf_file(os.path.join(os.path.dirname(__file__), "proto", "ObserveTraits.bin"))
-
-        _LOGGER.debug("Starting observe stream with URL: %s", api_url)
+        observe_payload = self._get_observe_payload()
         retries = 0
         max_retries = 3
+        last_error = None
+
         while retries < max_retries:
-            try:
-                async for chunk in self.connection.stream(api_url, headers, observe_data):
-                    locks_data = await self.protobuf_handler._process_message(chunk)
-                    if "yale" in locks_data:
-                        if locks_data.get("user_id"):
-                            old_user_id = self._user_id
-                            self._user_id = locks_data["user_id"]
-                            self.current_state["user_id"] = self._user_id
-                            if old_user_id != self._user_id:
-                                _LOGGER.info(f"Updated user_id from stream: {self._user_id} (was {old_user_id})")
-                        if locks_data.get("structure_id"):
-                            old_structure_id = self._structure_id
-                            self._structure_id = locks_data["structure_id"]
-                            self.current_state["structure_id"] = self._structure_id
-                            if old_structure_id != self._structure_id:
-                                _LOGGER.info(f"Updated structure_id from stream: {self._structure_id} (was {old_structure_id})")
-                    yield locks_data.get("yale", {})
-                break
-            except Exception as e:
-                retries += 1
-                _LOGGER.error(f"Error in observe stream (attempt {retries}/{max_retries}): {e}", exc_info=True)
-                self.connection.connected = False
-                if retries < max_retries:
-                    await asyncio.sleep(API_RETRY_DELAY_SECONDS)
-                else:
-                    raise
+            for base_url in self._candidate_bases():
+                api_url = f"{base_url}{ENDPOINT_OBSERVE}"
+                _LOGGER.debug("Starting observe stream with URL: %s", api_url)
+                try:
+                    async for chunk in self.connection.stream(api_url, headers, observe_payload):
+                        locks_data = await self.protobuf_handler._process_message(chunk)
+                        if "yale" in locks_data:
+                            if locks_data.get("user_id"):
+                                old_user_id = self._user_id
+                                self._user_id = locks_data["user_id"]
+                                self.current_state["user_id"] = self._user_id
+                                if old_user_id != self._user_id:
+                                    _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                            if locks_data.get("structure_id"):
+                                old_structure_id = self._structure_id
+                                self._structure_id = locks_data["structure_id"]
+                                self.current_state["structure_id"] = self._structure_id
+                                if old_structure_id != self._structure_id:
+                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                            self.transport_url = base_url
+                        yield locks_data.get("yale", {})
+                    _LOGGER.debug("Observe stream finished for %s; attempting reconnect", api_url)
+                    self.connection.connected = False
+                except Exception as err:
+                    last_error = err
+                    _LOGGER.error("Error in observe stream via %s: %s", api_url, err, exc_info=True)
+                    self.connection.connected = False
+                    continue
+            retries += 1
+            if retries < max_retries:
+                await asyncio.sleep(API_RETRY_DELAY_SECONDS)
+        if last_error:
+            raise last_error
+        raise RuntimeError("Observe stream failed without specific error")
 
     #async def send_command(self, command, device_id):
     async def send_command(self, command, device_id, structure_id=None):
         if not self.access_token:
             await self.authenticate()
 
+        request_id = str(uuid.uuid4())
         headers = {
             "Authorization": f"Basic {self.access_token}",
             "Content-Type": "application/x-protobuf",
             "User-Agent": USER_AGENT_STRING,
             "X-Accept-Content-Transfer-Encoding": "binary",
             "X-Accept-Response-Streaming": "true",
-            "referer": "https://home.nest.com/",
-            "origin": "https://home.nest.com",
-            "x-nl-webapp-version": "NlAppSDKVersion/8.15.0 NlSchemaVersion/2.1.20-87-gce5742894",
-            "request-id": str(uuid.uuid4()),
+            "request-id": request_id,
         }
 
         # Always include a structure_id header, defaulting to the fetched one
@@ -278,28 +324,43 @@ class NestAPIClient:
             headers["X-Nest-Structure-Id"] = effective_structure_id
             _LOGGER.debug(f"[nest_yale] Using structure_id: {effective_structure_id}")
 
-        api_url = f"{URL_PROTOBUF.format(grpc_hostname=PRODUCTION_HOSTNAME['grpc_hostname'])}{ENDPOINT_SENDCOMMAND}"
-
         cmd_any = any_pb2.Any()
         cmd_any.type_url = command["command"]["type_url"]
         cmd_any.value = command["command"]["value"] if isinstance(command["command"]["value"], bytes) else command["command"]["value"].SerializeToString()
 
-    #   request = root_pb2.ResourceCommandRequest()
         request = v1_pb2.ResourceCommandRequest()
-        request.resourceCommands.add().command.CopyFrom(cmd_any)
+        resource_command = request.resourceCommands.add()
+        resource_command.command.CopyFrom(cmd_any)
+        if command.get("traitLabel"):
+            resource_command.traitLabel = command["traitLabel"]
         request.resourceRequest.resourceId = device_id
-        request.resourceRequest.requestId = str(uuid.uuid4())
+        request.resourceRequest.requestId = request_id
         encoded_data = request.SerializeToString()
 
-        _LOGGER.debug(f"Sending command to {device_id}: {command}, encoded: {encoded_data.hex()}, structure_id: {self._structure_id}")
-        try:
-            raw_data = await self.connection.post(api_url, headers, encoded_data)
-            await asyncio.sleep(2)
-            await self.refresh_state()
-            return raw_data
-        except Exception as e:
-            _LOGGER.error(f"Failed to send command to {device_id}: {e}", exc_info=True)
-            raise
+        _LOGGER.debug(
+            "Sending command to %s: %s, encoded: %s, structure_id: %s",
+            device_id,
+            command,
+            encoded_data.hex(),
+            self._structure_id,
+        )
+
+        last_error = None
+        for base_url in self._candidate_bases():
+            api_url = f"{base_url}{ENDPOINT_SENDCOMMAND}"
+            try:
+                raw_data = await self.connection.post(api_url, headers, encoded_data)
+                self.transport_url = base_url
+                await asyncio.sleep(2)
+                await self.refresh_state()
+                return raw_data
+            except Exception as err:
+                last_error = err
+                _LOGGER.error("Failed to send command to %s via %s: %s", device_id, api_url, err, exc_info=True)
+                continue
+        if last_error:
+            raise last_error
+        raise RuntimeError(f"Failed to send command to {device_id} for unknown reasons")
 
     async def close(self):
         if self.connection and self.connection.connected:
