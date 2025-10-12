@@ -1,8 +1,9 @@
-import os
 import logging
 import asyncio
 from google.protobuf.message import DecodeError
 from google.protobuf.any_pb2 import Any
+from base64 import b64decode
+import binascii
 
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 from .proto.nest.trait import structure_pb2 as nest_structure_pb2
@@ -168,22 +169,53 @@ class NestProtobufHandler:
                         _LOGGER.error(f"Received non-bytes data: {data}")
                         continue
 
-                    # Accumulate the raw bytes first; varints/messages are carved out below.
-                    self.buffer.extend(data)
+                    payload = data
+                    stripped = payload.strip()
+                    if stripped:
+                        is_ascii = all(b < 128 for b in stripped)
+                        if is_ascii:
+                            try:
+                                decoded = b64decode(stripped, validate=True)
+                                if decoded:
+                                    payload = decoded
+                            except binascii.Error:
+                                pass
+
+                    # Accumulate the raw bytes first; frames/messages are carved out below.
+                    self.buffer.extend(payload)
 
                     _LOGGER.debug(f"Buffer size: {len(self.buffer)} bytes, pending_length: {self.pending_length}")
 
                     while True:
                         if self.pending_length is None:
-                            result = self._decode_varint(self.buffer, 0)
-                            if result[0] is None:
-                                break
-                            self.pending_length, offset = result
-                            if offset > len(self.buffer):
-                                break
-                            del self.buffer[:offset]
+                            if len(self.buffer) >= 5 and self.buffer[0] in (0x00, 0x80):
+                                frame_type = self.buffer[0]
+                                frame_len = int.from_bytes(self.buffer[1:5], "big")
+                                if len(self.buffer) < 5 + frame_len:
+                                    break
+                                del self.buffer[:5]
+                                if frame_type == 0x80:
+                                    # Trailer frame – skip contents entirely.
+                                    del self.buffer[:frame_len]
+                                    continue
+                                if frame_len == 0:
+                                    continue
+                                self.pending_length = frame_len
+                            else:
+                                result = self._decode_varint(self.buffer, 0)
+                                if result[0] is None:
+                                    break
+                                length, offset = result
+                                if offset > len(self.buffer):
+                                    break
+                                del self.buffer[:offset]
+                                if length == 0:
+                                    continue
+                                self.pending_length = length
 
-                        if self.pending_length is None or len(self.buffer) < self.pending_length:
+                        if self.pending_length is None:
+                            break
+                        if len(self.buffer) < self.pending_length:
                             break
 
                         message = self.buffer[:self.pending_length]
@@ -194,7 +226,6 @@ class NestProtobufHandler:
                         if locks_data.get("yale"):
                             yield locks_data
                             continue
-                        # Fall through to attempt parsing additional messages in buffer.
 
                     if len(self.buffer) >= CATALOG_THRESHOLD and self.pending_length:
                         if len(self.buffer) < self.pending_length:
