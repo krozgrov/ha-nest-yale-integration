@@ -151,6 +151,8 @@ class NestProtobufHandler:
 
         except DecodeError as e:
             _LOGGER.error(f"DecodeError in StreamBody: {e}")
+            if message:
+                _LOGGER.debug("Failed StreamBody payload (hex, first 200 bytes): %s", message[:200].hex())
             return locks_data
         except Exception as e:
             _LOGGER.error(f"Unexpected error processing message: {e}", exc_info=True)

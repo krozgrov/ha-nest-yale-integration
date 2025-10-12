@@ -49,7 +49,7 @@ class ConnectionShim:
                 self.connected = False
                 raise Exception(f"Stream failed with status {response.status}")
             self.connected = True
-            async for chunk in response.content.iter_chunked(1024):
+            async for chunk in response.content.iter_any():
                 _LOGGER.debug(f"Stream chunk received (length={len(chunk)}): {chunk[:100].hex()}...")
                 yield chunk
 
