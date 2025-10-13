@@ -1,5 +1,5 @@
 {
-  "domain": "nest_yale",
+  "domain": "nest_yale_lock",
   "name": "Nest Yale Lock",
   "codeowners": ["@krozgrov"],
   "config_flow": true,
@@ -11,5 +11,5 @@
     "protobuf>=6.32.1",
     "httpx>=0.23.0"
   ],
-  "version": "2025.2.0"
+  "version": "2025.10.13"
 }
