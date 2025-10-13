@@ -66,7 +66,6 @@ CLIENT_ID_FT = "384529615266-57v6vaptkmhm64n9hn5dcmkr4at14p8j.apps.googleusercon
 DOMAIN = "nest_yale"
 PLATFORMS = ["lock"]
 CONF_ISSUE_TOKEN = "issue_token"
-CONF_API_KEY = "api_key"
 CONF_COOKIES = "cookies"
 UPDATE_INTERVAL_SECONDS = timedelta(seconds=30)  # Use timedelta for DataUpdateCoordinator
 

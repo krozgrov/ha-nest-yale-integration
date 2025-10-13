@@ -4,7 +4,7 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import aiohttp_client
 from .api_client import NestAPIClient
-from .const import DOMAIN, CONF_ISSUE_TOKEN, CONF_API_KEY, CONF_COOKIES
+from .const import DOMAIN, CONF_ISSUE_TOKEN, CONF_COOKIES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,13 +18,6 @@ class NestYaleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input is not None:
-            # Normalize optional values
-            api_key = user_input.get(CONF_API_KEY) or None
-            if api_key is None:
-                user_input.pop(CONF_API_KEY, None)
-            else:
-                user_input[CONF_API_KEY] = api_key
-
             try:
                 # Validate credentials asynchronously
                 await self._validate_credentials(user_input)
@@ -50,7 +43,7 @@ class NestYaleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         api_client = NestAPIClient(
             self.hass,
             issue_token=user_input[CONF_ISSUE_TOKEN],
-            api_key=user_input.get(CONF_API_KEY),
+            api_key=None,
             cookies=user_input[CONF_COOKIES]
         )
 
@@ -66,7 +59,6 @@ class NestYaleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return vol.Schema(
             {
                 vol.Required(CONF_ISSUE_TOKEN): str,
-                vol.Optional(CONF_API_KEY, default=""): str,
                 vol.Required(CONF_COOKIES): str,
             }
         )

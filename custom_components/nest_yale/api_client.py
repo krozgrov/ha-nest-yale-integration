@@ -49,9 +49,14 @@ class ConnectionShim:
                 self.connected = False
                 raise Exception(f"Stream failed with status {response.status}")
             self.connected = True
-            async for chunk in response.content.iter_any():
-                _LOGGER.debug(f"Stream chunk received (length={len(chunk)}): {chunk[:100].hex()}...")
-                yield chunk
+            try:
+                async for chunk in response.content.iter_any():
+                    _LOGGER.debug(f"Stream chunk received (length={len(chunk)}): {chunk[:100].hex()}...")
+                    yield chunk
+            except asyncio.TimeoutError:
+                _LOGGER.warning("Stream read timed out; marking connection as closed")
+                self.connected = False
+                raise
 
     async def post(self, api_url, headers, data):
         _LOGGER.debug(f"Sending POST to {api_url}, headers={headers}, data={data.hex()}")
@@ -118,7 +123,7 @@ class NestAPIClient:
         return _transport_candidates(self.transport_url)
 
     @classmethod
-    async def create(cls, hass, issue_token, api_key, cookies, user_id=None):
+    async def create(cls, hass, issue_token, api_key=None, cookies=None, user_id=None):
         _LOGGER.debug("Entering create")
         instance = cls(hass, issue_token, api_key, cookies)
         await instance.async_setup()
@@ -299,6 +304,11 @@ class NestAPIClient:
                         yield locks_data.get("yale", {})
                     _LOGGER.debug("Observe stream finished for %s; attempting reconnect", api_url)
                     self.connection.connected = False
+                except asyncio.TimeoutError:
+                    last_error = None
+                    _LOGGER.warning("Observe stream timed out via %s; retrying", api_url)
+                    self.connection.connected = False
+                    continue
                 except Exception as err:
                     last_error = err
                     _LOGGER.error("Error in observe stream via %s: %s", api_url, err, exc_info=True)

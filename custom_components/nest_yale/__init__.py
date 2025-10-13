@@ -19,7 +19,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("Starting async_setup_entry for entry_id: %s, title: %s", entry.entry_id, entry.title)
 
     issue_token = entry.data.get("issue_token")
-    api_key = entry.data.get("api_key")
     cookies = entry.data.get("cookies")
 
     if not issue_token or not cookies:
@@ -29,7 +28,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     try:
         _LOGGER.debug("Creating NestAPIClient")
-        conn = await NestAPIClient.create(hass, issue_token, api_key, cookies)
+        conn = await NestAPIClient.create(hass, issue_token, None, cookies)
         _LOGGER.debug("Creating NestCoordinator")
         coordinator = NestCoordinator(hass, conn)
         _LOGGER.debug("Setting up coordinator")
