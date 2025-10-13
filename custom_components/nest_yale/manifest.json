@@ -1,0 +1,15 @@
+{
+  "domain": "nest_yale",
+  "name": "Nest Yale Lock",
+  "codeowners": ["@krozgrov"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/krozgrov/ha-nest-yale-integration/blob/main/README.md",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/krozgrov/ha-nest-yale-integration/issues",
+  "requirements": [
+    "protobuf>=6.32.1",
+    "httpx>=0.23.0"
+  ],
+  "version": "2025.2.0"
+}
