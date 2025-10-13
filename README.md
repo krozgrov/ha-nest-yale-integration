@@ -81,3 +81,4 @@ This project is licensed under the MIT License.
 ## 🙌 Acknowledgements
 
 - Thanks to [@chrisjshull](https://github.com/chrisjshull) and contributors of the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest) for foundational protocol insights.
+- Enormous thanks to [BarelyFunctionalCode](https://github.com/BarelyFunctionalCode) for the countless hours spent decoding the Nest protobuf streams—this integration simply would not function without that reverse-engineering work.
