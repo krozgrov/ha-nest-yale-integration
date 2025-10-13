@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import sys
-sys.path.append("/workspaces/core/config/custom_components/nest_yale/proto")
+sys.path.append("/workspaces/core/config/custom_components/nest_yale_lock/proto")
 from ObserveTraits_pb2 import ObserveRequest, ResourceFilter
 
 # Create ObserveRequest
@@ -19,7 +19,7 @@ for trait in traits:
     # No resourceId - let API handle device specifics
 
 # Serialize and write to file
-bin_path = "/workspaces/core/config/custom_components/nest_yale/proto/ObserveTraits.bin"
+bin_path = "/workspaces/core/config/custom_components/nest_yale_lock/proto/ObserveTraits.bin"
 with open(bin_path, "wb") as f:
     data = req.SerializeToString()
     f.write(data)

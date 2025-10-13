@@ -1,10 +1,10 @@
 import logging
 from google.protobuf import any_pb2
-from custom_components.nest_yale.proto.weave.trait import security_pb2 as weave_security_pb2
-from custom_components.nest_yale.proto.weave.trait import power_pb2 as weave_power_pb2
-from custom_components.nest_yale.proto.nest.trait import user_pb2 as nest_user_pb2
-from custom_components.nest_yale.proto.weave.trait import description_pb2 as weave_description_pb2
-from custom_components.nest_yale.proto.nest.trait import security_pb2 as nest_security_pb2
+from custom_components.nest_yale_lock.proto.weave.trait import security_pb2 as weave_security_pb2
+from custom_components.nest_yale_lock.proto.weave.trait import power_pb2 as weave_power_pb2
+from custom_components.nest_yale_lock.proto.nest.trait import user_pb2 as nest_user_pb2
+from custom_components.nest_yale_lock.proto.weave.trait import description_pb2 as weave_description_pb2
+from custom_components.nest_yale_lock.proto.nest.trait import security_pb2 as nest_security_pb2
 
 _LOGGER = logging.getLogger(__name__)
 

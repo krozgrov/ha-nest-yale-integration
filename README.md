@@ -36,7 +36,7 @@ Some functionality is incomplete or non-functional.
 
 ## ⚙️ Getting Started (Test / Dev Only)
 
-1. Install the custom component into `<config>/custom_components/nest_yale/`.
+1. Install the custom component into `<config>/custom_components/nest_yale_lock/`.
 2. Restart Home Assistant to load the integration.
 3. Start the config flow (Settings → Devices & Services → Add Integration → **Nest Yale**).
 4. Provide:
