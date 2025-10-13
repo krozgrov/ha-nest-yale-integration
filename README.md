@@ -14,27 +14,24 @@ This integration enables basic monitoring and limited control of Nest x Yale sma
 
 ---
 
-## ⚠️ Experimental Plugin
+## 🚧 Beta Status
 
-> ⚠️ **Warning: This integration is experimental and not ready for production use.**
+> ⚠️ **Heads-up: this integration is in beta and still under active development.**
 
-This project is an early-stage prototype attempting to reverse engineer the Nest x Yale lock protocol.  
-It is based on the amazing reverse engineering work done in the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest).
-
-At present, only **three message types** have been decoded—just enough to show basic lock status, send lock & unlock commands and telemetry.  
-Some functionality is incomplete or non-functional.
+The core lock and unlock commands are now working, and real-time state updates are generally reliable.  
+However, the integration still depends on partially reversed protobuf messages taken from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest), so gaps remain and rough edges are expected.
 
 ---
 
-## 🚫 Do Not Use In Production
+## ⚠️ Known Limitations
 
-- Do **NOT** install this on your production Home Assistant instance.
-- Many core features are still under development or unreliable.
-- Expect bugs, error messages, incomplete features, and breaking changes.
+- You will continue to see `DecodeError in StreamBody: Error parsing message with type 'nest.rpc.StreamBody'` in the logs because the full protobuf surface is not decoded yet.
+- Additional message types beyond the basic lock trait remain unmapped, so advanced diagnostics and telemetry may be unavailable.
+- API response formats and authentication flows can change at any time; expect breaking updates.
 
 ---
 
-## ⚙️ Getting Started (Test / Dev Only)
+## ⚙️ Getting Started
 
 1. Install the custom component into `<config>/custom_components/nest_yale_lock/`.
 2. Restart Home Assistant to load the integration.
@@ -44,7 +41,6 @@ Some functionality is incomplete or non-functional.
    - **Cookies** – the raw cookie header string copied from the browser (e.g. `__Secure-3PSID=…; __Host-3PLSID=…`).
 5. Finish the wizard. The integration now reuses the same headers / protobuf payloads as the standalone test client.
 
-> ✅ **API key no longer required:** the auth flow requires issue token + cookies are needed. If you had an older entry with an API key, it is ignored.
 
 After onboarding, verify the lock entity appears and that `lock.lock` / `lock.unlock` service calls succeed.
 
