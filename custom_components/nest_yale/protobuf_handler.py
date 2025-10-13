@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import os
 from google.protobuf.message import DecodeError
 from google.protobuf.any_pb2 import Any
 from base64 import b64decode
@@ -65,6 +66,70 @@ class NestProtobufHandler:
         # Not enough bytes yet to decode the varint; wait for more data.
         _LOGGER.debug("Incomplete varint at pos %s; awaiting additional data", start)
         return None, start
+
+    async def _ingest_chunk(self, payload):
+        results = []
+
+        if not payload:
+            return results
+
+        stripped = payload.strip()
+        if stripped and all(b < 128 for b in stripped):
+            try:
+                decoded = b64decode(stripped, validate=True)
+                if decoded:
+                    payload = decoded
+            except binascii.Error:
+                pass
+
+        self.buffer.extend(payload)
+
+        while True:
+            if self.pending_length is None:
+                if len(self.buffer) >= 5 and self.buffer[0] in (0x00, 0x80):
+                    frame_type = self.buffer[0]
+                    frame_len = int.from_bytes(self.buffer[1:5], "big")
+                    if len(self.buffer) < 5 + frame_len:
+                        break
+                    del self.buffer[:5]
+                    if frame_type == 0x80:
+                        del self.buffer[:frame_len]
+                        continue
+                    if frame_len == 0:
+                        continue
+                    self.pending_length = frame_len
+                else:
+                    length, offset = self._decode_varint(self.buffer, 0)
+                    if length is None or offset > len(self.buffer):
+                        break
+                    del self.buffer[:offset]
+                    if length == 0:
+                        continue
+                    self.pending_length = length
+
+            if self.pending_length is None or len(self.buffer) < self.pending_length:
+                break
+
+            message = self.buffer[:self.pending_length]
+            del self.buffer[:self.pending_length]
+            self.pending_length = None
+            locks_data = await self._process_message(message)
+            if locks_data.get("yale"):
+                results.append(locks_data)
+
+        if (
+            self.pending_length
+            and len(self.buffer) >= self.pending_length
+            and len(self.buffer) >= CATALOG_THRESHOLD
+        ):
+            message = self.buffer[:self.pending_length]
+            del self.buffer[:self.pending_length]
+            self.pending_length = None
+            locks_data = await self._process_message(message)
+            if locks_data.get("yale"):
+                results.append(locks_data)
+
+        return results
 
     async def _process_message(self, message):
         _LOGGER.debug(f"Raw chunk (length={len(message)}): {message.hex()}")
@@ -171,75 +236,8 @@ class NestProtobufHandler:
                         _LOGGER.error(f"Received non-bytes data: {data}")
                         continue
 
-                    payload = data
-                    stripped = payload.strip()
-                    if stripped:
-                        is_ascii = all(b < 128 for b in stripped)
-                        if is_ascii:
-                            try:
-                                decoded = b64decode(stripped, validate=True)
-                                if decoded:
-                                    payload = decoded
-                            except binascii.Error:
-                                pass
-
-                    # Accumulate the raw bytes first; frames/messages are carved out below.
-                    self.buffer.extend(payload)
-
-                    _LOGGER.debug(f"Buffer size: {len(self.buffer)} bytes, pending_length: {self.pending_length}")
-
-                    while True:
-                        if self.pending_length is None:
-                            if len(self.buffer) >= 5 and self.buffer[0] in (0x00, 0x80):
-                                frame_type = self.buffer[0]
-                                frame_len = int.from_bytes(self.buffer[1:5], "big")
-                                if len(self.buffer) < 5 + frame_len:
-                                    break
-                                del self.buffer[:5]
-                                if frame_type == 0x80:
-                                    # Trailer frame – skip contents entirely.
-                                    del self.buffer[:frame_len]
-                                    continue
-                                if frame_len == 0:
-                                    continue
-                                self.pending_length = frame_len
-                            else:
-                                result = self._decode_varint(self.buffer, 0)
-                                if result[0] is None:
-                                    break
-                                length, offset = result
-                                if offset > len(self.buffer):
-                                    break
-                                del self.buffer[:offset]
-                                if length == 0:
-                                    continue
-                                self.pending_length = length
-
-                        if self.pending_length is None:
-                            break
-                        if len(self.buffer) < self.pending_length:
-                            break
-
-                        message = self.buffer[:self.pending_length]
-                        del self.buffer[:self.pending_length]
-                        self.pending_length = None
-                        locks_data = await self._process_message(message)
-
-                        if locks_data.get("yale"):
-                            yield locks_data
-                            continue
-
-                    if len(self.buffer) >= CATALOG_THRESHOLD and self.pending_length:
-                        if len(self.buffer) < self.pending_length:
-                            continue
-                        message = self.buffer[:self.pending_length]
-                        del self.buffer[:self.pending_length]
-                        self.pending_length = None
-                        locks_data = await self._process_message(message)
-
-                        if locks_data.get("yale"):
-                            yield locks_data
-                            continue
+                    for locks_data in await self._ingest_chunk(data):
+                        yield locks_data
 
                 await asyncio.sleep(PING_INTERVAL_SECONDS / 1000)
 
@@ -266,14 +264,15 @@ class NestProtobufHandler:
         observe_data = await read_protobuf_file(os.path.join(os.path.dirname(__file__), "proto", "ObserveTraits.bin"))
 
         try:
+            temp_handler = NestProtobufHandler()
             async with connection.session.post(api_url, headers=headers, data=observe_data) as response:
                 if response.status != 200:
                     _LOGGER.error(f"HTTP {response.status}: {await response.text()}")
                     return {}
-                async for chunk in response.content.iter_chunked(1024):
-                    locks_data = await self._process_message(chunk)
-                    if locks_data.get("yale"):
-                        return locks_data
+                async for chunk in response.content.iter_any():
+                    for locks_data in await temp_handler._ingest_chunk(chunk):
+                        if locks_data.get("yale"):
+                            return locks_data
         except Exception as e:
             _LOGGER.error(f"Refresh state error: {e}", exc_info=True)
         return {"yale": {}, "user_id": None, "structure_id": None}
