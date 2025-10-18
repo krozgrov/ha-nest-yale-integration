@@ -1,6 +1,6 @@
 {
   "domain": "nest_yale_lock",
-  "name": "Google Nest x Yale Lock",
+  "name": "Google Nest x Yale",
   "codeowners": ["@krozgrov"],
   "config_flow": true,
   "dependencies": [],
