@@ -390,7 +390,8 @@ class NestAPIClient:
         resource_command.command.CopyFrom(cmd_any)
         if command.get("traitLabel"):
             resource_command.traitLabel = command["traitLabel"]
-        request.resourceRequest.resourceId = device_id
+        # ResourceId must include the DEVICE_ prefix (as used in protobuf observe messages)
+        request.resourceRequest.resourceId = f"DEVICE_{device_id}"
         request.resourceRequest.requestId = request_id
         encoded_data = request.SerializeToString()
 
