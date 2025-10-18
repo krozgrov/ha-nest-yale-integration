@@ -1,4 +1,4 @@
-# Google Nest x Yale Lock Intergration for Home Assistant
+# Google Nest x Yale Lock Integration for Home Assistant
 
 **Custom Home Assistant integration for Google Nest x Yale Locks.**  
 This integration enables basic monitoring and limited control of Nest x Yale smart locks within Home Assistant.
@@ -40,16 +40,54 @@ logger:
 
 ## ⚙️ Getting Started
 
-1. Install the custom component into `<config>/custom_components/nest_yale_lock/`.
+You can install the **Google Nest x Yale Lock** integration either via **HACS** or by **manual copy**.
+
+---
+
+### 🧩 Option 1 — Install via HACS (Recommended)
+
+1. **Add the Custom Repository**
+   - In Home Assistant, open **HACS → Integrations → ⋮ (three dots) → Custom Repositories**.
+   - Add the repository URL:
+     ```
+     https://github.com/krozgrov/ha-nest-yale-integration
+     ```
+   - Select **Integration** as the category and click **Add**.
+
+2. **Install the Integration**
+   - Search for **Nest Yale Lock** in HACS and click **Download**.
+   - Once installed, restart Home Assistant.
+
+---
+
+### 📁 Option 2 — Manual Installation
+
+1. Copy the custom component folder into your Home Assistant configuration directory:
 2. Restart Home Assistant to load the integration.
-3. Start the config flow (Settings → Devices & Services → Add Integration → **Google Nest x Yale Lock**).
-4. Provide:
-   - **Issue token URL** – the `iframerpc?action=issueToken` URL captured from the Nest web session.
-   - **Cookies** – the raw cookie header string copied from the browser (e.g. `__Secure-3PSID=…; __Host-3PLSID=…`).
-5. Finish the wizard. The integration now reuses the same headers / protobuf payloads as the standalone test client.
 
+---
 
-After onboarding, verify the lock entity appears and that `lock.lock` / `lock.unlock` service calls succeed.
+### ⚙️ Configuration
+
+1. Go to **Settings → Devices & Services → Add Integration → Google Nest x Yale Lock**.
+2. Provide:
+- **Issue token URL** – the `iframerpc?action=issueToken` URL captured from your Nest web session.
+- **Cookies** – the raw cookie header string copied from your browser (e.g.  
+  `__Secure-3PSID=…; __Host-3PLSID=…`).
+3. Complete the setup wizard.
+
+The integration will automatically reuse the same headers and protobuf payloads as the standalone test client.
+
+---
+
+### ✅ Verify Installation
+
+After onboarding:
+- Ensure the lock entity appears under **Devices & Services**.
+- Test operation using:
+- `lock.lock`
+- `lock.unlock`
+service calls.
 
 ---
 
