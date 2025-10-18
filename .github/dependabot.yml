@@ -1,0 +1,30 @@
+version: 2
+updates:
+  # Keep GitHub Actions up to date
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "ci"]
+
+  # Track Python deps via a simple requirements.txt mirror
+  # Note: Home Assistant installs deps from manifest.json; Dependabot
+  # does not read that file, so we mirror here for update PRs/alerts.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "python"]
+    commit-message:
+      prefix: "deps(pip)"
+    # Example: avoid auto PRs for protobuf major bumps
+    ignore:
+      - dependency-name: "protobuf"
+        update-types: ["version-update:semver-major"]
+
