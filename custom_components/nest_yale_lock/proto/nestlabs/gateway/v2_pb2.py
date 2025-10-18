@@ -22,7 +22,7 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
-from proto.nest import rpc_pb2 as proto_dot_nest_dot_rpc__pb2
+from custom_components.nest_yale_lock.proto.nest import rpc_pb2 as proto_dot_nest_dot_rpc__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1fproto/nestlabs/gateway/v2.proto\x12\x13nestlabs.gateway.v2\x1a\x14proto/nest/rpc.proto\"i\n\x0eObserveRequest\x12\x0f\n\x07version\x18\x01 \x01(\x05\x12\x11\n\tsubscribe\x18\x02 \x01(\x08\x12\x33\n\x06\x66ilter\x18\x03 \x03(\x0b\x32#.nestlabs.gateway.v2.ResourceFilter\"9\n\x0eResourceFilter\x12\x12\n\ntrait_type\x18\x01 \x01(\t\x12\x13\n\x0bresource_id\x18\x02 \x01(\t2X\n\x0eGatewayService\x12\x46\n\x07Observe\x12#.nestlabs.gateway.v2.ObserveRequest\x1a\x14.nest.rpc.StreamBody0\x01\x62\x06proto3')
