@@ -10,7 +10,6 @@ This integration enables basic monitoring and limited control of Nest x Yale sma
 - Real-time Yale lock state via Nest Observe stream
 - Manual lock / unlock commands
 - Serial number, firmware, and basic diagnostics attributes 
-- Battery telemetry scaffolding (parity with test harness; values may be absent)
 
 ---
 
@@ -25,9 +24,17 @@ However, the integration still depends on partially reversed protobuf messages t
 
 ## ⚠️ Known Limitations
 
-- You will continue to see `DecodeError in StreamBody: Error parsing message with type 'nest.rpc.StreamBody'` in the logs because the full protobuf surface is not decoded yet.
-- Additional message types beyond the basic lock trait remain unmapped, so advanced diagnostics and telemetry may be unavailable.
-- API response formats and authentication flows can change at any time; expect breaking updates.
+- Logs may show `DecodeError in StreamBody: Error parsing message with type 'nest.rpc.StreamBody'` due to incomplete protobuf decoding. This is **harmless** and does not affect functionality.
+- Additional message types beyond the basic lock trait are unmapped, limiting advanced diagnostics and telemetry.
+- API response formats and authentication flows may change, potentially causing breaking updates.
+
+To suppress error messages, add this to your `configuration.yaml`:
+
+```yaml
+logger:
+  logs:
+    custom_components.nest_yale_lock.protobuf_handler: fatal
+```
 
 ---
 
@@ -35,7 +42,7 @@ However, the integration still depends on partially reversed protobuf messages t
 
 1. Install the custom component into `<config>/custom_components/nest_yale_lock/`.
 2. Restart Home Assistant to load the integration.
-3. Start the config flow (Settings → Devices & Services → Add Integration → **Nest Yale**).
+3. Start the config flow (Settings → Devices & Services → Add Integration → **Google Nest x Yale Lock**).
 4. Provide:
    - **Issue token URL** – the `iframerpc?action=issueToken` URL captured from the Nest web session.
    - **Cookies** – the raw cookie header string copied from the browser (e.g. `__Secure-3PSID=…; __Host-3PLSID=…`).
@@ -46,17 +53,12 @@ After onboarding, verify the lock entity appears and that `lock.lock` / `lock.un
 
 ---
 
----
-
 ## 🧠 Community Help Needed
 
 This project is open to contributions from the community.  
 If you have experience with:
 
-- Home Assistant custom component development
-- Reverse engineering APIs and embedded devices
 - Protocol Buffers (Protobuf)
-- General debugging of smart home integrations
 
 Your input would be incredibly valuable!
 
@@ -77,4 +79,4 @@ This project is licensed under the MIT License.
 ## 🙌 Acknowledgements
 
 - Thanks to [@chrisjshull](https://github.com/chrisjshull) and contributors of the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest) for foundational protocol insights.
-- Thanks to [BarelyFunctionalCode](https://github.com/BarelyFunctionalCode) for his time spent decoding the Nest protobuf streams—this integration  would not function without that reverse-engineering work.
+- Thanks to [BarelyFunctionalCode](https://github.com/BarelyFunctionalCode) for his time spent decoding the Nest protobuf streams—this integration would not function without that reverse-engineering work.
