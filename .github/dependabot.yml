@@ -23,8 +23,11 @@ updates:
     labels: ["dependencies", "python"]
     commit-message:
       prefix: "deps(pip)"
-    # Example: avoid auto PRs for protobuf major bumps
+    # Do not allow updates beyond HA-pinned packages
+    # Completely ignore protobuf bumps; keep aligned with HA
     ignore:
       - dependency-name: "protobuf"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      # Allow httpx, but block major upgrades to reduce breakage risk
+      - dependency-name: "httpx"
         update-types: ["version-update:semver-major"]
-
