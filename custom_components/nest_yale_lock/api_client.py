@@ -1,4 +1,5 @@
 import logging
+import random
 import uuid
 import aiohttp
 import asyncio
@@ -260,6 +261,10 @@ class NestAPIClient:
         return {}
 
     async def observe(self):
+        """Yield real-time updates, reconnecting on timeouts/errors indefinitely.
+
+        Avoids raising on transient errors to keep the coordinator loop alive.
+        """
         if not self.access_token or not self.connection.connected:
             await self.authenticate()
 
@@ -276,16 +281,16 @@ class NestAPIClient:
         }
 
         observe_payload = self._get_observe_payload()
-        retries = 0
-        max_retries = 3
-        last_error = None
+        backoff = API_RETRY_DELAY_SECONDS
 
-        while retries < max_retries:
+        while True:
             for base_url in self._candidate_bases():
                 api_url = f"{base_url}{ENDPOINT_OBSERVE}"
                 _LOGGER.debug("Starting observe stream with URL: %s", api_url)
                 try:
                     async for chunk in self.connection.stream(api_url, headers, observe_payload):
+                        # Reset backoff on any successful data
+                        backoff = API_RETRY_DELAY_SECONDS
                         locks_data = await self.protobuf_handler._process_message(chunk)
                         if "yale" in locks_data:
                             if locks_data.get("user_id"):
@@ -302,24 +307,18 @@ class NestAPIClient:
                                     _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
                             self.transport_url = base_url
                         yield locks_data.get("yale", {})
-                    _LOGGER.debug("Observe stream finished for %s; attempting reconnect", api_url)
+                    _LOGGER.debug("Observe stream finished for %s; reconnecting", api_url)
                     self.connection.connected = False
                 except asyncio.TimeoutError:
-                    last_error = None
                     _LOGGER.warning("Observe stream timed out via %s; retrying", api_url)
                     self.connection.connected = False
-                    continue
                 except Exception as err:
-                    last_error = err
                     _LOGGER.error("Error in observe stream via %s: %s", api_url, err, exc_info=True)
                     self.connection.connected = False
-                    continue
-            retries += 1
-            if retries < max_retries:
-                await asyncio.sleep(API_RETRY_DELAY_SECONDS)
-        if last_error:
-            raise last_error
-        raise RuntimeError("Observe stream failed without specific error")
+            # Exponential backoff with jitter, capped to 60s
+            sleep_for = min(backoff, 60) + random.uniform(0, min(backoff, 60) / 2)
+            await asyncio.sleep(sleep_for)
+            backoff = min(backoff * 2, 60)
 
     #async def send_command(self, command, device_id):
     async def send_command(self, command, device_id, structure_id=None):
