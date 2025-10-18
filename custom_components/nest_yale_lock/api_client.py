@@ -14,6 +14,9 @@ from .const import (
     ENDPOINT_SENDCOMMAND,
     PRODUCTION_HOSTNAME,
     USER_AGENT_STRING,
+    API_GOOGLE_REAUTH_MINUTES,
+    OBSERVE_IDLE_RESET_SECONDS,
+    CONNECT_FAILURE_RESET_THRESHOLD,
 )
 from .proto.nestlabs.gateway import v1_pb2
 from .proto.nestlabs.gateway import v2_pb2
@@ -42,16 +45,27 @@ class ConnectionShim:
         self.connected = True
         self.session = session
 
-    async def stream(self, api_url, headers, data):
+    async def stream(self, api_url, headers, data, read_timeout=None):
         async with self.session.post(api_url, headers=headers, data=data) as response:
             _LOGGER.debug(f"Response headers: {dict(response.headers)}")
             if response.status != 200:
-                _LOGGER.error(f"HTTP {response.status}: {await response.text()}")
+                # Raise a response error with status for upstream handling
+                body = await response.text()
+                _LOGGER.error(f"HTTP {response.status}: {body}")
                 self.connected = False
-                raise Exception(f"Stream failed with status {response.status}")
+                raise aiohttp.ClientResponseError(
+                    request_info=response.request_info,
+                    history=(),
+                    status=response.status,
+                    message=body,
+                    headers=response.headers,
+                )
             self.connected = True
             try:
-                async for chunk in response.content.iter_any():
+                while True:
+                    chunk = await asyncio.wait_for(response.content.readany(), timeout=read_timeout)
+                    if not chunk:
+                        break
                     _LOGGER.debug(f"Stream chunk received (length={len(chunk)}): {chunk[:100].hex()}...")
                     yield chunk
             except asyncio.TimeoutError:
@@ -65,9 +79,16 @@ class ConnectionShim:
             response_data = await response.read()
             _LOGGER.debug(f"Post response status: {response.status}, response: {response_data.hex()}")
             if response.status != 200:
-                _LOGGER.error(f"HTTP {response.status}: {await response.text()}")
+                body = await response.text()
+                _LOGGER.error(f"HTTP {response.status}: {body}")
                 self.connected = False
-                raise Exception(f"Post failed with status {response.status}")
+                raise aiohttp.ClientResponseError(
+                    request_info=response.request_info,
+                    history=(),
+                    status=response.status,
+                    message=body,
+                    headers=response.headers,
+                )
             self.connected = True
             return response_data
 
@@ -91,6 +112,8 @@ class NestAPIClient:
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600))
         self.connection = ConnectionShim(self.session)
         self._observe_payload = self._build_observe_payload()
+        self._connect_failures = 0
+        self._reauth_task = None
         _LOGGER.debug("NestAPIClient initialized with session")
 
     @property
@@ -164,6 +187,8 @@ class NestAPIClient:
             # Also ensure structure_id is set via REST directly
             self._structure_id = await self.fetch_structure_id()
             self.current_state["structure_id"] = self._structure_id
+            # Schedule preemptive re-auth
+            self._schedule_reauth()
         except Exception as e:
             _LOGGER.error(f"Authentication failed: {e}", exc_info=True)
             await self.close()
@@ -252,6 +277,8 @@ class NestAPIClient:
                 except Exception as err:
                     last_error = err
                     _LOGGER.error("Refresh state failed via %s: %s", api_url, err, exc_info=True)
+                    # Note connect failures and maybe reset session
+                    self._note_connect_failure(err)
                     continue
             retries += 1
             if retries < max_retries:
@@ -288,9 +315,10 @@ class NestAPIClient:
                 api_url = f"{base_url}{ENDPOINT_OBSERVE}"
                 _LOGGER.debug("Starting observe stream with URL: %s", api_url)
                 try:
-                    async for chunk in self.connection.stream(api_url, headers, observe_payload):
+                    async for chunk in self.connection.stream(api_url, headers, observe_payload, read_timeout=OBSERVE_IDLE_RESET_SECONDS):
                         # Reset backoff on any successful data
                         backoff = API_RETRY_DELAY_SECONDS
+                        self._connect_failures = 0
                         locks_data = await self.protobuf_handler._process_message(chunk)
                         if "yale" in locks_data:
                             if locks_data.get("user_id"):
@@ -312,9 +340,21 @@ class NestAPIClient:
                 except asyncio.TimeoutError:
                     _LOGGER.warning("Observe stream timed out via %s; retrying", api_url)
                     self.connection.connected = False
+                except aiohttp.ClientResponseError as cre:
+                    if cre.status in (401, 403):
+                        _LOGGER.info("Observe received %s; reauthenticating and retrying", cre.status)
+                        try:
+                            await self.authenticate()
+                        except Exception:
+                            _LOGGER.warning("Reauthentication failed during observe; will backoff and retry")
+                        self.connection.connected = False
+                        continue
+                    _LOGGER.error("Error in observe stream via %s: %s", api_url, cre, exc_info=True)
+                    self.connection.connected = False
                 except Exception as err:
                     _LOGGER.error("Error in observe stream via %s: %s", api_url, err, exc_info=True)
                     self.connection.connected = False
+                    self._note_connect_failure(err)
             # Exponential backoff with jitter, capped to 60s
             sleep_for = min(backoff, 60) + random.uniform(0, min(backoff, 60) / 2)
             await asyncio.sleep(sleep_for)
@@ -365,16 +405,28 @@ class NestAPIClient:
         last_error = None
         for base_url in self._candidate_bases():
             api_url = f"{base_url}{ENDPOINT_SENDCOMMAND}"
-            try:
-                raw_data = await self.connection.post(api_url, headers, encoded_data)
-                self.transport_url = base_url
-                await asyncio.sleep(2)
-                await self.refresh_state()
-                return raw_data
-            except Exception as err:
-                last_error = err
-                _LOGGER.error("Failed to send command to %s via %s: %s", device_id, api_url, err, exc_info=True)
-                continue
+            reauthed = False
+            for _ in range(2):
+                try:
+                    raw_data = await self.connection.post(api_url, headers, encoded_data)
+                    self.transport_url = base_url
+                    await asyncio.sleep(2)
+                    await self.refresh_state()
+                    return raw_data
+                except aiohttp.ClientResponseError as cre:
+                    if cre.status in (401, 403) and not reauthed:
+                        _LOGGER.info("Command got %s; reauthenticating and retrying", cre.status)
+                        await self.authenticate()
+                        reauthed = True
+                        continue
+                    last_error = cre
+                    _LOGGER.error("Failed to send command to %s via %s: %s", device_id, api_url, cre, exc_info=True)
+                    break
+                except Exception as err:
+                    last_error = err
+                    _LOGGER.error("Failed to send command to %s via %s: %s", device_id, api_url, err, exc_info=True)
+                    self._note_connect_failure(err)
+                    break
         if last_error:
             raise last_error
         raise RuntimeError(f"Failed to send command to {device_id} for unknown reasons")
@@ -383,6 +435,10 @@ class NestAPIClient:
         if self.connection and self.connection.connected:
             await self.connection.close()
             _LOGGER.debug("NestAPIClient session closed")
+        # Cancel preemptive reauth task if running
+        if self._reauth_task and not self._reauth_task.done():
+            self._reauth_task.cancel()
+            self._reauth_task = None
 
     def get_device_metadata(self, device_id):
         lock_data = self.current_state["devices"]["locks"].get(device_id, {})
@@ -402,3 +458,44 @@ class NestAPIClient:
                     })
                     break
         return metadata
+
+    def _schedule_reauth(self):
+        # Cancel existing timer
+        if self._reauth_task and not self._reauth_task.done():
+            self._reauth_task.cancel()
+
+        async def _timer():
+            try:
+                await asyncio.sleep(API_GOOGLE_REAUTH_MINUTES * 60)
+                _LOGGER.info("Preemptive reauthentication timer fired; renewing token")
+                await self.authenticate()
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                _LOGGER.warning(f"Preemptive reauthentication failed: {e}")
+            finally:
+                # Reschedule for the next cycle if not closed
+                if self.session and not self.session.closed:
+                    self._schedule_reauth()
+
+        self._reauth_task = asyncio.create_task(_timer())
+
+    def _note_connect_failure(self, err: Exception):
+        # Increment on typical connection failures
+        if isinstance(err, (aiohttp.ClientConnectorError, asyncio.TimeoutError)) or 'Cannot connect to host' in str(err):
+            self._connect_failures += 1
+            if self._connect_failures >= CONNECT_FAILURE_RESET_THRESHOLD:
+                _LOGGER.warning("Consecutive connect failures reached threshold; recreating HTTP session")
+                asyncio.create_task(self._reset_session())
+        else:
+            # Not a connect failure; reset counter
+            self._connect_failures = 0
+
+    async def _reset_session(self):
+        try:
+            await self.connection.close()
+        except Exception:
+            pass
+        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600))
+        self.connection = ConnectionShim(self.session)
+        self._connect_failures = 0
