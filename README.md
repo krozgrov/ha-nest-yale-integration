@@ -28,14 +28,6 @@ However, the integration still depends on partially reversed protobuf messages t
 - Additional message types beyond the basic lock trait are unmapped, limiting advanced diagnostics and telemetry.
 - API response formats and authentication flows may change, potentially causing breaking updates.
 
-To suppress error messages, add this to your `configuration.yaml`:
-
-```yaml
-logger:
-  logs:
-    custom_components.nest_yale_lock.protobuf_handler: 
-```
-
 ---
 
 ## ⚙️ Getting Started
@@ -89,23 +81,6 @@ After onboarding:
 - `lock.unlock`
 service calls.
 
----
-
-## 🔍 Logging
-
-- UI toggle (quick): Settings → Devices & Services → Google Nest x Yale → … → Enable debug logging. This enables DEBUG for this integration and its submodules for about 30 minutes. The manifest lists all module loggers so the toggle covers them automatically.
-- configuration.yaml (persistent):
-
-```yaml
-logger:
-  default: warning
-  logs:
-    custom_components.nest_yale_lock: debug
-    # Optional: narrow or raise specific modules
-    # custom_components.nest_yale_lock.api_client: debug
-    # custom_components.nest_yale_lock.connection: debug
-    # custom_components.nest_yale_lock.protobuf_handler: debug
-```
 ---
 
 ## 🧠 Community Help Needed
