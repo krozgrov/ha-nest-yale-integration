@@ -17,13 +17,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Nest Yale Lock from a config entry."""
     _LOGGER.debug("Starting async_setup_entry for entry_id: %s, title: %s", entry.entry_id, entry.title)
-    # Beta: log effective logger levels once to help diagnose visibility
-    try:
-        root_eff = logging.getLevelName(logging.getLogger("custom_components.nest_yale_lock").getEffectiveLevel())
-        api_eff = logging.getLevelName(logging.getLogger("custom_components.nest_yale_lock.api_client").getEffectiveLevel())
-        _LOGGER.warning("[beta] Effective logger levels — base=%s api_client=%s", root_eff, api_eff)
-    except Exception:  # best-effort only
-        pass
+    # Normal behavior: avoid emitting extra startup diagnostics at WARNING
 
     issue_token = entry.data.get("issue_token")
     cookies = entry.data.get("cookies")
