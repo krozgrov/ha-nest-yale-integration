@@ -67,7 +67,12 @@ class ConnectionShim:
                     chunk = await asyncio.wait_for(response.content.readany(), timeout=read_timeout)
                     if not chunk:
                         break
-                    _LOGGER.debug(f"Stream chunk received (length={len(chunk)}): {chunk[:100].hex()}...")
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "Stream chunk received (length=%d): %s...",
+                            len(chunk),
+                            chunk[:100].hex(),
+                        )
                     yield chunk
             except asyncio.TimeoutError:
                 _LOGGER.warning("Stream read timed out; marking connection as closed")
@@ -170,7 +175,11 @@ class NestAPIClient:
         _LOGGER.debug("Authenticating with Nest API")
         try:
             self.auth_data = await self.authenticator.authenticate(self.session)
-            _LOGGER.debug(f"Raw auth data received: {self.auth_data}")
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "Auth data keys received: %s",
+                    list(self.auth_data.keys()) if isinstance(self.auth_data, dict) else type(self.auth_data),
+                )
             if not self.auth_data or "access_token" not in self.auth_data:
                 raise ValueError("Invalid authentication data received")
             self.access_token = self.auth_data["access_token"]

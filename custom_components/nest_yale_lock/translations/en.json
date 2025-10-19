@@ -1,0 +1,23 @@
+{
+  "title": "Google Nest x Yale",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect Google Nest x Yale",
+        "description": "Paste your Issue Token URL and Cookies from your Nest web session.",
+        "data": {
+          "issue_token": "Issue Token URL",
+          "cookies": "Cookies"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only a single configuration of Google Nest x Yale is allowed."
+    },
+    "error": {
+      "auth_failure": "Authentication failed. Please verify the Issue Token URL and Cookies.",
+      "unknown_error": "Unknown error. Check logs for details."
+    }
+  }
+}
+

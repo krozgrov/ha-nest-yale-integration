@@ -15,6 +15,16 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _mask(value: str, keep: int = 4) -> str:
+    """Mask sensitive values for logging (keep first/last few chars)."""
+    try:
+        if not value or len(value) <= keep * 2:
+            return "***"
+        return f"{value[:keep]}***{value[-keep:]}"
+    except Exception:
+        return "***"
+
 class NestAuthenticator:
     """Handles authentication with Google for Nest integration."""
 
@@ -31,7 +41,7 @@ class NestAuthenticator:
         self.access_token = None
         # also capture id_token from Google response
         self.id_token = None
-        _LOGGER.debug("NestAuthenticator initialized with updated auth.py")
+        _LOGGER.debug("NestAuthenticator initialized")
 
     @staticmethod
     def generate_token(ft=False):
@@ -92,8 +102,12 @@ class NestAuthenticator:
             for attempt in range(3):
                 try:
                     # Step 1: Fetch Google access token
-                    _LOGGER.debug(f"Attempting to fetch Google token with issue_token: {self.issue_token}")
-                    _LOGGER.debug(f"Using cookies: {self.cookies}")
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "Attempting to fetch Google token with issue_token: %s",
+                            _mask(str(self.issue_token)),
+                        )
+                        _LOGGER.debug("Using cookies keys: %s", list(self.cookies.keys()))
                     _LOGGER.debug("Sending GET request...")
                     async with session.get(
                         self.issue_token,
@@ -105,18 +119,20 @@ class NestAuthenticator:
                         if resp.status != 200:
                             raise ValueError(f"HTTP error: {resp.status} - {await resp.text()}")
                         raw_response = await resp.text()
-                        _LOGGER.debug(f"Raw Google response text: {raw_response}")
+                        if _LOGGER.isEnabledFor(logging.DEBUG):
+                            _LOGGER.debug("Google response status=200, length=%d", len(raw_response))
                         try:
                             _LOGGER.debug("Parsing JSON...")
                             google_data = await resp.json()
                         except ValueError as e:
                             _LOGGER.error(f"Failed to parse Google response as JSON: {e} - Raw response: {raw_response}")
                             raise ValueError(f"Google response not valid JSON: {raw_response}")
-                        _LOGGER.debug(f"JSON parsed, google_data type: {type(google_data)}")
+                        _LOGGER.debug("JSON parsed, google_data type: %s", type(google_data))
                         if google_data is None or not isinstance(google_data, dict):
                             _LOGGER.error(f"Invalid Google response (None or not a dict): {raw_response}")
                             raise ValueError(f"Google response is not a valid JSON dict: {raw_response}")
-                        _LOGGER.debug(f"Google response: {google_data}")
+                        if _LOGGER.isEnabledFor(logging.DEBUG):
+                            _LOGGER.debug("Google response keys: %s", list(google_data.keys()))
                         google_token = google_data.get("access_token")
                         # capture Google's ID token for downstream structureId lookup
                         self.id_token = google_data.get("id_token")
@@ -142,7 +158,7 @@ class NestAuthenticator:
                         "policy_id": "authproxy-oauth-policy"
                     }
 
-                    _LOGGER.debug(f"Exchanging Google token for Nest JWT at {nest_url}")
+                    _LOGGER.debug("Exchanging Google token for Nest JWT at %s", nest_url)
                     async with session.post(
                         nest_url,
                         headers=nest_headers,
@@ -153,7 +169,8 @@ class NestAuthenticator:
                         if nest_resp.status != 200:
                             raise ValueError(f"Nest HTTP error: {nest_resp.status} - {await nest_resp.text()}")
                         raw_nest_response = await nest_resp.text()
-                        _LOGGER.debug(f"Raw Nest response text: {raw_nest_response}")
+                        if _LOGGER.isEnabledFor(logging.DEBUG):
+                            _LOGGER.debug("Nest response status=200, length=%d", len(raw_nest_response))
                         try:
                             result = await nest_resp.json()
                         except ValueError as e:
@@ -162,7 +179,8 @@ class NestAuthenticator:
                         if result is None or not isinstance(result, dict):
                             _LOGGER.error(f"Invalid Nest response (None or not a dict): {raw_nest_response}")
                             raise ValueError(f"Nest response is not a valid JSON dict: {raw_nest_response}")
-                        _LOGGER.debug(f"Nest response: {result}")
+                        if _LOGGER.isEnabledFor(logging.DEBUG):
+                            _LOGGER.debug("Nest response keys: %s", list(result.keys()))
                         self.access_token = result.get("jwt")
                         if not self.access_token:
                             raise ValueError("No Nest JWT received from nestauthproxyservice")
