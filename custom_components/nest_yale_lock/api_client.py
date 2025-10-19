@@ -74,10 +74,10 @@ class ConnectionShim:
                 raise
 
     async def post(self, api_url, headers, data):
-        _LOGGER.debug(f"Sending POST to {api_url}, headers={headers}, data={data.hex()}")
+        _LOGGER.info(f"Sending POST to {api_url}, len(data)={len(data)}")
         async with self.session.post(api_url, headers=headers, data=data) as response:
             response_data = await response.read()
-            _LOGGER.debug(f"Post response status: {response.status}, response: {response_data.hex()}")
+            _LOGGER.info(f"Post response status: {response.status}, len(response)={len(response_data)}")
             if response.status != 200:
                 body = await response.text()
                 _LOGGER.error(f"HTTP {response.status}: {body}")
@@ -401,11 +401,11 @@ class NestAPIClient:
         request.resourceRequest.requestId = request_id
         encoded_data = request.SerializeToString()
 
-        _LOGGER.debug(
-            "Sending command to %s: %s, encoded: %s, structure_id: %s",
+        _LOGGER.info(
+            "Sending command to %s (trait=%s), bytes=%d, structure_id=%s",
             device_id,
-            command,
-            encoded_data.hex(),
+            command.get("command", {}).get("type_url"),
+            len(encoded_data),
             self._structure_id,
         )
 
