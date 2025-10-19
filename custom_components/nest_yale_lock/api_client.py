@@ -372,14 +372,9 @@ class NestAPIClient:
             "User-Agent": USER_AGENT_STRING,
             "X-Accept-Content-Transfer-Encoding": "binary",
             "X-Accept-Response-Streaming": "true",
-            "request-id": request_id,
         }
 
-        # Always include a structure_id header, defaulting to the fetched one
-        effective_structure_id = structure_id or self._structure_id
-        if effective_structure_id:
-            headers["X-Nest-Structure-Id"] = effective_structure_id
-            _LOGGER.debug(f"[nest_yale_lock] Using structure_id: {effective_structure_id}")
+        # Do not include X-Nest-Structure-Id; Homebridge does not send it for SendCommand
 
         cmd_any = any_pb2.Any()
         cmd_any.type_url = command["command"]["type_url"]
