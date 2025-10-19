@@ -1,5 +1,3 @@
-import os
-import certifi
 from datetime import timedelta
 
 # User-Agent string to mimic a real browser (from nest-endpoints.js and nest-connection.js)
@@ -70,9 +68,6 @@ PLATFORMS = ["lock"]
 CONF_ISSUE_TOKEN = "issue_token"
 CONF_COOKIES = "cookies"
 UPDATE_INTERVAL_SECONDS = timedelta(seconds=30)  # Use timedelta for DataUpdateCoordinator
-
-# SSL Certificate Path
-SSL_VERIFY_PATH = certifi.where()
 
 def parse_cookies(cookie_string):
     """Parses a cookie string into a dictionary."""

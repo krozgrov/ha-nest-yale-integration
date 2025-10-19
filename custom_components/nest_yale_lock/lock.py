@@ -1,6 +1,7 @@
 import logging
 import asyncio
 from homeassistant.components.lock import LockEntity, LockState
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -12,45 +13,35 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     _LOGGER.debug("Starting async_setup_entry for lock platform, entry_id: %s", entry.entry_id)
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    locks_data = coordinator.data
-    _LOGGER.debug("Coordinator data at setup: %s", locks_data)
 
-    if locks_data is None or not locks_data:
-        _LOGGER.warning("No lock data available yet, waiting for observer updates.")
-        await asyncio.sleep(5)
-        locks_data = coordinator.data
-        if not locks_data:
-            _LOGGER.error("Still no lock data after waiting, setup failed.")
-            return
+    added: set[str] = hass.data[DOMAIN].setdefault("added_lock_ids", set())
 
-    locks = []
-    existing_entities = hass.data[DOMAIN].get("entities", [])
-    existing_ids = {entity.unique_id for entity in existing_entities}
-    _LOGGER.debug("Existing entity IDs: %s", existing_ids)
+    @callback
+    def _process_devices():
+        data = coordinator.data or {}
+        new_entities = []
+        for device_id, device in data.items():
+            if not isinstance(device, dict) or "device_id" not in device:
+                continue
+            unique_id = f"{DOMAIN}_{device_id}"
+            if unique_id in added:
+                continue
+            new_entities.append(NestYaleLock(coordinator, device))
+            added.add(unique_id)
+            _LOGGER.debug("Prepared new lock entity: %s", unique_id)
+        if new_entities:
+            _LOGGER.info("Adding %d Nest Yale locks", len(new_entities))
+            async_add_entities(new_entities)
 
-    for device_id, device in locks_data.items():
-        _LOGGER.debug("Processing device_id: %s, device: %s", device_id, device)
-        if not isinstance(device, dict):
-            _LOGGER.warning("Invalid device entry for %s: %s", device_id, device)
-            continue
-        if "device_id" not in device:
-            _LOGGER.warning("Skipping device without 'device_id': %s", device)
-            continue
-        unique_id = f"{DOMAIN}_{device_id}"
-        if unique_id not in existing_ids:
-            lock = NestYaleLock(coordinator, device)
-            locks.append(lock)
-            hass.data[DOMAIN]["entities"].append(lock)
-            _LOGGER.debug("Added new lock entity: %s", unique_id)
+    # Add whatever we have now, then subscribe for future updates
+    _process_devices()
+    cancel = coordinator.async_add_listener(_process_devices)
+    # Ensure listener removal on unload
+    entry.async_on_unload(cancel)
 
-    if locks:
-        _LOGGER.info("Adding %d Nest Yale locks", len(locks))
-        async_add_entities(locks)
-    else:
-        _LOGGER.warning("No valid locks found to add.")
-
-class NestYaleLock(LockEntity):
+class NestYaleLock(CoordinatorEntity, LockEntity):
     def __init__(self, coordinator, device):
+        super().__init__(coordinator)
         self._coordinator = coordinator
         self._device = device.copy()
         self._device["bolt_moving"] = False
@@ -66,15 +57,20 @@ class NestYaleLock(LockEntity):
             "name": self._attr_name,
             "sw_version": metadata["firmware_revision"],
         }
-        self._attr_entity_id = f"lock.{self._attr_unique_id.replace(':', '_').lower()}"
         self._attr_supported_features = 0
         self._attr_has_entity_name = False
         self._attr_should_poll = False
         self._state = None
         self._user_id = self._coordinator.api_client.user_id
         self._structure_id = self._coordinator.api_client.structure_id
-        _LOGGER.debug("Initialized lock with user_id: %s, structure_id: %s, device_id=%s, unique_id=%s, entity_id=%s, device=%s",
-                      self._user_id, self._structure_id, self._device_id, self._attr_unique_id, self._attr_entity_id, self._device)
+        _LOGGER.debug(
+            "Initialized lock with user_id: %s, structure_id: %s, device_id=%s, unique_id=%s, device=%s",
+            self._user_id,
+            self._structure_id,
+            self._device_id,
+            self._attr_unique_id,
+            self._device,
+        )
 
     @property
     def is_locked(self):
@@ -169,31 +165,32 @@ class NestYaleLock(LockEntity):
 
     async def async_added_to_hass(self):
         _LOGGER.debug("Entity %s added to HA", self._attr_unique_id)
-        @callback
-        def update_listener():
-            new_data = self._coordinator.data.get(self._device_id)
-            if new_data:
-                old_state = self._device.copy()
-                self._device.update(new_data)
-                self._user_id = self._coordinator.api_client.user_id
-                self._structure_id = self._coordinator.api_client.structure_id
-                if "bolt_moving" in new_data and new_data["bolt_moving"]:
-                    self._device["bolt_moving"] = True
-                    asyncio.create_task(self._clear_bolt_moving())
-                else:
-                    self._device["bolt_moving"] = False
-                if self.is_locked:
-                    self._state = LockState.LOCKED
-                else:
-                    self._state = LockState.UNLOCKED
-                self.async_write_ha_state()
-                _LOGGER.debug("Updated lock state for %s: old=%s, new=%s", self._attr_unique_id, old_state, self._device)
-            else:
-                _LOGGER.debug("No updated data for lock %s in coordinator", self._attr_unique_id)
-                self._device["bolt_moving"] = False
-                self.async_write_ha_state()
+        await super().async_added_to_hass()
 
-        self.async_on_remove(self._coordinator.async_add_listener(update_listener))
+    def _handle_coordinator_update(self) -> None:
+        new_data = self._coordinator.data.get(self._device_id)
+        if new_data:
+            old_state = self._device.copy()
+            self._device.update(new_data)
+            self._user_id = self._coordinator.api_client.user_id
+            self._structure_id = self._coordinator.api_client.structure_id
+            # Normalize movement flag
+            if "bolt_moving" in new_data and new_data["bolt_moving"]:
+                self._device["bolt_moving"] = True
+                asyncio.create_task(self._clear_bolt_moving())
+            else:
+                self._device["bolt_moving"] = False
+            # Set HA state
+            if self.is_locked:
+                self._state = LockState.LOCKED
+            else:
+                self._state = LockState.UNLOCKED
+            self.async_write_ha_state()
+            _LOGGER.debug("Updated lock state for %s: old=%s, new=%s", self._attr_unique_id, old_state, self._device)
+        else:
+            _LOGGER.debug("No updated data for lock %s in coordinator", self._attr_unique_id)
+            self._device["bolt_moving"] = False
+            self.async_write_ha_state()
 
     async def _clear_bolt_moving(self):
         await asyncio.sleep(5)
@@ -203,7 +200,7 @@ class NestYaleLock(LockEntity):
 
     @property
     def available(self):
-        available = bool(self._device)
+        available = bool(self._device) and self._coordinator.last_update_success
         _LOGGER.debug("Availability check for %s: %s", self._attr_unique_id, available)
         return available
 
@@ -224,11 +221,6 @@ class NestYaleLock(LockEntity):
     async def async_update(self):
         _LOGGER.debug("Forcing update for %s", self._attr_unique_id)
         await self._coordinator.async_request_refresh()
-        self.async_schedule_update_ha_state()  # Replace force_refresh
-
-    async def async_update_ha_state(self):
-        self.async_write_ha_state()
-        await asyncio.sleep(0.1)
 
     async def async_will_remove_from_hass(self):
         _LOGGER.debug("Removing entity %s from HA", self._attr_unique_id)

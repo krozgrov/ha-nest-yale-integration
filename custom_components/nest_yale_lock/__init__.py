@@ -4,6 +4,7 @@ import asyncio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers import config_validation as cv
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from .const import DOMAIN, PLATFORMS
 from .api_client import NestAPIClient
 from .coordinator import NestCoordinator
@@ -47,7 +48,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await asyncio.sleep(2)
         _LOGGER.debug("Coordinator setup complete, initial data: %s", coordinator.data)
         if not coordinator.data:
-            _LOGGER.error("Failed to fetch initial data after retries")
+            _LOGGER.warning("Initial data still empty; continuing setup and waiting for observer updates")
     except Exception as e:
         _LOGGER.error("Failed to initialize API client or coordinator: %s", e, exc_info=True)
         return False

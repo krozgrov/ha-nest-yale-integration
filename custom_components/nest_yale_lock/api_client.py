@@ -20,6 +20,7 @@ from .const import (
 )
 from .proto.nestlabs.gateway import v1_pb2
 from .proto.nestlabs.gateway import v2_pb2
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 
 def _normalize_base(url):
@@ -66,7 +67,12 @@ class ConnectionShim:
                     chunk = await asyncio.wait_for(response.content.readany(), timeout=read_timeout)
                     if not chunk:
                         break
-                    _LOGGER.debug(f"Stream chunk received (length={len(chunk)}): {chunk[:100].hex()}...")
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "Stream chunk received (length=%d): %s...",
+                            len(chunk),
+                            chunk[:100].hex(),
+                        )
                     yield chunk
             except asyncio.TimeoutError:
                 _LOGGER.warning("Stream read timed out; marking connection as closed")
@@ -93,10 +99,9 @@ class ConnectionShim:
             return response_data
 
     async def close(self):
-        if self.session and not self.session.closed:
-            await self.session.close()
-            self.connected = False
-            _LOGGER.debug("ConnectionShim session closed")
+        # Do not close HA-managed session; just mark as disconnected
+        self.connected = False
+        _LOGGER.debug("ConnectionShim closed (session managed by HA)")
 
 class NestAPIClient:
     def __init__(self, hass, issue_token, api_key, cookies):
@@ -109,7 +114,8 @@ class NestAPIClient:
         self._user_id = None  # Discover dynamically
         self._structure_id = None  # Discover dynamically
         self.current_state = {"devices": {"locks": {}}, "user_id": self._user_id, "structure_id": self._structure_id}
-        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600))
+        # Use Home Assistant managed session
+        self.session = async_get_clientsession(hass)
         self.connection = ConnectionShim(self.session)
         self._observe_payload = self._build_observe_payload()
         self._connect_failures = 0
@@ -169,7 +175,11 @@ class NestAPIClient:
         _LOGGER.debug("Authenticating with Nest API")
         try:
             self.auth_data = await self.authenticator.authenticate(self.session)
-            _LOGGER.debug(f"Raw auth data received: {self.auth_data}")
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "Auth data keys received: %s",
+                    list(self.auth_data.keys()) if isinstance(self.auth_data, dict) else type(self.auth_data),
+                )
             if not self.auth_data or "access_token" not in self.auth_data:
                 raise ValueError("Invalid authentication data received")
             self.access_token = self.auth_data["access_token"]
@@ -441,7 +451,7 @@ class NestAPIClient:
     async def close(self):
         if self.connection and self.connection.connected:
             await self.connection.close()
-            _LOGGER.debug("NestAPIClient session closed")
+            _LOGGER.debug("NestAPIClient connection closed")
         # Cancel preemptive reauth task if running
         if self._reauth_task and not self._reauth_task.done():
             self._reauth_task.cancel()
@@ -503,6 +513,7 @@ class NestAPIClient:
             await self.connection.close()
         except Exception:
             pass
-        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600))
+        # Recreate lightweight wrapper using HA-managed session
+        self.session = async_get_clientsession(self.hass)
         self.connection = ConnectionShim(self.session)
         self._connect_failures = 0

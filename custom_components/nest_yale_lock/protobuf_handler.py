@@ -20,10 +20,6 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 MAX_BUFFER_SIZE = 4194304  # 4MB
-LOG_PAYLOAD_TO_FILE = True
-RETRY_DELAY_SECONDS = 10
-STREAM_TIMEOUT_SECONDS = 600  # 10min
-PING_INTERVAL_SECONDS = 60
 CATALOG_THRESHOLD = 20000  # 20KB
 
 
@@ -45,6 +41,7 @@ class NestProtobufHandler:
         self.buffer = bytearray()
         self.pending_length = None
         self.stream_body = rpc_pb2.StreamBody()
+        self._decode_warned = False
 
     def _decode_varint(self, buffer, pos):
         value = 0
@@ -131,7 +128,8 @@ class NestProtobufHandler:
         return results
 
     async def _process_message(self, message):
-        _LOGGER.debug(f"Raw chunk (length={len(message)}): {message.hex()}")
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("Raw chunk (length=%d): %s", len(message), message.hex())
 
         if not message:
             _LOGGER.error("Empty protobuf message received.")
@@ -214,64 +212,23 @@ class NestProtobufHandler:
             return locks_data
 
         except DecodeError as e:
-            _LOGGER.error(f"DecodeError in StreamBody: {e}")
-            if message:
-                _LOGGER.debug("Failed StreamBody payload (hex, first 200 bytes): %s", message[:200].hex())
+            # These occur for currently-unmapped message types and are expected.
+            if not self._decode_warned:
+                _LOGGER.warning(
+                    "Some protobuf messages could not be decoded; this is expected and harmless. "
+                    "Enable DEBUG to see details."
+                )
+                self._decode_warned = True
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("DecodeError in StreamBody: %s", e)
+                if message:
+                    _LOGGER.debug(
+                        "Failed StreamBody payload (hex, first 200 bytes): %s",
+                        message[:200].hex(),
+                    )
             return locks_data
         except Exception as e:
             _LOGGER.error(f"Unexpected error processing message: {e}", exc_info=True)
             return locks_data
 
-    async def stream(self, api_url, headers, observe_data, connection):
-        attempt = 0
-        while True:
-            attempt += 1
-            _LOGGER.info(f"Starting stream attempt {attempt} with headers: {headers}")
-            self.buffer = bytearray()
-            self.pending_length = None
-            try:
-                async for data in connection.stream(api_url, headers, observe_data):
-                    if not isinstance(data, bytes):
-                        _LOGGER.error(f"Received non-bytes data: {data}")
-                        continue
-
-                    for locks_data in await self._ingest_chunk(data):
-                        yield locks_data
-
-                await asyncio.sleep(PING_INTERVAL_SECONDS / 1000)
-
-            except asyncio.TimeoutError:
-                _LOGGER.warning("Stream timeout, retrying...")
-                yield {"yale": {}, "user_id": None, "structure_id": None}
-            except Exception as e:
-                _LOGGER.error(f"Stream error: {e}", exc_info=True)
-
-            _LOGGER.info(f"Retrying stream in {RETRY_DELAY_SECONDS} seconds")
-            await asyncio.sleep(RETRY_DELAY_SECONDS)
-            yield None
-
-    async def refresh_state(self, connection, access_token):
-        headers = {
-            "Authorization": f"Basic {access_token}",
-            "Content-Type": "application/x-protobuf",
-            "User-Agent": USER_AGENT_STRING,
-            "X-Accept-Response-Streaming": "true",
-            "Accept": "application/x-protobuf",
-        }
-
-        api_url = f"{URL_PROTOBUF.format(grpc_hostname=PRODUCTION_HOSTNAME['grpc_hostname'])}{ENDPOINT_OBSERVE}"
-        observe_data = await read_protobuf_file(os.path.join(os.path.dirname(__file__), "proto", "ObserveTraits.bin"))
-
-        try:
-            temp_handler = NestProtobufHandler()
-            async with connection.session.post(api_url, headers=headers, data=observe_data) as response:
-                if response.status != 200:
-                    _LOGGER.error(f"HTTP {response.status}: {await response.text()}")
-                    return {}
-                async for chunk in response.content.iter_any():
-                    for locks_data in await temp_handler._ingest_chunk(chunk):
-                        if locks_data.get("yale"):
-                            return locks_data
-        except Exception as e:
-            _LOGGER.error(f"Refresh state error: {e}", exc_info=True)
-        return {"yale": {}, "user_id": None, "structure_id": None}
+    # Note: streaming and refresh helpers are handled by api_client
