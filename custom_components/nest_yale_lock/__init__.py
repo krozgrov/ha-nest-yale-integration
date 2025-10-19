@@ -17,6 +17,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Nest Yale Lock from a config entry."""
     _LOGGER.debug("Starting async_setup_entry for entry_id: %s, title: %s", entry.entry_id, entry.title)
+    # Normal behavior: avoid emitting extra startup diagnostics at WARNING
 
     issue_token = entry.data.get("issue_token")
     cookies = entry.data.get("cookies")

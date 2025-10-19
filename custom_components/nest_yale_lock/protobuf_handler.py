@@ -18,7 +18,6 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s")
 
 MAX_BUFFER_SIZE = 4194304  # 4MB
 LOG_PAYLOAD_TO_FILE = True
