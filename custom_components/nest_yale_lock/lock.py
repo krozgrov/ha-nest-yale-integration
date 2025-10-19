@@ -14,7 +14,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     _LOGGER.debug("Starting async_setup_entry for lock platform, entry_id: %s", entry.entry_id)
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
-    added: set[str] = hass.data[DOMAIN].setdefault("added_lock_ids", set())
+    # Use a per-entry tracker so removing/re-adding the integration does not
+    # suppress rediscovery due to stale in-memory state.
+    added_map = hass.data[DOMAIN].setdefault("added_lock_ids", {})
+    added: set[str] = added_map.setdefault(entry.entry_id, set())
 
     @callback
     def _process_devices():

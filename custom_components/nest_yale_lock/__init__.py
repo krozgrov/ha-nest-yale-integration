@@ -55,6 +55,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     hass.data[DOMAIN].setdefault("entities", [])
+    # Track added entities per entry to allow clean re-add without restart
+    hass.data[DOMAIN].setdefault("added_lock_ids", {})
+    hass.data[DOMAIN]["added_lock_ids"].setdefault(entry.entry_id, set())
 
     _LOGGER.debug("Forwarding setup to platforms: %s", PLATFORMS)
     try:
@@ -77,6 +80,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await coordinator.async_unload()
 
     hass.data[DOMAIN]["entities"] = []
+    # Clear per-entry added ids so re-adding the integration can discover devices
+    try:
+        added_map = hass.data[DOMAIN].get("added_lock_ids")
+        if isinstance(added_map, dict) and entry.entry_id in added_map:
+            added_map.pop(entry.entry_id, None)
+    except Exception:
+        pass
     try:
         result = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
         _LOGGER.debug("Unload platforms result: %s", result)
