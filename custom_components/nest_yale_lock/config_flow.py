@@ -2,7 +2,6 @@ import logging
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
-from homeassistant.helpers import aiohttp_client
 from .api_client import NestAPIClient
 from .const import DOMAIN, CONF_ISSUE_TOKEN, CONF_COOKIES
 
@@ -16,6 +15,10 @@ class NestYaleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
         errors = {}
+
+        # Enforce single instance of this integration
+        if self._async_current_entries():
+            return self.async_abort(reason="single_instance_allowed")
 
         if user_input is not None:
             try:
@@ -39,7 +42,6 @@ class NestYaleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _validate_credentials(self, user_input):
         """Validate API credentials asynchronously."""
-        session = aiohttp_client.async_get_clientsession(self.hass)
         api_client = NestAPIClient(
             self.hass,
             issue_token=user_input[CONF_ISSUE_TOKEN],

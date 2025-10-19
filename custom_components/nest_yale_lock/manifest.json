@@ -12,7 +12,6 @@
     "custom_components.nest_yale_lock.api_client",
     "custom_components.nest_yale_lock.lock",
     "custom_components.nest_yale_lock.protobuf_handler",
-    "custom_components.nest_yale_lock.connection",
     "custom_components.nest_yale_lock.coordinator",
     "custom_components.nest_yale_lock.device_parser",
     "custom_components.nest_yale_lock.auth",
@@ -24,7 +23,7 @@
   ],
   "requirements": [
     "protobuf==6.32.0",
-    "httpx>=0.23.0"
+    "PyJWT>=2.8.0,<3.0"
   ],
-  "version": "2025.10.19.1"
+  "version": "2025.10.19.2b0"
 }
