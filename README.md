@@ -33,7 +33,7 @@ To suppress error messages, add this to your `configuration.yaml`:
 ```yaml
 logger:
   logs:
-    custom_components.nest_yale_lock.protobuf_handler: fatal
+    custom_components.nest_yale_lock.protobuf_handler: critical
 ```
 
 ---
