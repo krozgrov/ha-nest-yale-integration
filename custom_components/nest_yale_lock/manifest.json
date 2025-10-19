@@ -7,11 +7,6 @@
   "documentation": "https://github.com/krozgrov/ha-nest-yale-integration/blob/main/README.md",
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/krozgrov/ha-nest-yale-integration/issues",
-  "requirements": [
-    "protobuf==6.32.0",
-    "httpx>=0.23.0"
-  ],
-  "version": "2025.10.19.1",
   "loggers": [
     "custom_components.nest_yale_lock",
     "custom_components.nest_yale_lock.api_client",
@@ -26,5 +21,10 @@
     "custom_components.nest_yale_lock.nest_lock",
     "custom_components.nest_yale_lock.protobuf_manager",
     "custom_components.nest_yale_lock.state_manager"
-  ]
+  ],
+  "requirements": [
+    "protobuf==6.32.0",
+    "httpx>=0.23.0"
+  ],
+  "version": "2025.10.19.1"
 }

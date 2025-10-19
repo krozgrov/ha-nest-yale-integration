@@ -2,12 +2,16 @@
 import logging
 import asyncio
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers import config_validation as cv
 from homeassistant.core import HomeAssistant
 from .const import DOMAIN, PLATFORMS
 from .api_client import NestAPIClient
 from .coordinator import NestCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+# This integration is config-entry only (no YAML options)
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Nest Yale component."""
