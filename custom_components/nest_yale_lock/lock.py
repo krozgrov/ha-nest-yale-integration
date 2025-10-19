@@ -13,42 +13,31 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     _LOGGER.debug("Starting async_setup_entry for lock platform, entry_id: %s", entry.entry_id)
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    locks_data = coordinator.data
-    _LOGGER.debug("Coordinator data at setup: %s", locks_data)
 
-    if locks_data is None or not locks_data:
-        _LOGGER.warning("No lock data available yet, waiting for observer updates.")
-        await asyncio.sleep(5)
-        locks_data = coordinator.data
-        if not locks_data:
-            _LOGGER.error("Still no lock data after waiting, setup failed.")
-            return
+    added: set[str] = hass.data[DOMAIN].setdefault("added_lock_ids", set())
 
-    locks = []
-    existing_entities = hass.data[DOMAIN].get("entities", [])
-    existing_ids = {entity.unique_id for entity in existing_entities}
-    _LOGGER.debug("Existing entity IDs: %s", existing_ids)
+    @callback
+    def _process_devices():
+        data = coordinator.data or {}
+        new_entities = []
+        for device_id, device in data.items():
+            if not isinstance(device, dict) or "device_id" not in device:
+                continue
+            unique_id = f"{DOMAIN}_{device_id}"
+            if unique_id in added:
+                continue
+            new_entities.append(NestYaleLock(coordinator, device))
+            added.add(unique_id)
+            _LOGGER.debug("Prepared new lock entity: %s", unique_id)
+        if new_entities:
+            _LOGGER.info("Adding %d Nest Yale locks", len(new_entities))
+            async_add_entities(new_entities)
 
-    for device_id, device in locks_data.items():
-        _LOGGER.debug("Processing device_id: %s, device: %s", device_id, device)
-        if not isinstance(device, dict):
-            _LOGGER.warning("Invalid device entry for %s: %s", device_id, device)
-            continue
-        if "device_id" not in device:
-            _LOGGER.warning("Skipping device without 'device_id': %s", device)
-            continue
-        unique_id = f"{DOMAIN}_{device_id}"
-        if unique_id not in existing_ids:
-            lock = NestYaleLock(coordinator, device)
-            locks.append(lock)
-            hass.data[DOMAIN]["entities"].append(lock)
-            _LOGGER.debug("Added new lock entity: %s", unique_id)
-
-    if locks:
-        _LOGGER.info("Adding %d Nest Yale locks", len(locks))
-        async_add_entities(locks)
-    else:
-        _LOGGER.warning("No valid locks found to add.")
+    # Add whatever we have now, then subscribe for future updates
+    _process_devices()
+    cancel = coordinator.async_add_listener(_process_devices)
+    # Ensure listener removal on unload
+    entry.async_on_unload(cancel)
 
 class NestYaleLock(CoordinatorEntity, LockEntity):
     def __init__(self, coordinator, device):

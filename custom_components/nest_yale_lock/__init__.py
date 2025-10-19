@@ -48,8 +48,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await asyncio.sleep(2)
         _LOGGER.debug("Coordinator setup complete, initial data: %s", coordinator.data)
         if not coordinator.data:
-            _LOGGER.error("Failed to fetch initial data after retries")
-            raise ConfigEntryNotReady("Initial data not available; will retry")
+            _LOGGER.warning("Initial data still empty; continuing setup and waiting for observer updates")
     except Exception as e:
         _LOGGER.error("Failed to initialize API client or coordinator: %s", e, exc_info=True)
         return False
