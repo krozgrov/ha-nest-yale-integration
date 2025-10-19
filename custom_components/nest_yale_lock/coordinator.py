@@ -48,6 +48,8 @@ class NestCoordinator(DataUpdateCoordinator):
 
             normalized_data = new_data.get("yale", new_data) if new_data else {}
             for device_id, device in normalized_data.items():
+                # Ensure required fields exist even if absent in payload
+                device.setdefault("device_id", device_id)
                 device["bolt_moving"] = device.get("bolt_moving", False)
             _LOGGER.debug("Normalized data from refresh_state: %s", normalized_data)
             return normalized_data
@@ -67,6 +69,8 @@ class NestCoordinator(DataUpdateCoordinator):
                     normalized_update = update.get("yale", update) if update else {}
                     if normalized_update:
                         for device_id, device in normalized_update.items():
+                            # Ensure required fields exist even if absent in payload
+                            device.setdefault("device_id", device_id)
                             if "actuatorState" in device:
                                 device["actuator_state"] = device["actuatorState"]
                             device["bolt_moving"] = device.get("bolt_moving", False)

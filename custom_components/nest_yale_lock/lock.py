@@ -24,8 +24,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         data = coordinator.data or {}
         new_entities = []
         for device_id, device in data.items():
-            if not isinstance(device, dict) or "device_id" not in device:
+            if not isinstance(device, dict):
                 continue
+            # Backfill device_id from key when missing
+            device.setdefault("device_id", device_id)
             unique_id = f"{DOMAIN}_{device_id}"
             if unique_id in added:
                 continue
