@@ -41,6 +41,7 @@ class NestProtobufHandler:
         self.buffer = bytearray()
         self.pending_length = None
         self.stream_body = rpc_pb2.StreamBody()
+        self._decode_warned = False
 
     def _decode_varint(self, buffer, pos):
         value = 0
@@ -211,9 +212,20 @@ class NestProtobufHandler:
             return locks_data
 
         except DecodeError as e:
-            _LOGGER.error(f"DecodeError in StreamBody: {e}")
-            if message:
-                _LOGGER.debug("Failed StreamBody payload (hex, first 200 bytes): %s", message[:200].hex())
+            # These occur for currently-unmapped message types and are expected.
+            if not self._decode_warned:
+                _LOGGER.warning(
+                    "Some protobuf messages could not be decoded; this is expected and harmless. "
+                    "Enable DEBUG to see details."
+                )
+                self._decode_warned = True
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("DecodeError in StreamBody: %s", e)
+                if message:
+                    _LOGGER.debug(
+                        "Failed StreamBody payload (hex, first 200 bytes): %s",
+                        message[:200].hex(),
+                    )
             return locks_data
         except Exception as e:
             _LOGGER.error(f"Unexpected error processing message: {e}", exc_info=True)
