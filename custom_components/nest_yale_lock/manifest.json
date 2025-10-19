@@ -11,8 +11,20 @@
     "protobuf==6.32.0",
     "httpx>=0.23.0"
   ],
-  "version": "2025.10.19.1b0",
+  "version": "2025.10.19.1b1",
   "loggers": [
-    "custom_components.nest_yale_lock"
+    "custom_components.nest_yale_lock",
+    "custom_components.nest_yale_lock.api_client",
+    "custom_components.nest_yale_lock.lock",
+    "custom_components.nest_yale_lock.protobuf_handler",
+    "custom_components.nest_yale_lock.connection",
+    "custom_components.nest_yale_lock.coordinator",
+    "custom_components.nest_yale_lock.device_parser",
+    "custom_components.nest_yale_lock.auth",
+    "custom_components.nest_yale_lock.auth_client",
+    "custom_components.nest_yale_lock.config_flow",
+    "custom_components.nest_yale_lock.nest_lock",
+    "custom_components.nest_yale_lock.protobuf_manager",
+    "custom_components.nest_yale_lock.state_manager"
   ]
 }
