@@ -3,6 +3,9 @@
 **Custom Home Assistant integration for Google Nest x Yale Locks.**  
 This integration enables basic monitoring and limited control of Nest x Yale smart locks within Home Assistant.
 
+— Latest stable: https://github.com/krozgrov/ha-nest-yale-integration/releases/latest
+— All releases: https://github.com/krozgrov/ha-nest-yale-integration/releases
+
 ---
 
 ## 🔧 Features
