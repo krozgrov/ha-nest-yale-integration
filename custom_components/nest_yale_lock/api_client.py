@@ -372,6 +372,10 @@ class NestAPIClient:
             "User-Agent": USER_AGENT_STRING,
             "X-Accept-Content-Transfer-Encoding": "binary",
             "X-Accept-Response-Streaming": "true",
+            "Accept": "application/x-protobuf",
+            "Accept-Encoding": "gzip, deflate, br",
+            "referer": "https://home.nest.com/",
+            "origin": "https://home.nest.com",
             "request-id": request_id,
         }
 
@@ -380,6 +384,8 @@ class NestAPIClient:
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
             _LOGGER.debug(f"[nest_yale_lock] Using structure_id: {effective_structure_id}")
+        if self._user_id:
+            headers["X-nl-user-id"] = str(self._user_id)
 
         cmd_any = any_pb2.Any()
         cmd_any.type_url = command["command"]["type_url"]
