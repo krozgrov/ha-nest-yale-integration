@@ -11,7 +11,7 @@
     "protobuf==6.32.0",
     "httpx>=0.23.0"
   ],
-  "version": "2025.10.19.1b2",
+  "version": "2025.10.19.1b3",
   "loggers": [
     "custom_components.nest_yale_lock",
     "custom_components.nest_yale_lock.api_client",
