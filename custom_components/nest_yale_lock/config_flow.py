@@ -96,28 +96,52 @@ class NestYaleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not txt:
             return None, None
 
-        # Accept cURL: 'Copy as cURL' from Safari/Chrome
-        if txt.lower().startswith("curl "):
+        # Accept one or more cURL commands: 'Copy as cURL' from Safari/Chrome
+        if "curl " in txt:
             try:
-                url, cookie = None, None
-                tokens = shlex.split(txt)
-                # Find URL (first token that looks like http(s) URL)
-                for t in tokens:
-                    if t.startswith("http://") or t.startswith("https://"):
-                        url = t
-                        break
-                # Find cookie header
-                i = 0
-                while i < len(tokens):
-                    t = tokens[i]
-                    if t in ("-H", "--header") and i + 1 < len(tokens):
-                        hdr = tokens[i + 1]
-                        if hdr.lower().startswith("cookie:"):
-                            cookie = hdr.split(":", 1)[1].strip()
-                    i += 1
-                # Determine if this is issueToken or oauth2/iframe cURL
-                issue_token_url = url if (url and "iframerpc" in url and "action=issueToken" in url) else None
-                oauth_cookie = cookie if cookie else None
+                def _iter_curls(s: str):
+                    parts = []
+                    current = []
+                    for line in s.splitlines():
+                        if line.strip().startswith("curl "):
+                            if current:
+                                parts.append("\n".join(current))
+                                current = [line]
+                            else:
+                                current = [line]
+                        else:
+                            if current:
+                                current.append(line)
+                    if current:
+                        parts.append("\n".join(current))
+                    return parts
+
+                issue_token_url = None
+                oauth_cookie = None
+                for cmd in _iter_curls(txt):
+                    tokens = shlex.split(cmd)
+                    url = None
+                    # Find URL (first token that looks like http(s) URL)
+                    for t in tokens:
+                        if t.startswith("http://") or t.startswith("https://"):
+                            url = t
+                            break
+                    # Find cookie header
+                    cookie = None
+                    i = 0
+                    while i < len(tokens):
+                        t = tokens[i]
+                        if t in ("-H", "--header") and i + 1 < len(tokens):
+                            hdr = tokens[i + 1]
+                            if hdr.lower().startswith("cookie:"):
+                                cookie = hdr.split(":", 1)[1].strip()
+                        i += 1
+
+                    if url and ("iframerpc" in url and "action=issueToken" in url) and not issue_token_url:
+                        issue_token_url = url
+                    if url and ("oauth2/iframe" in url) and cookie:
+                        oauth_cookie = cookie  # Take the most recent iframe cookie
+
                 return issue_token_url, oauth_cookie
             except Exception as e:
                 raise ValueError("Invalid cURL") from e
