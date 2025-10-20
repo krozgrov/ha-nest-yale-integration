@@ -6,6 +6,7 @@
         "title": "Connect Google Nest x Yale",
         "description": "Paste your Issue Token URL and Cookies from your Nest web session.",
         "data": {
+          "har_json": "HAR JSON (optional — paste from DevTools: Save all as HAR with content)",
           "issue_token": "Issue Token URL",
           "cookies": "Cookies"
         }
@@ -16,8 +17,9 @@
     },
     "error": {
       "auth_failure": "Authentication failed. Please verify the Issue Token URL and Cookies.",
+      "invalid_har": "HAR content could not be parsed. Ensure you pasted the full HAR JSON.",
+      "missing_values": "HAR did not contain the required information (issueToken and cookies).",
       "unknown_error": "Unknown error. Check logs for details."
     }
   }
 }
-
