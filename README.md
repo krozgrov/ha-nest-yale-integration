@@ -1,42 +1,34 @@
 # Google Nest x Yale Lock Integration for Home Assistant
 
-**Custom Home Assistant integration for Google Nest x Yale Locks.**  
-This integration enables basic monitoring and control (lock / unlock) of Nest x Yale smart locks within Home Assistant.
+An integration for Home Assistant that connects your Google Nest x Yale Lock, enabling control directly from Home Assistant using reversed-enginered protobuf messaging protocol.
 
----
-
-## 🔧 Features
+## Features
 
 - Real-time Yale lock state via Nest Observe stream
 - Manual lock / unlock commands
 - Serial number, firmware, and basic diagnostics attributes 
 
----
-
-## 🚧 Beta Status
+## Beta Status
 
 > ⚠️ **Heads-up: this integration is in beta and still under active development.**
 
-The core lock and unlock commands are now working, and real-time state updates are generally reliable.  
+The core lock and unlock commands are now working, and real-time state updates are generally reliable.
+
 However, the integration still depends on partially reversed protobuf messages taken from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest), so gaps remain and rough edges are expected.
 
----
 
-## ⚠️ Known Limitations
+## Known Limitations
 
 - Logs may show `DecodeError in StreamBody: Error parsing message with type 'nest.rpc.StreamBody'` due to incomplete protobuf decoding. This is **harmless** and does not affect functionality.
 - Additional message types beyond the basic lock trait are unmapped, limiting advanced diagnostics and telemetry.
 - API response formats and authentication flows may change, potentially causing breaking updates.
 
----
 
-## ⚙️ Getting Started
+## Installation
 
 You can install the **Google Nest x Yale Lock** integration either via **HACS** or by **manual copy**.
 
----
-
-### 🧩 Option 1 — Install via HACS (Recommended)
+### Option 1 — Install via HACS (Recommended)
 
 1. **Add the Custom Repository**
    - In Home Assistant, open **HACS → Integrations → ⋮ (three dots) → Custom Repositories**.
@@ -50,16 +42,12 @@ You can install the **Google Nest x Yale Lock** integration either via **HACS** 
    - Search for **Nest Yale Lock** in HACS and click **Download**.
    - Once installed, restart Home Assistant.
 
----
-
-### 📁 Option 2 — Manual Installation
+### Option 2 — Manual Installation
 
 1. Copy the custom component folder into your Home Assistant configuration directory:
 2. Restart Home Assistant to load the integration.
 
----
-
-### ⚙️ Configuration
+### Configuration
 
 1. Go to **Settings → Devices & Services → Add Integration → Google Nest x Yale Lock**.
 2. Provide:
@@ -70,9 +58,7 @@ You can install the **Google Nest x Yale Lock** integration either via **HACS** 
 
 The integration will automatically reuse the same headers and protobuf payloads as the standalone test client.
 
----
-
-### ✅ Verify Installation
+### Verify Installation
 
 After onboarding:
 - Ensure the lock entity appears under **Devices & Services**.
@@ -81,9 +67,7 @@ After onboarding:
 - `lock.unlock`
 service calls.
 
----
-
-## 🧠 Community Help Needed
+## Community Help Needed
 
 This project is open to contributions from the community.  
 If you have experience with:
@@ -98,15 +82,11 @@ You can contribute by:
 - Opening issues with logs or analysis
 - Reverse engineering additional messages and formats
 
----
-
-## 📄 License
+## License
 
 This project is licensed under the MIT License.
 
----
-
-## 🙌 Acknowledgements
+## Acknowledgements
 
 - Thanks to [@chrisjshull](https://github.com/chrisjshull) and contributors of the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest) for foundational protocol insights.
 - Thanks to [BarelyFunctionalCode](https://github.com/BarelyFunctionalCode) for his time spent decoding the Nest protobuf streams—this integration would not function without that reverse-engineering work.
