@@ -6,7 +6,7 @@
         "title": "Connect Google Nest x Yale",
         "description": "Paste your Issue Token URL and Cookies from your Nest web session.",
         "data": {
-          "har_json": "HAR JSON (optional — paste from DevTools: Save all as HAR with content)",
+          "har_json": "HAR JSON or cURL (optional — paste DevTools ‘Save all as HAR…’ or ‘Copy as cURL’)",
           "issue_token": "Issue Token URL",
           "cookies": "Cookies"
         }

@@ -1,5 +1,6 @@
 import logging
 import json
+import shlex
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
@@ -90,9 +91,40 @@ class NestYaleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     def _extract_from_har(self, har_text: str):
-        """Extract issueToken URL and Cookie header from a HAR export."""
+        """Extract issueToken URL and Cookie header from a HAR export or cURL command."""
+        txt = (har_text or "").strip()
+        if not txt:
+            return None, None
+
+        # Accept cURL: 'Copy as cURL' from Safari/Chrome
+        if txt.lower().startswith("curl "):
+            try:
+                url, cookie = None, None
+                tokens = shlex.split(txt)
+                # Find URL (first token that looks like http(s) URL)
+                for t in tokens:
+                    if t.startswith("http://") or t.startswith("https://"):
+                        url = t
+                        break
+                # Find cookie header
+                i = 0
+                while i < len(tokens):
+                    t = tokens[i]
+                    if t in ("-H", "--header") and i + 1 < len(tokens):
+                        hdr = tokens[i + 1]
+                        if hdr.lower().startswith("cookie:"):
+                            cookie = hdr.split(":", 1)[1].strip()
+                    i += 1
+                # Determine if this is issueToken or oauth2/iframe cURL
+                issue_token_url = url if (url and "iframerpc" in url and "action=issueToken" in url) else None
+                oauth_cookie = cookie if cookie else None
+                return issue_token_url, oauth_cookie
+            except Exception as e:
+                raise ValueError("Invalid cURL") from e
+
+        # Otherwise expect HAR JSON
         try:
-            data = json.loads(har_text)
+            data = json.loads(txt)
         except Exception as e:
             raise ValueError("Invalid JSON") from e
 
