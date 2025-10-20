@@ -17,3 +17,6 @@ jobs:
         uses: hacs/action@main
         with:
           category: integration
+          # Skip external brands check to avoid CI failures when
+          # https://brands.home-assistant.io is temporarily unavailable (522).
+          ignore: brands
