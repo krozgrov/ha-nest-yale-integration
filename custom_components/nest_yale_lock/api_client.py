@@ -99,9 +99,14 @@ class ConnectionShim:
             return response_data
 
     async def close(self):
-        # Do not close HA-managed session; just mark as disconnected
+        # Close owned session if possible
+        try:
+            if self.session and not self.session.closed:
+                await self.session.close()
+        except Exception:
+            pass
         self.connected = False
-        _LOGGER.debug("ConnectionShim closed (session managed by HA)")
+        _LOGGER.debug("ConnectionShim session closed")
 
 class NestAPIClient:
     def __init__(self, hass, issue_token, api_key, cookies):
@@ -114,8 +119,8 @@ class NestAPIClient:
         self._user_id = None  # Discover dynamically
         self._structure_id = None  # Discover dynamically
         self.current_state = {"devices": {"locks": {}}, "user_id": self._user_id, "structure_id": self._structure_id}
-        # Use Home Assistant managed session
-        self.session = async_get_clientsession(hass)
+        # Use dedicated session so we can recreate it on failures
+        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600))
         self.connection = ConnectionShim(self.session)
         self._observe_payload = self._build_observe_payload()
         self._connect_failures = 0
@@ -423,7 +428,7 @@ class NestAPIClient:
         for base_url in self._candidate_bases():
             api_url = f"{base_url}{ENDPOINT_SENDCOMMAND}"
             reauthed = False
-            for _ in range(2):
+            for attempt in range(3):
                 try:
                     raw_data = await self.connection.post(api_url, headers, encoded_data)
                     self.transport_url = base_url
@@ -441,9 +446,15 @@ class NestAPIClient:
                     break
                 except Exception as err:
                     last_error = err
-                    _LOGGER.error("Failed to send command to %s via %s: %s", device_id, api_url, err, exc_info=True)
+                    _LOGGER.warning("Command error to %s via %s (attempt %d): %s", device_id, api_url, attempt + 1, err)
                     self._note_connect_failure(err)
-                    break
+                    # Try aggressive recovery: rebuild session and reauth
+                    try:
+                        await self._reset_session()
+                        await self.authenticate()
+                        continue
+                    except Exception:
+                        break
         if last_error:
             raise last_error
         raise RuntimeError(f"Failed to send command to {device_id} for unknown reasons")
@@ -513,7 +524,7 @@ class NestAPIClient:
             await self.connection.close()
         except Exception:
             pass
-        # Recreate lightweight wrapper using HA-managed session
-        self.session = async_get_clientsession(self.hass)
+        # Recreate dedicated session to clear stale connections
+        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600))
         self.connection = ConnectionShim(self.session)
         self._connect_failures = 0
