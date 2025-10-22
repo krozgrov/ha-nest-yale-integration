@@ -186,11 +186,13 @@ class NestAuthenticator:
                             raise ValueError("No Nest JWT received from nestauthproxyservice")
 
                     _LOGGER.debug("Authenticated successfully with JWT token")
+                    # Prefer gRPC transport host for protobuf Observe/SendCommand
+                    transport_url = URL_PROTOBUF.format(grpc_hostname=PRODUCTION_HOSTNAME['grpc_hostname'])
                     return {
                         "access_token": self.access_token,
                         "id_token": self.id_token,
                         "userid": "unknown",
-                        "urls": {"transport_url": f"https://{PRODUCTION_HOSTNAME['api_hostname']}"}
+                        "urls": {"transport_url": transport_url}
                     }
 
                 except aiohttp.ClientError as e:
