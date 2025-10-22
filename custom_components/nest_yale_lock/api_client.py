@@ -206,7 +206,11 @@ class NestAPIClient:
             self._schedule_reauth()
         except Exception as e:
             _LOGGER.error(f"Authentication failed: {e}", exc_info=True)
-            await self.close()
+            # Recreate the HTTP session immediately to avoid using a closed session
+            try:
+                await self._reset_session()
+            except Exception:
+                pass
             raise
 
     async def fetch_structure_id(self):
@@ -293,6 +297,16 @@ class NestAPIClient:
                                     _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
                             self.transport_url = base_url
                             return locks_data["yale"]
+                except RuntimeError as re:
+                    # Handle "Session is closed" immediately by rebuilding the session
+                    if "Session is closed" in str(re):
+                        _LOGGER.warning("Refresh state encountered closed session; rebuilding HTTP session")
+                        await self._reset_session()
+                        continue
+                    last_error = re
+                    _LOGGER.error("Refresh state failed via %s: %s", api_url, re, exc_info=True)
+                    self._note_connect_failure(re)
+                    continue
                 except Exception as err:
                     last_error = err
                     _LOGGER.error("Refresh state failed via %s: %s", api_url, err, exc_info=True)
@@ -363,6 +377,14 @@ class NestAPIClient:
                             self.transport_url = base_url
                         yield locks_data.get("yale", {})
                     _LOGGER.debug("Observe stream finished for %s; reconnecting", api_url)
+                    self.connection.connected = False
+                except RuntimeError as re:
+                    if "Session is closed" in str(re):
+                        _LOGGER.warning("Observe encountered closed session; rebuilding HTTP session")
+                        await self._reset_session()
+                        self.connection.connected = False
+                        continue
+                    _LOGGER.error("Error in observe stream via %s: %s", api_url, re, exc_info=True)
                     self.connection.connected = False
                 except asyncio.TimeoutError:
                     _LOGGER.warning("Observe stream timed out via %s; retrying", api_url)
