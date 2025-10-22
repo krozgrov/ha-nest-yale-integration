@@ -9,6 +9,7 @@ from .const import (
     CLIENT_ID_FT,
     USER_AGENT_STRING,
     PRODUCTION_HOSTNAME,
+    URL_PROTOBUF,
     API_AUTH_FAIL_RETRY_DELAY_SECONDS,
     parse_cookies,
 )
