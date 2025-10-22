@@ -142,6 +142,10 @@ class NestProtobufHandler:
                 if "authentication failed" in text:
                     _LOGGER.warning("Observe stream reported 'authentication failed'; will trigger reauth")
                     return {"yale": {}, "user_id": None, "structure_id": None, "auth_failed": True}
+                # Detect HTML login pages or general HTML error responses
+                if "<!doctype html" in text or "<html" in text or "sign in" in text or "log in" in text:
+                    _LOGGER.warning("Observe stream returned HTML content (likely login); will trigger reauth")
+                    return {"yale": {}, "user_id": None, "structure_id": None, "auth_failed": True}
         except Exception:
             pass
 
