@@ -272,6 +272,10 @@ class NestAPIClient:
                             continue
                         async for chunk in response.content.iter_chunked(1024):
                             locks_data = await self.protobuf_handler._process_message(chunk)
+                            if locks_data.get("auth_failed"):
+                                _LOGGER.info("Initial refresh indicated authentication failure; reauthenticating")
+                                await self.authenticate()
+                                return {}
                             if "yale" not in locks_data:
                                 continue
                             self.current_state["devices"]["locks"] = locks_data["yale"]
@@ -335,6 +339,14 @@ class NestAPIClient:
                         backoff = API_RETRY_DELAY_SECONDS
                         self._connect_failures = 0
                         locks_data = await self.protobuf_handler._process_message(chunk)
+                        if locks_data.get("auth_failed"):
+                            _LOGGER.info("Observe indicated authentication failure; reauthenticating and restarting stream")
+                            try:
+                                await self.authenticate()
+                            except Exception:
+                                _LOGGER.warning("Reauthentication failed after auth_failed; will backoff and retry")
+                            self.connection.connected = False
+                            break
                         if "yale" in locks_data:
                             if locks_data.get("user_id"):
                                 old_user_id = self._user_id

@@ -135,6 +135,16 @@ class NestProtobufHandler:
             _LOGGER.error("Empty protobuf message received.")
             return {"yale": {}, "user_id": None, "structure_id": None}
 
+        # Detect server-side plaintext error messages (e.g., "authentication failed")
+        try:
+            if all(b < 128 for b in message):
+                text = message.decode(errors="ignore").lower()
+                if "authentication failed" in text:
+                    _LOGGER.warning("Observe stream reported 'authentication failed'; will trigger reauth")
+                    return {"yale": {}, "user_id": None, "structure_id": None, "auth_failed": True}
+        except Exception:
+            pass
+
         locks_data = {"yale": {}, "user_id": None, "structure_id": None}
 
         try:
