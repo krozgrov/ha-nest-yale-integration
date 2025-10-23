@@ -199,9 +199,11 @@ class NestAPIClient:
                 _LOGGER.warning(f"No id_token in auth_data, awaiting stream for user_id and structure_id")
             _LOGGER.info(f"Authenticated with access_token: {self.access_token[:10]}..., user_id: {self._user_id}, structure_id: {self._structure_id}")
             await self.refresh_state()  # Initial refresh to discover IDs
-            # Also ensure structure_id is set via REST directly
-            self._structure_id = await self.fetch_structure_id()
-            self.current_state["structure_id"] = self._structure_id
+            # Also ensure structure_id is set via REST directly (only if available)
+            new_sid = await self.fetch_structure_id()
+            if new_sid:
+                self._structure_id = new_sid
+                self.current_state["structure_id"] = self._structure_id
             # Schedule preemptive re-auth
             self._schedule_reauth()
         except Exception as e:
@@ -433,8 +435,8 @@ class NestAPIClient:
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
             _LOGGER.debug(f"[nest_yale_lock] Using structure_id: {effective_structure_id}")
-        # Only include X-nl-user-id when stream supplied a USER_ id; omit numeric id_token value
-        if self._user_id and str(self._user_id).startswith("USER_"):
+        # Include X-nl-user-id when available (numeric id_token subject also accepted)
+        if self._user_id:
             headers["X-nl-user-id"] = str(self._user_id)
 
         cmd_any = any_pb2.Any()
