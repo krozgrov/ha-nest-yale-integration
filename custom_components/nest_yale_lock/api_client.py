@@ -469,6 +469,17 @@ class NestAPIClient:
                 try:
                     raw_data = await self.connection.post(api_url, headers, encoded_data)
                     self.transport_url = base_url
+                    # Attempt to decode response for diagnostics; reauth if it isn't protobuf
+                    try:
+                        decoded = v1_pb2.ResourceCommandResponseFromAPI()
+                        decoded.ParseFromString(raw_data)
+                        _LOGGER.debug("Decoded command response (resource=%s ops=%d)",
+                                       getattr(decoded, 'resouceCommandResponse', None),
+                                       len(getattr(decoded, 'resouceCommandResponse', [])))
+                    except Exception as dec_err:
+                        _LOGGER.warning("Command response not protobuf; reauthenticating and retrying: %s", dec_err)
+                        await self.authenticate()
+                        continue
                     await asyncio.sleep(2)
                     await self.refresh_state()
                     return raw_data
