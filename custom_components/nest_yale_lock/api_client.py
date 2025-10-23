@@ -214,11 +214,11 @@ class NestAPIClient:
             raise
 
     async def fetch_structure_id(self):
-        """Mimic Homebridge's REST call to get structureId."""
+        """Fetch structureId via REST; default to 'self' to avoid 401s."""
         if not self.access_token:
             _LOGGER.warning("Cannot fetch structure_id without access_token")
             return None
-        target_user = self._user_id or 'self'
+        target_user = 'self'
         url = f"https://home.nest.com/api/0.1/user/{target_user}?auth={self.access_token}"
         headers = {
             "User-Agent": USER_AGENT_STRING,
@@ -433,7 +433,8 @@ class NestAPIClient:
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
             _LOGGER.debug(f"[nest_yale_lock] Using structure_id: {effective_structure_id}")
-        if self._user_id:
+        # Only include X-nl-user-id when stream supplied a USER_ id; omit numeric id_token value
+        if self._user_id and str(self._user_id).startswith("USER_"):
             headers["X-nl-user-id"] = str(self._user_id)
 
         cmd_any = any_pb2.Any()
