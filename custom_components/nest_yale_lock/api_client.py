@@ -4,6 +4,7 @@ import uuid
 import aiohttp
 import asyncio
 import jwt
+import time
 from google.protobuf import any_pb2
 from .auth import NestAuthenticator
 from .protobuf_handler import NestProtobufHandler
@@ -125,6 +126,10 @@ class NestAPIClient:
         self._observe_payload = self._build_observe_payload()
         self._connect_failures = 0
         self._reauth_task = None
+        # Staleness/health tracking
+        self._last_yale_update = time.monotonic()
+        self._empty_updates = 0
+        self._reset_lock = asyncio.Lock()
         _LOGGER.debug("NestAPIClient initialized with session")
 
     @property
@@ -364,6 +369,21 @@ class NestAPIClient:
                             self.connection.connected = False
                             break
                         if "yale" in locks_data:
+                            if locks_data.get("yale"):
+                                # Successful device data; mark healthy
+                                self._last_yale_update = time.monotonic()
+                                self._empty_updates = 0
+                            else:
+                                # Empty device data; track consecutive empties and staleness
+                                self._empty_updates += 1
+                                stale_for = time.monotonic() - self._last_yale_update
+                                if self._empty_updates >= 20 or stale_for > 180:
+                                    # Similar to Homebridge: perform a hard reset of transport/auth
+                                    await self._hard_reset(
+                                        f"stale observe (empty_updates={self._empty_updates}, last_yale={int(stale_for)}s)"
+                                    )
+                                    self.connection.connected = False
+                                    break
                             if locks_data.get("user_id"):
                                 old_user_id = self._user_id
                                 self._user_id = locks_data["user_id"]
@@ -410,6 +430,29 @@ class NestAPIClient:
             sleep_for = min(backoff, 60) + random.uniform(0, min(backoff, 60) / 2)
             await asyncio.sleep(sleep_for)
             backoff = min(backoff * 2, 60)
+
+    async def _hard_reset(self, reason: str):
+        """Aggressively rebuild HTTP session and reauthenticate, similar to a full reload."""
+        if self._reset_lock.locked():
+            return
+        async with self._reset_lock:
+            _LOGGER.warning("Hard reset transport/auth due to: %s", reason)
+            try:
+                await self.connection.close()
+            except Exception:
+                pass
+            try:
+                if self.session and not self.session.closed:
+                    await self.session.close()
+            except Exception:
+                pass
+            self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600))
+            self.connection = ConnectionShim(self.session)
+            self._connect_failures = 0
+            try:
+                await self.authenticate()
+            except Exception as e:
+                _LOGGER.error("Hard reset authenticate failed: %s", e, exc_info=True)
 
     #async def send_command(self, command, device_id):
     async def send_command(self, command, device_id, structure_id=None):
