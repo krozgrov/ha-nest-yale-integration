@@ -417,7 +417,7 @@ class NestAPIClient:
             await self.authenticate()
 
         request_id = str(uuid.uuid4())
-        headers = {
+        base_headers = {
             "Authorization": f"Basic {self.access_token}",
             "Content-Type": "application/x-protobuf",
             "User-Agent": USER_AGENT_STRING,
@@ -460,9 +460,11 @@ class NestAPIClient:
             reauthed = False
             for attempt in range(3):
                 try:
+                    # First try minimal headers (matches Homebridge)
+                    headers = dict(base_headers)
                     raw_data = await self.connection.post(api_url, headers, encoded_data)
                     self.transport_url = base_url
-                    # Attempt to decode response for diagnostics; reauth if it isn't protobuf
+                    # Attempt to decode response for diagnostics; fall back to enriched headers if it isn't protobuf
                     try:
                         decoded = v1_pb2.ResourceCommandResponseFromAPI()
                         decoded.ParseFromString(raw_data)
@@ -470,9 +472,25 @@ class NestAPIClient:
                                        getattr(decoded, 'resouceCommandResponse', None),
                                        len(getattr(decoded, 'resouceCommandResponse', [])))
                     except Exception as dec_err:
-                        _LOGGER.warning("Command response not protobuf; reauthenticating and retrying: %s", dec_err)
-                        await self.authenticate()
-                        continue
+                        _LOGGER.warning("Command response not protobuf; retrying with enriched headers: %s", dec_err)
+                        # Retry once with enriched headers (structure/user) to match server expectations
+                        enriched = dict(base_headers)
+                        effective_structure_id = structure_id or self._structure_id
+                        if effective_structure_id:
+                            enriched["X-Nest-Structure-Id"] = effective_structure_id
+                        if self._user_id:
+                            enriched["X-nl-user-id"] = str(self._user_id)
+                        try:
+                            raw_data = await self.connection.post(api_url, enriched, encoded_data)
+                            decoded = v1_pb2.ResourceCommandResponseFromAPI()
+                            decoded.ParseFromString(raw_data)
+                            _LOGGER.debug("Decoded command response after enrich (resource=%s ops=%d)",
+                                           getattr(decoded, 'resouceCommandResponse', None),
+                                           len(getattr(decoded, 'resouceCommandResponse', [])))
+                        except Exception as dec_err2:
+                            _LOGGER.warning("Enriched command still not protobuf; reauth and retry base: %s", dec_err2)
+                            await self.authenticate()
+                            continue
                     await asyncio.sleep(2)
                     await self.refresh_state()
                     return raw_data
@@ -481,6 +499,22 @@ class NestAPIClient:
                         _LOGGER.info("Command got %s; reauthenticating and retrying", cre.status)
                         await self.authenticate()
                         reauthed = True
+                        # On retry after reauth, try enriched headers if we have structure/user context
+                        try:
+                            enriched = dict(base_headers)
+                            eff_sid = structure_id or self._structure_id
+                            if eff_sid:
+                                enriched["X-Nest-Structure-Id"] = eff_sid
+                            if self._user_id:
+                                enriched["X-nl-user-id"] = str(self._user_id)
+                            raw_data = await self.connection.post(api_url, enriched, encoded_data)
+                            decoded = v1_pb2.ResourceCommandResponseFromAPI()
+                            decoded.ParseFromString(raw_data)
+                            await asyncio.sleep(2)
+                            await self.refresh_state()
+                            return raw_data
+                        except Exception:
+                            pass
                         continue
                     last_error = cre
                     _LOGGER.error("Failed to send command to %s via %s: %s", device_id, api_url, cre, exc_info=True)
