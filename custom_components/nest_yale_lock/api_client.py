@@ -513,25 +513,38 @@ class NestAPIClient:
             reauthed = False
             for attempt in range(3):
                 try:
-                    # Always send enriched headers (structure + user) to match earlier working behavior
-                    headers = dict(base_headers)
+                    # Try header variants to match backend expectations
                     eff_sid = structure_id or self._structure_id
+                    header_variants = []
+                    header_variants.append(("minimal", dict(base_headers)))
                     if eff_sid:
-                        headers["X-Nest-Structure-Id"] = eff_sid
+                        h = dict(base_headers); h["X-Nest-Structure-Id"] = eff_sid; header_variants.append(("structure", h))
                     if self._user_id:
-                        headers["X-nl-user-id"] = str(self._user_id)
+                        h = dict(base_headers); h["X-nl-user-id"] = str(self._user_id); header_variants.append(("user", h))
+                    if eff_sid or self._user_id:
+                        h = dict(base_headers)
+                        if eff_sid:
+                            h["X-Nest-Structure-Id"] = eff_sid
+                        if self._user_id:
+                            h["X-nl-user-id"] = str(self._user_id)
+                        header_variants.append(("enriched", h))
 
-                    raw_data = await self.connection.post(api_url, headers, encoded_data)
-                    self.transport_url = base_url
-                    # Attempt to decode response for diagnostics; if not protobuf, reauth and retry
-                    try:
-                        decoded = v1_pb2.ResourceCommandResponseFromAPI()
-                        decoded.ParseFromString(raw_data)
-                        _LOGGER.debug("Decoded command response (resource=%s ops=%d)",
-                                       getattr(decoded, 'resouceCommandResponse', None),
-                                       len(getattr(decoded, 'resouceCommandResponse', [])))
-                    except Exception as dec_err:
-                        _LOGGER.warning("Command response not protobuf; reauthenticating and retrying: %s", dec_err)
+                    sent = False
+                    for label, headers in header_variants:
+                        _LOGGER.debug("SendCommand trying headers variant=%s (structure=%s user=%s)", label, bool(eff_sid), bool(self._user_id))
+                        raw_data = await self.connection.post(api_url, headers, encoded_data)
+                        self.transport_url = base_url
+                        try:
+                            decoded = v1_pb2.ResourceCommandResponseFromAPI()
+                            decoded.ParseFromString(raw_data)
+                            _LOGGER.debug("Decoded command response (variant=%s ops=%d)", label, len(getattr(decoded, 'resouceCommandResponse', [])))
+                            sent = True
+                            break
+                        except Exception as dec_err:
+                            _LOGGER.warning("Variant %s response not protobuf: %s", label, dec_err)
+                            continue
+                    if not sent:
+                        _LOGGER.warning("All header variants failed to decode; reauth and retry (attempt %d)", attempt + 1)
                         await self.authenticate()
                         continue
                     await asyncio.sleep(2)
