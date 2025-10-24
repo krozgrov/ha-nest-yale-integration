@@ -130,6 +130,8 @@ class NestAPIClient:
         self._last_yale_update = time.monotonic()
         self._empty_updates = 0
         self._reset_lock = asyncio.Lock()
+        self._last_reset = time.monotonic()
+        self._periodic_reset_seconds = 2 * 60 * 60  # 2 hours
         _LOGGER.debug("NestAPIClient initialized with session")
 
     @property
@@ -354,6 +356,13 @@ class NestAPIClient:
             for base_url in self._candidate_bases():
                 api_url = f"{base_url}{ENDPOINT_OBSERVE}"
                 _LOGGER.debug("Starting observe stream with URL: %s", api_url)
+                # Periodic forced refresh to mimic full reload stability
+                if (time.monotonic() - self._last_reset) > self._periodic_reset_seconds:
+                    await self._hard_reset("periodic refresh interval reached")
+                    self.connection.connected = False
+                    # small backoff before reconnecting
+                    await asyncio.sleep(1)
+                    continue
                 try:
                     async for chunk in self.connection.stream(api_url, headers, observe_payload, read_timeout=OBSERVE_IDLE_RESET_SECONDS):
                         # Reset backoff on any successful data
@@ -361,11 +370,8 @@ class NestAPIClient:
                         self._connect_failures = 0
                         locks_data = await self.protobuf_handler._process_message(chunk)
                         if locks_data.get("auth_failed"):
-                            _LOGGER.info("Observe indicated authentication failure; reauthenticating and restarting stream")
-                            try:
-                                await self.authenticate()
-                            except Exception:
-                                _LOGGER.warning("Reauthentication failed after auth_failed; will backoff and retry")
+                            _LOGGER.info("Observe indicated authentication failure; performing hard reset")
+                            await self._hard_reset("in-band auth_failed in observe")
                             self.connection.connected = False
                             break
                         if "yale" in locks_data:
@@ -377,7 +383,7 @@ class NestAPIClient:
                                 # Empty device data; track consecutive empties and staleness
                                 self._empty_updates += 1
                                 stale_for = time.monotonic() - self._last_yale_update
-                                if self._empty_updates >= 20 or stale_for > 180:
+                                if self._empty_updates >= 10 or stale_for > 90:
                                     # Similar to Homebridge: perform a hard reset of transport/auth
                                     await self._hard_reset(
                                         f"stale observe (empty_updates={self._empty_updates}, last_yale={int(stale_for)}s)"
@@ -453,6 +459,10 @@ class NestAPIClient:
                 await self.authenticate()
             except Exception as e:
                 _LOGGER.error("Hard reset authenticate failed: %s", e, exc_info=True)
+            finally:
+                self._empty_updates = 0
+                self._last_yale_update = time.monotonic()
+                self._last_reset = time.monotonic()
 
     #async def send_command(self, command, device_id):
     async def send_command(self, command, device_id, structure_id=None):
