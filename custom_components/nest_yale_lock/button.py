@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_send, async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import entity_registry as er
 
 from .const import (
     DOMAIN,
@@ -20,6 +20,7 @@ from .const import (
     SIGNAL_DEVICE_DISCOVERED,
     SIGNAL_DIAGNOSTIC_STATUS_UPDATED,
 )
+from .device_helpers import ensure_device_registered
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,7 +37,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             return
         added.add(device_id)
         _LOGGER.debug("Prepared diagnostic button for device_id=%s", device_id)
-        async_add_entities([NestYaleDiagnosticButton(hass, coordinator, entry.entry_id, device_id)])
+        metadata = coordinator.api_client.get_device_metadata(device_id)
+        ensure_device_registered(hass, entry.entry_id, device_id, metadata)
+        async_add_entities([NestYaleDiagnosticButton(hass, coordinator, entry.entry_id, device_id, metadata)])
 
     def _handle_device(entry_id: str, device_id: str) -> None:
         if entry_id != entry.entry_id:
@@ -63,13 +66,12 @@ class NestYaleDiagnosticButton(ButtonEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = True
 
-    def __init__(self, hass: HomeAssistant, coordinator, entry_id: str, device_id: str) -> None:
+    def __init__(self, hass: HomeAssistant, coordinator, entry_id: str, device_id: str, metadata: dict) -> None:
         self.hass = hass
         self._coordinator = coordinator
         self._entry_id = entry_id
         self._device_id = device_id
         self._attr_unique_id = f"{DOMAIN}_{device_id}_diagnostic_button"
-        metadata = coordinator.api_client.get_device_metadata(device_id)
         serial_number = metadata.get("serial_number") or device_id
         identifiers = {(DOMAIN, device_id)}
         if serial_number and serial_number != device_id:
@@ -82,18 +84,16 @@ class NestYaleDiagnosticButton(ButtonEntity):
             "sw_version": metadata["firmware_revision"],
             "serial_number": serial_number,
         }
+        self._device_registry_id = ensure_device_registered(hass, entry_id, device_id, metadata)
         status_store = hass.data[DOMAIN].setdefault(DATA_DIAGNOSTIC_STATUS, {})
         entry_store = status_store.setdefault(entry_id, {})
         entry_store.setdefault(device_id, DEFAULT_DIAGNOSTIC_STATUS)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        dev_reg = dr.async_get(self.hass)
-        device = dev_reg.async_get_device({(DOMAIN, self._device_id)})
-        if device is None:
-            return
         ent_reg = er.async_get(self.hass)
-        ent_reg.async_update_entity(self.entity_id, device_id=device.id)
+        if self._device_registry_id:
+            ent_reg.async_update_entity(self.entity_id, device_id=self._device_registry_id)
 
     async def async_press(self) -> None:
         api = self._coordinator.api_client

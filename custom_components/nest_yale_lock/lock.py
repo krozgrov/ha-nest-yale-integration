@@ -7,6 +7,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from .const import DOMAIN, DATA_KNOWN_DEVICE_IDS, SIGNAL_DEVICE_DISCOVERED
+from .device_helpers import ensure_device_registered
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,6 +34,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             unique_id = f"{DOMAIN}_{device_id}"
             if unique_id in added:
                 continue
+            metadata = coordinator.api_client.get_device_metadata(device_id)
+            ensure_device_registered(hass, entry.entry_id, device_id, metadata)
             new_entities.append(NestYaleLock(coordinator, device))
             added.add(unique_id)
             known_devices.add(device_id)
