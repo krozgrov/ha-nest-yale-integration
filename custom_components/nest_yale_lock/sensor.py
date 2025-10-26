@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .const import (
     DATA_DIAGNOSTIC_STATUS,
@@ -99,6 +100,11 @@ class NestYaleDiagnosticStatusSensor(SensorEntity):
             SIGNAL_DIAGNOSTIC_STATUS_UPDATED,
             self._handle_status_update,
         )
+        dev_reg = dr.async_get(self.hass)
+        device = dev_reg.async_get_device({(DOMAIN, self._device_id)})
+        if device:
+            ent_reg = er.async_get(self.hass)
+            ent_reg.async_update_entity(self.entity_id, device_id=device.id)
 
     async def async_will_remove_from_hass(self) -> None:
         if self._unsub_dispatcher:

@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_send, async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .const import (
     DOMAIN,
@@ -84,6 +85,15 @@ class NestYaleDiagnosticButton(ButtonEntity):
         status_store = hass.data[DOMAIN].setdefault(DATA_DIAGNOSTIC_STATUS, {})
         entry_store = status_store.setdefault(entry_id, {})
         entry_store.setdefault(device_id, DEFAULT_DIAGNOSTIC_STATUS)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        dev_reg = dr.async_get(self.hass)
+        device = dev_reg.async_get_device({(DOMAIN, self._device_id)})
+        if device is None:
+            return
+        ent_reg = er.async_get(self.hass)
+        ent_reg.async_update_entity(self.entity_id, device_id=device.id)
 
     async def async_press(self) -> None:
         api = self._coordinator.api_client
