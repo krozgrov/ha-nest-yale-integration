@@ -508,6 +508,15 @@ class NestAPIClient:
         )
 
         last_error = None
+        # First, try an ephemeral one-off command session similar to the standalone test client
+        try:
+            raw = await self._send_command_ephemeral(encoded_data, device_id, structure_id, request_id)
+            if raw is not None:
+                await asyncio.sleep(2)
+                await self.refresh_state()
+                return raw
+        except Exception as e:
+            _LOGGER.warning("Ephemeral SendCommand failed; falling back to persistent session: %s", e)
         for base_url in self._candidate_bases():
             api_url = f"{base_url}{ENDPOINT_SENDCOMMAND}"
             reauthed = False
@@ -575,6 +584,58 @@ class NestAPIClient:
         if last_error:
             raise last_error
         raise RuntimeError(f"Failed to send command to {device_id} for unknown reasons")
+
+    async def _send_command_ephemeral(self, encoded_data: bytes, device_id: str, structure_id: str | None, request_id: str):
+        """Send a command using a fresh session + fresh auth, then close it.
+
+        Mirrors the behavior of standalone test clients to avoid relying on long-lived connections.
+        """
+        session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60))
+        try:
+            # Fresh auth
+            auth_data = await self.authenticator.authenticate(session)
+            if not auth_data or "access_token" not in auth_data:
+                raise RuntimeError("Ephemeral auth failed")
+            access_token = auth_data["access_token"]
+            base_url = URL_PROTOBUF.format(grpc_hostname=PRODUCTION_HOSTNAME["grpc_hostname"])
+            api_url = f"{base_url}{ENDPOINT_SENDCOMMAND}"
+            headers = {
+                "Authorization": f"Basic {access_token}",
+                "Content-Type": "application/x-protobuf",
+                "User-Agent": USER_AGENT_STRING,
+                "X-Accept-Content-Transfer-Encoding": "binary",
+                "X-Accept-Response-Streaming": "true",
+                "Accept": "application/x-protobuf",
+                "Accept-Encoding": "gzip, deflate, br",
+                "referer": "https://home.nest.com/",
+                "origin": "https://home.nest.com",
+                "request-id": request_id,
+            }
+            if structure_id or self._structure_id:
+                headers["X-Nest-Structure-Id"] = structure_id or self._structure_id
+            if self._user_id:
+                headers["X-nl-user-id"] = str(self._user_id)
+            async with session.post(api_url, headers=headers, data=encoded_data) as resp:
+                raw = await resp.read()
+                if resp.status != 200:
+                    body = await resp.text()
+                    raise aiohttp.ClientResponseError(
+                        request_info=resp.request_info,
+                        history=(),
+                        status=resp.status,
+                        message=body,
+                        headers=resp.headers,
+                    )
+                # Validate protobuf
+                decoded = v1_pb2.ResourceCommandResponseFromAPI()
+                decoded.ParseFromString(raw)
+                _LOGGER.debug("Ephemeral command response ops=%d", len(getattr(decoded, 'resouceCommandResponse', [])))
+                return raw
+        finally:
+            try:
+                await session.close()
+            except Exception:
+                pass
 
     async def close(self):
         if self.connection and self.connection.connected:
