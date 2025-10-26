@@ -38,6 +38,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             for device_id, device in current_state.items():
                 if isinstance(device, dict):
                     devices.setdefault(device_id, device)
+        auth_devices = coordinator.api_client.auth_data.get("devices", []) if isinstance(coordinator.api_client.auth_data, dict) else []
+        for auth_device in auth_devices:
+            device_id = auth_device.get("device_id")
+            if device_id:
+                devices.setdefault(device_id, auth_device)
         return devices
 
     def _process_devices() -> None:
