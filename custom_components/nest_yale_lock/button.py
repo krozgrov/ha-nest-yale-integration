@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -17,6 +19,8 @@ from .const import (
     SIGNAL_DIAGNOSTIC_STATUS_UPDATED,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
@@ -26,6 +30,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     def _process_devices() -> None:
         data = coordinator.data or {}
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("Diagnostic button setup processing devices: %s", list(data.keys()))
         new_entities: list[NestYaleDiagnosticButton] = []
         for device_id in data:
             unique_id = f"{DOMAIN}_{device_id}_diagnostic_button"
@@ -33,8 +39,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 continue
             new_entities.append(NestYaleDiagnosticButton(hass, coordinator, entry.entry_id, device_id))
             added.add(unique_id)
+            _LOGGER.debug("Prepared diagnostic button for device_id=%s, unique_id=%s", device_id, unique_id)
         if new_entities:
             async_add_entities(new_entities)
+            _LOGGER.debug("Added %d diagnostic button entities", len(new_entities))
 
     _process_devices()
     cancel = coordinator.async_add_listener(_process_devices)
@@ -45,6 +53,7 @@ class NestYaleDiagnosticButton(ButtonEntity):
     _attr_has_entity_name = True
     _attr_name = "Diagnostic: Request Platform API State"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = True
 
     def __init__(self, hass: HomeAssistant, coordinator, entry_id: str, device_id: str) -> None:
         self.hass = hass
@@ -92,6 +101,9 @@ class NestYaleDiagnosticButton(ButtonEntity):
             self._entry_id,
             self._device_id,
             new_status,
+        )
+        _LOGGER.debug(
+            "Diagnostic button updated status for device_id=%s to %s", self._device_id, new_status
         )
         # Create a persistent notification with the status
         await self.hass.services.async_call(

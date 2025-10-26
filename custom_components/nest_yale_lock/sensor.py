@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
@@ -18,6 +19,8 @@ from .const import (
     SIGNAL_DIAGNOSTIC_STATUS_UPDATED,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -31,6 +34,8 @@ async def async_setup_entry(
 
     def _process_devices() -> None:
         data = coordinator.data or {}
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("Diagnostic sensor setup processing devices: %s", list(data.keys()))
         new_entities: list[NestYaleDiagnosticStatusSensor] = []
         for device_id in data:
             unique_id = f"{DOMAIN}_{device_id}_diagnostic_status"
@@ -38,8 +43,10 @@ async def async_setup_entry(
                 continue
             new_entities.append(NestYaleDiagnosticStatusSensor(hass, coordinator, entry.entry_id, device_id))
             added.add(unique_id)
+            _LOGGER.debug("Prepared diagnostic status sensor for device_id=%s, unique_id=%s", device_id, unique_id)
         if new_entities:
             async_add_entities(new_entities)
+            _LOGGER.debug("Added %d diagnostic sensor entities", len(new_entities))
 
     _process_devices()
     cancel = coordinator.async_add_listener(_process_devices)
@@ -53,6 +60,7 @@ class NestYaleDiagnosticStatusSensor(SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = DIAGNOSTIC_STATUS_OPTIONS
     _attr_should_poll = False
+    _attr_entity_registry_enabled_default = True
 
     def __init__(self, hass: HomeAssistant, coordinator, entry_id: str, device_id: str) -> None:
         self.hass = hass
@@ -99,3 +107,6 @@ class NestYaleDiagnosticStatusSensor(SensorEntity):
         if status != self._attr_native_value:
             self._attr_native_value = status
             self.async_write_ha_state()
+            _LOGGER.debug(
+                "Diagnostic status sensor updated for device_id=%s to %s", self._device_id, status
+            )
