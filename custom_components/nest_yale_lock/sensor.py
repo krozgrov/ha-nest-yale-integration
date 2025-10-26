@@ -62,13 +62,17 @@ class NestYaleDiagnosticStatusSensor(SensorEntity):
         self._unsub_dispatcher: Callable[[], None] | None = None
         self._attr_unique_id = f"{DOMAIN}_{device_id}_diagnostic_status"
         metadata = coordinator.api_client.get_device_metadata(device_id)
+        serial_number = metadata.get("serial_number") or device_id
+        identifiers = {(DOMAIN, device_id)}
+        if serial_number and serial_number != device_id:
+            identifiers.add((DOMAIN, serial_number))
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, device_id)},
+            "identifiers": identifiers,
             "manufacturer": "Nest",
             "model": "Nest x Yale Lock",
             "name": metadata["name"],
             "sw_version": metadata["firmware_revision"],
-            "serial_number": metadata.get("serial_number"),
+            "serial_number": serial_number,
         }
 
         status_store = hass.data[DOMAIN].setdefault(DATA_DIAGNOSTIC_STATUS, {})
