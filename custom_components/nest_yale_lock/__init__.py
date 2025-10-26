@@ -9,6 +9,7 @@ from .const import (
     DOMAIN,
     PLATFORMS,
     DATA_DIAGNOSTIC_STATUS,
+    DATA_KNOWN_DEVICE_IDS,
 )
 from .api_client import NestAPIClient
 from .coordinator import NestCoordinator
@@ -63,6 +64,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Track added entities per entry to allow clean re-add without restart
     domain_data.setdefault("added_lock_ids", {}).setdefault(entry.entry_id, set())
     domain_data.setdefault(DATA_DIAGNOSTIC_STATUS, {}).setdefault(entry.entry_id, {})
+    domain_data.setdefault(DATA_KNOWN_DEVICE_IDS, {}).setdefault(entry.entry_id, set())
 
     _LOGGER.debug("Forwarding setup to platforms: %s", PLATFORMS)
     try:
@@ -97,6 +99,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         diag_status = domain_data.get(DATA_DIAGNOSTIC_STATUS)
         if isinstance(diag_status, dict) and entry.entry_id in diag_status:
             diag_status.pop(entry.entry_id, None)
+    except Exception:
+        pass
+    try:
+        known_devices = domain_data.get(DATA_KNOWN_DEVICE_IDS)
+        if isinstance(known_devices, dict) and entry.entry_id in known_devices:
+            known_devices.pop(entry.entry_id, None)
     except Exception:
         pass
     try:

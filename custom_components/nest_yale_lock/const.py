@@ -70,6 +70,7 @@ CONF_COOKIES = "cookies"
 UPDATE_INTERVAL_SECONDS = timedelta(seconds=30)  # Use timedelta for DataUpdateCoordinator
 
 DATA_DIAGNOSTIC_STATUS = "diagnostic_status"
+DATA_KNOWN_DEVICE_IDS = "known_device_ids"
 SIGNAL_DIAGNOSTIC_STATUS_UPDATED = "nest_yale_lock_diagnostic_status"
 DIAGNOSTIC_STATUS_AVAILABLE = "Available"
 DIAGNOSTIC_STATUS_UNAVAILABLE = "Unavailable"

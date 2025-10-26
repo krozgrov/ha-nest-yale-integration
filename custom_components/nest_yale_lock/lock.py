@@ -5,7 +5,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from .const import DOMAIN
+from .const import DOMAIN, DATA_KNOWN_DEVICE_IDS
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 
 _LOGGER = logging.getLogger(__name__)
@@ -13,6 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     _LOGGER.debug("Starting async_setup_entry for lock platform, entry_id: %s", entry.entry_id)
     coordinator = hass.data[DOMAIN][entry.entry_id]
+    known_devices = hass.data[DOMAIN].setdefault(DATA_KNOWN_DEVICE_IDS, {}).setdefault(entry.entry_id, set())
 
     # Use a per-entry tracker so removing/re-adding the integration does not
     # suppress rediscovery due to stale in-memory state.
@@ -33,6 +34,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 continue
             new_entities.append(NestYaleLock(coordinator, device))
             added.add(unique_id)
+            known_devices.add(device_id)
             _LOGGER.debug("Prepared new lock entity: %s", unique_id)
         if new_entities:
             _LOGGER.info("Adding %d Nest Yale locks", len(new_entities))

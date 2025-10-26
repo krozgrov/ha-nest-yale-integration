@@ -12,6 +12,7 @@ from homeassistant.helpers.entity import EntityCategory
 from .const import (
     DOMAIN,
     DATA_DIAGNOSTIC_STATUS,
+    DATA_KNOWN_DEVICE_IDS,
     DEFAULT_DIAGNOSTIC_STATUS,
     DIAGNOSTIC_STATUS_AVAILABLE,
     DIAGNOSTIC_STATUS_UNAVAILABLE,
@@ -43,6 +44,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             device_id = auth_device.get("device_id")
             if device_id:
                 devices.setdefault(device_id, auth_device)
+        known_devices = hass.data[DOMAIN].get(DATA_KNOWN_DEVICE_IDS, {}).get(entry.entry_id, set())
+        for device_id in known_devices:
+            devices.setdefault(device_id, {})
         return devices
 
     def _process_devices() -> None:
