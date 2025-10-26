@@ -6,7 +6,7 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.dispatcher import async_dispatcher_send, async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
 
 from .const import (
@@ -16,6 +16,7 @@ from .const import (
     DEFAULT_DIAGNOSTIC_STATUS,
     DIAGNOSTIC_STATUS_AVAILABLE,
     DIAGNOSTIC_STATUS_UNAVAILABLE,
+    SIGNAL_DEVICE_DISCOVERED,
     SIGNAL_DIAGNOSTIC_STATUS_UPDATED,
 )
 
@@ -27,45 +28,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     status_store = hass.data[DOMAIN].setdefault(DATA_DIAGNOSTIC_STATUS, {})
     status_store.setdefault(entry.entry_id, {})
 
-    tracked: set[str] = set()
+    added: set[str] = set()
 
-    def _gather_devices() -> dict[str, dict]:
-        devices: dict[str, dict] = {}
-        data = coordinator.data or {}
-        if isinstance(data, dict):
-            devices.update({device_id: device for device_id, device in data.items() if isinstance(device, dict)})
-        current_state = coordinator.api_client.current_state.get("devices", {}).get("locks", {})
-        if isinstance(current_state, dict):
-            for device_id, device in current_state.items():
-                if isinstance(device, dict):
-                    devices.setdefault(device_id, device)
-        auth_devices = coordinator.api_client.auth_data.get("devices", []) if isinstance(coordinator.api_client.auth_data, dict) else []
-        for auth_device in auth_devices:
-            device_id = auth_device.get("device_id")
-            if device_id:
-                devices.setdefault(device_id, auth_device)
-        known_devices = hass.data[DOMAIN].get(DATA_KNOWN_DEVICE_IDS, {}).get(entry.entry_id, set())
-        for device_id in known_devices:
-            devices.setdefault(device_id, {})
-        return devices
+    def _add_entity(device_id: str) -> None:
+        if device_id in added:
+            return
+        added.add(device_id)
+        _LOGGER.debug("Prepared diagnostic button for device_id=%s", device_id)
+        async_add_entities([NestYaleDiagnosticButton(hass, coordinator, entry.entry_id, device_id)])
 
-    def _process_devices() -> None:
-        devices = _gather_devices()
-        _LOGGER.debug("Diagnostic button setup processing devices: %s", list(devices.keys()))
-        new_entities: list[NestYaleDiagnosticButton] = []
-        for device_id in devices:
-            if device_id in tracked:
-                continue
-            tracked.add(device_id)
-            new_entities.append(NestYaleDiagnosticButton(hass, coordinator, entry.entry_id, device_id))
-            _LOGGER.debug("Prepared diagnostic button for device_id=%s", device_id)
-        if new_entities:
-            async_add_entities(new_entities)
-            _LOGGER.debug("Added %d diagnostic button entities", len(new_entities))
+    def _handle_device(entry_id: str, device_id: str) -> None:
+        if entry_id != entry.entry_id:
+            return
+        _add_entity(device_id)
 
-    _process_devices()
-    cancel = coordinator.async_add_listener(_process_devices)
-    entry.async_on_unload(cancel)
+    # Prime with any previously-known devices
+    known_devices = hass.data[DOMAIN].get(DATA_KNOWN_DEVICE_IDS, {}).get(entry.entry_id, set())
+    for device_id in known_devices:
+        _add_entity(device_id)
+
+    # Include devices already present in coordinator snapshot
+    if isinstance(coordinator.data, dict):
+        for device_id in coordinator.data.keys():
+            _add_entity(device_id)
+
+    unsubscribe = async_dispatcher_connect(hass, SIGNAL_DEVICE_DISCOVERED, _handle_device)
+    entry.async_on_unload(unsubscribe)
 
 
 class NestYaleDiagnosticButton(ButtonEntity):

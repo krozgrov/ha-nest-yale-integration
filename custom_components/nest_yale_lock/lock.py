@@ -2,10 +2,11 @@ import logging
 import asyncio
 from homeassistant.components.lock import LockEntity, LockState
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from .const import DOMAIN, DATA_KNOWN_DEVICE_IDS
+from .const import DOMAIN, DATA_KNOWN_DEVICE_IDS, SIGNAL_DEVICE_DISCOVERED
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             added.add(unique_id)
             known_devices.add(device_id)
             _LOGGER.debug("Prepared new lock entity: %s", unique_id)
+            async_dispatcher_send(hass, SIGNAL_DEVICE_DISCOVERED, entry.entry_id, device_id)
         if new_entities:
             _LOGGER.info("Adding %d Nest Yale locks", len(new_entities))
             async_add_entities(new_entities)

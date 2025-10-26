@@ -16,6 +16,7 @@ from .const import (
     DEFAULT_DIAGNOSTIC_STATUS,
     DIAGNOSTIC_STATUS_OPTIONS,
     DOMAIN,
+    SIGNAL_DEVICE_DISCOVERED,
     SIGNAL_DIAGNOSTIC_STATUS_UPDATED,
 )
 
@@ -32,45 +33,29 @@ async def async_setup_entry(
     status_store = hass.data[DOMAIN].setdefault(DATA_DIAGNOSTIC_STATUS, {})
     status_store.setdefault(entry.entry_id, {})
 
-    tracked: set[str] = set()
+    added: set[str] = set()
 
-    def _gather_devices() -> dict[str, dict]:
-        devices: dict[str, dict] = {}
-        data = coordinator.data or {}
-        if isinstance(data, dict):
-            devices.update({device_id: device for device_id, device in data.items() if isinstance(device, dict)})
-        current_state = coordinator.api_client.current_state.get("devices", {}).get("locks", {})
-        if isinstance(current_state, dict):
-            for device_id, device in current_state.items():
-                if isinstance(device, dict):
-                    devices.setdefault(device_id, device)
-        auth_devices = coordinator.api_client.auth_data.get("devices", []) if isinstance(coordinator.api_client.auth_data, dict) else []
-        for auth_device in auth_devices:
-            device_id = auth_device.get("device_id")
-            if device_id:
-                devices.setdefault(device_id, auth_device)
-        known_devices = hass.data[DOMAIN].get(DATA_KNOWN_DEVICE_IDS, {}).get(entry.entry_id, set())
-        for device_id in known_devices:
-            devices.setdefault(device_id, {})
-        return devices
+    def _add_entity(device_id: str) -> None:
+        if device_id in added:
+            return
+        added.add(device_id)
+        _LOGGER.debug("Prepared diagnostic sensor for device_id=%s", device_id)
+        async_add_entities([NestYaleDiagnosticStatusSensor(hass, coordinator, entry.entry_id, device_id)])
 
-    def _process_devices() -> None:
-        devices = _gather_devices()
-        _LOGGER.debug("Diagnostic sensor setup processing devices: %s", list(devices.keys()))
-        new_entities: list[NestYaleDiagnosticStatusSensor] = []
-        for device_id in devices:
-            if device_id in tracked:
-                continue
-            tracked.add(device_id)
-            new_entities.append(NestYaleDiagnosticStatusSensor(hass, coordinator, entry.entry_id, device_id))
-            _LOGGER.debug("Prepared diagnostic status sensor for device_id=%s", device_id)
-        if new_entities:
-            async_add_entities(new_entities)
-            _LOGGER.debug("Added %d diagnostic sensor entities", len(new_entities))
+    def _handle_device(entry_id: str, device_id: str) -> None:
+        if entry_id != entry.entry_id:
+            return
+        _add_entity(device_id)
 
-    _process_devices()
-    cancel = coordinator.async_add_listener(_process_devices)
-    entry.async_on_unload(cancel)
+    for device_id in hass.data[DOMAIN].get(DATA_KNOWN_DEVICE_IDS, {}).get(entry.entry_id, set()):
+        _add_entity(device_id)
+
+    if isinstance(coordinator.data, dict):
+        for device_id in coordinator.data.keys():
+            _add_entity(device_id)
+
+    unsubscribe = async_dispatcher_connect(hass, SIGNAL_DEVICE_DISCOVERED, _handle_device)
+    entry.async_on_unload(unsubscribe)
 
 
 class NestYaleDiagnosticStatusSensor(SensorEntity):
