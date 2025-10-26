@@ -63,11 +63,12 @@ class NestYaleDiagnosticStatusSensor(SensorEntity):
         self._attr_unique_id = f"{DOMAIN}_{device_id}_diagnostic_status"
         metadata = coordinator.api_client.get_device_metadata(device_id)
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, metadata["serial_number"])},
+            "identifiers": {(DOMAIN, device_id)},
             "manufacturer": "Nest",
             "model": "Nest x Yale Lock",
             "name": metadata["name"],
             "sw_version": metadata["firmware_revision"],
+            "serial_number": metadata.get("serial_number"),
         }
 
         status_store = hass.data[DOMAIN].setdefault(DATA_DIAGNOSTIC_STATUS, {})

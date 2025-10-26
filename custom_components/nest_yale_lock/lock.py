@@ -56,11 +56,12 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         metadata = self._coordinator.api_client.get_device_metadata(self._device_id)
         self._attr_name = metadata["name"]
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, metadata["serial_number"])},
+            "identifiers": {(DOMAIN, self._device_id)},
             "manufacturer": "Nest",
             "model": "Nest x Yale Lock",
             "name": self._attr_name,
             "sw_version": metadata["firmware_revision"],
+            "serial_number": metadata.get("serial_number"),
         }
         self._attr_supported_features = 0
         self._attr_has_entity_name = False
@@ -97,13 +98,12 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
 
     @property
     def extra_state_attributes(self):
-        serial_number = next(iter(self._attr_device_info["identifiers"]))[1]
         attrs = {
             "bolt_moving": self._device.get("bolt_moving", False),
             "bolt_moving_to": self._device.get("bolt_moving_to"),
             "battery_status": self._device.get("battery_status"),
             "battery_voltage": self._device.get("battery_voltage"),
-            "serial_number": serial_number,
+            "serial_number": self._attr_device_info.get("serial_number", self._device_id),
             "firmware_revision": self._attr_device_info["sw_version"],
             "user_id": self._user_id,
             "structure_id": self._structure_id,
