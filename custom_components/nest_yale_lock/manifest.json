@@ -1,7 +1,9 @@
 {
   "domain": "nest_yale_lock",
   "name": "Google Nest x Yale",
-  "codeowners": ["@krozgrov"],
+  "codeowners": [
+    "@krozgrov"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/krozgrov/ha-nest-yale-integration/blob/main/README.md",
@@ -25,5 +27,9 @@
     "protobuf==6.32.0",
     "PyJWT>=2.8.0,<3.0"
   ],
-  "version": "2025.10.19.7b15"
+  "version": "2025.10.19.7b16",
+  "platforms": [
+    "lock",
+    "button"
+  ]
 }
