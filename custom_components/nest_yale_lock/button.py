@@ -42,12 +42,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         metadata = coordinator.api_client.get_device_metadata(device_id)
         device_registry_id = ensure_device_registered(hass, entry.entry_id, device_id, metadata)
         ent_reg = er.async_get(hass)
+        new_unique = f"{DOMAIN}_{device_id}_diagnostic_button"
         old_entity_id = ent_reg.async_get_entity_id("button", DOMAIN, OLD_BUTTON_UNIQUE_ID)
-        if old_entity_id and old_entity_id != f"button.{device_id}":
-            new_unique = f"{DOMAIN}_{device_id}_diagnostic_button"
-            if ent_reg.async_get_entity_id("button", DOMAIN, new_unique) is None:
-                ent_reg.async_update_entity(old_entity_id, new_unique_id=new_unique)
-                _LOGGER.debug("Migrated diagnostic button unique_id from %s to %s", OLD_BUTTON_UNIQUE_ID, new_unique)
+        if old_entity_id:
+            entry = ent_reg.async_update_entity(
+                old_entity_id,
+                new_unique_id=new_unique,
+                device_id=device_registry_id,
+            )
+            _LOGGER.debug(
+                "Migrated legacy diagnostic button %s to unique_id=%s, device_id=%s",
+                old_entity_id,
+                new_unique,
+                device_registry_id,
+            )
+        existing_entity_id = ent_reg.async_get_entity_id("button", DOMAIN, new_unique)
+        if existing_entity_id:
+            ent_reg.async_update_entity(existing_entity_id, device_id=device_registry_id)
+            _LOGGER.debug(
+                "Ensured diagnostic button entity %s linked to device_id=%s",
+                existing_entity_id,
+                device_registry_id,
+            )
         async_add_entities([NestYaleDiagnosticButton(hass, coordinator, entry.entry_id, device_id, metadata, device_registry_id)])
 
     def _handle_device(entry_id: str, device_id: str) -> None:
