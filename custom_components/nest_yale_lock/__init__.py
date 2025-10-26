@@ -5,7 +5,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers import config_validation as cv
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from .const import DOMAIN, PLATFORMS
+from .const import (
+    DOMAIN,
+    PLATFORMS,
+    DATA_ADDED_BUTTON_IDS,
+    DATA_ADDED_SENSOR_IDS,
+    DATA_DIAGNOSTIC_STATUS,
+)
 from .api_client import NestAPIClient
 from .coordinator import NestCoordinator
 
@@ -53,11 +59,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.error("Failed to initialize API client or coordinator: %s", e, exc_info=True)
         return False
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
-    hass.data[DOMAIN].setdefault("entities", [])
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    domain_data[entry.entry_id] = coordinator
+    domain_data.setdefault("entities", [])
     # Track added entities per entry to allow clean re-add without restart
-    hass.data[DOMAIN].setdefault("added_lock_ids", {})
-    hass.data[DOMAIN]["added_lock_ids"].setdefault(entry.entry_id, set())
+    domain_data.setdefault("added_lock_ids", {}).setdefault(entry.entry_id, set())
+    domain_data.setdefault(DATA_ADDED_BUTTON_IDS, {}).setdefault(entry.entry_id, set())
+    domain_data.setdefault(DATA_ADDED_SENSOR_IDS, {}).setdefault(entry.entry_id, set())
+    domain_data.setdefault(DATA_DIAGNOSTIC_STATUS, {}).setdefault(entry.entry_id, {})
 
     _LOGGER.debug("Forwarding setup to platforms: %s", PLATFORMS)
     try:
@@ -79,12 +88,31 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.debug("Unloading coordinator")
         await coordinator.async_unload()
 
-    hass.data[DOMAIN]["entities"] = []
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    domain_data["entities"] = []
     # Clear per-entry added ids so re-adding the integration can discover devices
     try:
-        added_map = hass.data[DOMAIN].get("added_lock_ids")
+        added_map = domain_data.get("added_lock_ids")
         if isinstance(added_map, dict) and entry.entry_id in added_map:
             added_map.pop(entry.entry_id, None)
+    except Exception:
+        pass
+    try:
+        added_buttons = domain_data.get(DATA_ADDED_BUTTON_IDS)
+        if isinstance(added_buttons, dict) and entry.entry_id in added_buttons:
+            added_buttons.pop(entry.entry_id, None)
+    except Exception:
+        pass
+    try:
+        added_sensors = domain_data.get(DATA_ADDED_SENSOR_IDS)
+        if isinstance(added_sensors, dict) and entry.entry_id in added_sensors:
+            added_sensors.pop(entry.entry_id, None)
+    except Exception:
+        pass
+    try:
+        diag_status = domain_data.get(DATA_DIAGNOSTIC_STATUS)
+        if isinstance(diag_status, dict) and entry.entry_id in diag_status:
+            diag_status.pop(entry.entry_id, None)
     except Exception:
         pass
     try:
