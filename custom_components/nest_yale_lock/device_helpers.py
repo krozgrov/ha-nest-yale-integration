@@ -1,10 +1,12 @@
 from __future__ import annotations
-
+import logging
 from typing import Optional
 
 from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def ensure_device_registered(
@@ -24,6 +26,7 @@ def ensure_device_registered(
     if device:
         if entry_id not in device.config_entries:
             dev_reg.async_update_device(device.id, add_config_entry_id=entry_id)
+            _LOGGER.debug("Added config entry %s to existing device %s", entry_id, device.id)
         return device.id
 
     device = dev_reg.async_get_or_create(
@@ -31,7 +34,11 @@ def ensure_device_registered(
         identifiers=identifiers,
         manufacturer=metadata.get("manufacturer", "Nest"),
         model=metadata.get("model", "Nest x Yale Lock"),
-        name=metadata.get("name", "Nest Yale Lock"),
+        name=metadata.get("name", metadata.get("friendly_name", "Nest Yale Lock")),
         sw_version=metadata.get("firmware_revision"),
     )
-    return device.id if device else None
+    if device:
+        _LOGGER.debug("Created device entry %s for device_id=%s", device.id, device_id)
+        return device.id
+    _LOGGER.warning("Failed to register device for %s", device_id)
+    return None

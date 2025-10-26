@@ -93,7 +93,13 @@ class NestYaleDiagnosticButton(ButtonEntity):
         await super().async_added_to_hass()
         ent_reg = er.async_get(self.hass)
         if self._device_registry_id:
-            ent_reg.async_update_entity(self.entity_id, device_id=self._device_registry_id)
+            entry = ent_reg.async_update_entity(self.entity_id, device_id=self._device_registry_id)
+            _LOGGER.debug(
+                "Diagnostic button linked entity %s to device %s (registry entry=%s)",
+                self.entity_id,
+                self._device_registry_id,
+                entry and entry.id,
+            )
 
     async def async_press(self) -> None:
         api = self._coordinator.api_client
