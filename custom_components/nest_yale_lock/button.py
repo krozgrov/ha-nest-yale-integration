@@ -11,7 +11,6 @@ from homeassistant.helpers.entity import EntityCategory
 
 from .const import (
     DOMAIN,
-    DATA_ADDED_BUTTON_IDS,
     DATA_DIAGNOSTIC_STATUS,
     DEFAULT_DIAGNOSTIC_STATUS,
     DIAGNOSTIC_STATUS_AVAILABLE,
@@ -24,22 +23,33 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
+    status_store = hass.data[DOMAIN].setdefault(DATA_DIAGNOSTIC_STATUS, {})
+    status_store.setdefault(entry.entry_id, {})
 
-    added_map = hass.data[DOMAIN].setdefault(DATA_ADDED_BUTTON_IDS, {})
-    added: set[str] = added_map.setdefault(entry.entry_id, set())
+    tracked: set[str] = set()
+
+    def _gather_devices() -> dict[str, dict]:
+        devices: dict[str, dict] = {}
+        data = coordinator.data or {}
+        if isinstance(data, dict):
+            devices.update({device_id: device for device_id, device in data.items() if isinstance(device, dict)})
+        current_state = coordinator.api_client.current_state.get("devices", {}).get("locks", {})
+        if isinstance(current_state, dict):
+            for device_id, device in current_state.items():
+                if isinstance(device, dict):
+                    devices.setdefault(device_id, device)
+        return devices
 
     def _process_devices() -> None:
-        data = coordinator.data or {}
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("Diagnostic button setup processing devices: %s", list(data.keys()))
+        devices = _gather_devices()
+        _LOGGER.debug("Diagnostic button setup processing devices: %s", list(devices.keys()))
         new_entities: list[NestYaleDiagnosticButton] = []
-        for device_id in data:
-            unique_id = f"{DOMAIN}_{device_id}_diagnostic_button"
-            if unique_id in added:
+        for device_id in devices:
+            if device_id in tracked:
                 continue
+            tracked.add(device_id)
             new_entities.append(NestYaleDiagnosticButton(hass, coordinator, entry.entry_id, device_id))
-            added.add(unique_id)
-            _LOGGER.debug("Prepared diagnostic button for device_id=%s, unique_id=%s", device_id, unique_id)
+            _LOGGER.debug("Prepared diagnostic button for device_id=%s", device_id)
         if new_entities:
             async_add_entities(new_entities)
             _LOGGER.debug("Added %d diagnostic button entities", len(new_entities))

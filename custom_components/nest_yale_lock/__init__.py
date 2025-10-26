@@ -8,8 +8,6 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from .const import (
     DOMAIN,
     PLATFORMS,
-    DATA_ADDED_BUTTON_IDS,
-    DATA_ADDED_SENSOR_IDS,
     DATA_DIAGNOSTIC_STATUS,
 )
 from .api_client import NestAPIClient
@@ -64,8 +62,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     domain_data.setdefault("entities", [])
     # Track added entities per entry to allow clean re-add without restart
     domain_data.setdefault("added_lock_ids", {}).setdefault(entry.entry_id, set())
-    domain_data.setdefault(DATA_ADDED_BUTTON_IDS, {}).setdefault(entry.entry_id, set())
-    domain_data.setdefault(DATA_ADDED_SENSOR_IDS, {}).setdefault(entry.entry_id, set())
     domain_data.setdefault(DATA_DIAGNOSTIC_STATUS, {}).setdefault(entry.entry_id, {})
 
     _LOGGER.debug("Forwarding setup to platforms: %s", PLATFORMS)
@@ -95,18 +91,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         added_map = domain_data.get("added_lock_ids")
         if isinstance(added_map, dict) and entry.entry_id in added_map:
             added_map.pop(entry.entry_id, None)
-    except Exception:
-        pass
-    try:
-        added_buttons = domain_data.get(DATA_ADDED_BUTTON_IDS)
-        if isinstance(added_buttons, dict) and entry.entry_id in added_buttons:
-            added_buttons.pop(entry.entry_id, None)
-    except Exception:
-        pass
-    try:
-        added_sensors = domain_data.get(DATA_ADDED_SENSOR_IDS)
-        if isinstance(added_sensors, dict) and entry.entry_id in added_sensors:
-            added_sensors.pop(entry.entry_id, None)
     except Exception:
         pass
     try:
