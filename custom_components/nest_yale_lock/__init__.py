@@ -13,6 +13,7 @@ from .const import (
 )
 from .api_client import NestAPIClient
 from .coordinator import NestCoordinator
+from .button import async_cleanup_legacy_diagnostic_button
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,6 +66,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     domain_data.setdefault("added_lock_ids", {}).setdefault(entry.entry_id, set())
     domain_data.setdefault(DATA_DIAGNOSTIC_STATUS, {}).setdefault(entry.entry_id, {})
     domain_data.setdefault(DATA_KNOWN_DEVICE_IDS, {}).setdefault(entry.entry_id, set())
+
+    await async_cleanup_legacy_diagnostic_button(hass)
 
     _LOGGER.debug("Forwarding setup to platforms: %s", PLATFORMS)
     try:

@@ -27,6 +27,19 @@ OLD_BUTTON_UNIQUE_ID = f"{DOMAIN}_diagnostic_button"
 _LOGGER = logging.getLogger(__name__)
 
 
+async def async_cleanup_legacy_diagnostic_button(hass: HomeAssistant) -> None:
+    """Remove the legacy singleton diagnostic button entry if it exists."""
+    ent_reg = er.async_get(hass)
+    removed = False
+    for entry in list(ent_reg.entities.values()):
+        if entry.platform == DOMAIN and entry.unique_id == OLD_BUTTON_UNIQUE_ID:
+            ent_reg.async_remove(entry.entity_id)
+            removed = True
+            _LOGGER.debug("Removed legacy diagnostic button entity %s", entry.entity_id)
+    if not removed:
+        _LOGGER.debug("No legacy diagnostic button entities found during cleanup")
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
     status_store = hass.data[DOMAIN].setdefault(DATA_DIAGNOSTIC_STATUS, {})
@@ -45,17 +58,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         new_unique = f"{DOMAIN}_{device_id}_diagnostic_button"
         old_entity_id = ent_reg.async_get_entity_id("button", DOMAIN, OLD_BUTTON_UNIQUE_ID)
         if old_entity_id:
-            entry = ent_reg.async_update_entity(
-                old_entity_id,
-                new_unique_id=new_unique,
-                device_id=device_registry_id,
-            )
-            _LOGGER.debug(
-                "Migrated legacy diagnostic button %s to unique_id=%s, device_id=%s",
-                old_entity_id,
-                new_unique,
-                device_registry_id,
-            )
+            ent_reg.async_remove(old_entity_id)
+            _LOGGER.debug("Removed lingering legacy diagnostic button entry %s", old_entity_id)
         existing_entity_id = ent_reg.async_get_entity_id("button", DOMAIN, new_unique)
         if existing_entity_id:
             ent_reg.async_update_entity(existing_entity_id, device_id=device_registry_id)
