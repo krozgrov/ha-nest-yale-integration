@@ -18,11 +18,15 @@ from .const import (
 DIAGNOSTIC_STATUS_AVAILABLE,
 DIAGNOSTIC_STATUS_UNAVAILABLE,
 SIGNAL_DEVICE_DISCOVERED,
-SIGNAL_DIAGNOSTIC_STATUS_UPDATED,
+    SIGNAL_DIAGNOSTIC_STATUS_UPDATED,
 )
 from .device_helpers import ensure_device_registered
 
-OLD_BUTTON_UNIQUE_ID = f"{DOMAIN}_diagnostic_button"
+LEGACY_BUTTON_UNIQUE_IDS = {
+    f"{DOMAIN}_diagnostic_button",
+    "nest_yale_lock_diagnostic_button",
+}
+UNIQUE_ID_TEMPLATE = f"{DOMAIN}" + "_{entry_id}_{device_id}_diagnostic_button_v2"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,7 +36,7 @@ async def async_cleanup_legacy_diagnostic_button(hass: HomeAssistant) -> None:
     ent_reg = er.async_get(hass)
     removed = False
     for entry in list(ent_reg.entities.values()):
-        if entry.platform == DOMAIN and entry.unique_id == OLD_BUTTON_UNIQUE_ID:
+        if entry.platform == DOMAIN and entry.unique_id in LEGACY_BUTTON_UNIQUE_IDS:
             ent_reg.async_remove(entry.entity_id)
             removed = True
             _LOGGER.debug("Removed legacy diagnostic button entity %s", entry.entity_id)
@@ -55,12 +59,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         metadata = coordinator.api_client.get_device_metadata(device_id)
         device_registry_id = ensure_device_registered(hass, entry.entry_id, device_id, metadata)
         ent_reg = er.async_get(hass)
-        new_unique = f"{DOMAIN}_{device_id}_diagnostic_button"
-        old_entity_id = ent_reg.async_get_entity_id("button", DOMAIN, OLD_BUTTON_UNIQUE_ID)
-        if old_entity_id:
-            ent_reg.async_remove(old_entity_id)
-            _LOGGER.debug("Removed lingering legacy diagnostic button entry %s", old_entity_id)
-        existing_entity_id = ent_reg.async_get_entity_id("button", DOMAIN, new_unique)
+        unique_id = UNIQUE_ID_TEMPLATE.format(entry_id=entry.entry_id, device_id=device_id)
+        existing_entity_id = ent_reg.async_get_entity_id("button", DOMAIN, unique_id)
         if existing_entity_id:
             ent_reg.async_update_entity(existing_entity_id, device_id=device_registry_id)
             _LOGGER.debug(
@@ -68,7 +68,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 existing_entity_id,
                 device_registry_id,
             )
-        async_add_entities([NestYaleDiagnosticButton(hass, coordinator, entry.entry_id, device_id, metadata, device_registry_id)])
+        async_add_entities([
+            NestYaleDiagnosticButton(
+                hass,
+                coordinator,
+                entry.entry_id,
+                device_id,
+                metadata,
+                device_registry_id,
+                unique_id,
+            )
+        ])
 
     def _handle_device(entry_id: str, device_id: str) -> None:
         if entry_id != entry.entry_id:
@@ -95,12 +105,21 @@ class NestYaleDiagnosticButton(ButtonEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = True
 
-    def __init__(self, hass: HomeAssistant, coordinator, entry_id: str, device_id: str, metadata: dict, device_registry_id) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        coordinator,
+        entry_id: str,
+        device_id: str,
+        metadata: dict,
+        device_registry_id,
+        unique_id: str,
+    ) -> None:
         self.hass = hass
         self._coordinator = coordinator
         self._entry_id = entry_id
         self._device_id = device_id
-        self._attr_unique_id = f"{DOMAIN}_{device_id}_diagnostic_button"
+        self._attr_unique_id = unique_id
         serial_number = metadata.get("serial_number") or device_id
         identifiers = {(DOMAIN, device_id)}
         if serial_number and serial_number != device_id:
