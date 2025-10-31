@@ -87,10 +87,13 @@ class NestCoordinator(DataUpdateCoordinator):
                             device["bolt_moving"] = device.get("bolt_moving", False)
                         self.api_client.current_state["user_id"] = update.get("user_id")  # Persist user_id
                         self.async_set_updated_data(normalized_update)
-                        _LOGGER.debug("Applied normalized observer update: %s, current_state user_id: %s",
-                                      normalized_update, self.api_client.current_state["user_id"])
+                        _LOGGER.debug(
+                            "Applied normalized observer update: %s, current_state user_id: %s",
+                            normalized_update,
+                            self.api_client.current_state["user_id"],
+                        )
                     else:
-                        _LOGGER.debug("Normalized observer update is empty: %s", normalized_update)
+                        _LOGGER.debug("Normalized observer update is empty; keeping last known state")
                         for device in self.data.values():
                             device["bolt_moving"] = False
                         self.async_set_updated_data(self.data)
