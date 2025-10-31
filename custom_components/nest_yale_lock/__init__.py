@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 import logging
 import asyncio
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers import config_validation as cv
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.service import async_register_admin_service
+
 from .const import (
     DOMAIN,
     PLATFORMS,
-    DATA_DIAGNOSTIC_STATUS,
-    DATA_KNOWN_DEVICE_IDS,
+    SERVICE_RESET_CONNECTION,
 )
 from .api_client import NestAPIClient
 from .coordinator import NestCoordinator
-from .button import async_cleanup_legacy_diagnostic_button
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,13 +62,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     domain_data = hass.data.setdefault(DOMAIN, {})
     domain_data[entry.entry_id] = coordinator
-    domain_data.setdefault("entities", [])
-    # Track added entities per entry to allow clean re-add without restart
+    domain_data.setdefault("coordinators", {})[entry.entry_id] = coordinator
     domain_data.setdefault("added_lock_ids", {}).setdefault(entry.entry_id, set())
-    domain_data.setdefault(DATA_DIAGNOSTIC_STATUS, {}).setdefault(entry.entry_id, {})
-    domain_data.setdefault(DATA_KNOWN_DEVICE_IDS, {}).setdefault(entry.entry_id, set())
 
-    await async_cleanup_legacy_diagnostic_button(hass)
+    if not domain_data.get("service_registered"):
+        async def _async_handle_reset(call):
+            target_entry = call.data.get("entry_id")
+            coordinators = hass.data.get(DOMAIN, {}).get("coordinators", {})
+            targets = []
+            if target_entry:
+                coord = coordinators.get(target_entry)
+                if coord:
+                    targets.append(coord)
+            else:
+                targets.extend(coordinators.values())
+            if not targets:
+                _LOGGER.warning("Reset connection service called but no coordinators found (entry_id=%s)", target_entry)
+                return
+            for coord in targets:
+                await coord.async_reset_connection("service request")
+
+        async_register_admin_service(
+            hass,
+            DOMAIN,
+            SERVICE_RESET_CONNECTION,
+            _async_handle_reset,
+            schema=vol.Schema({vol.Optional("entry_id"): cv.string}),
+        )
+        domain_data["service_registered"] = True
 
     _LOGGER.debug("Forwarding setup to platforms: %s", PLATFORMS)
     try:
@@ -84,13 +106,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     _LOGGER.debug("Unloading Nest Yale Lock integration for entry_id: %s", entry.entry_id)
 
-    coordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    domain_data.pop(entry.entry_id, None)
+    coordinators = domain_data.get("coordinators", {})
+    coordinator = coordinators.pop(entry.entry_id, None) if coordinators else None
     if coordinator:
         _LOGGER.debug("Unloading coordinator")
         await coordinator.async_unload()
 
-    domain_data = hass.data.setdefault(DOMAIN, {})
-    domain_data["entities"] = []
     # Clear per-entry added ids so re-adding the integration can discover devices
     try:
         added_map = domain_data.get("added_lock_ids")
@@ -98,18 +121,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             added_map.pop(entry.entry_id, None)
     except Exception:
         pass
-    try:
-        diag_status = domain_data.get(DATA_DIAGNOSTIC_STATUS)
-        if isinstance(diag_status, dict) and entry.entry_id in diag_status:
-            diag_status.pop(entry.entry_id, None)
-    except Exception:
-        pass
-    try:
-        known_devices = domain_data.get(DATA_KNOWN_DEVICE_IDS)
-        if isinstance(known_devices, dict) and entry.entry_id in known_devices:
-            known_devices.pop(entry.entry_id, None)
-    except Exception:
-        pass
+    if coordinators and len(coordinators) == 0:
+        domain_data.pop("coordinators", None)
+    if not domain_data.get("coordinators"):
+        if domain_data.get("service_registered"):
+            hass.services.async_remove(DOMAIN, SERVICE_RESET_CONNECTION)
+            domain_data["service_registered"] = False
     try:
         result = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
         _LOGGER.debug("Unload platforms result: %s", result)

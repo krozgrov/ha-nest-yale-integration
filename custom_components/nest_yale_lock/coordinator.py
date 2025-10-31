@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 import logging
 import asyncio
+from datetime import timedelta
+
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from .const import DOMAIN, UPDATE_INTERVAL_SECONDS
+
+from .const import DOMAIN, UPDATE_INTERVAL_SECONDS, SCHEDULED_HARD_RESET_MINUTES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,6 +24,7 @@ class NestCoordinator(DataUpdateCoordinator):
         )
         self.api_client = api_client
         self._observer_task = None
+        self._scheduled_reset_unsub = None
         self.data = {}
         _LOGGER.debug("Initialized NestCoordinator with initial data: %s", self.data)
 
@@ -36,6 +41,12 @@ class NestCoordinator(DataUpdateCoordinator):
 
         self._observer_task = self.hass.loop.create_task(self._run_observer())
         _LOGGER.debug("Observer task created: %s", self._observer_task)
+        interval = timedelta(minutes=SCHEDULED_HARD_RESET_MINUTES)
+        self._scheduled_reset_unsub = async_track_time_interval(self.hass, self._handle_scheduled_reset, interval)
+        _LOGGER.debug("Scheduled periodic hard reset every %s minutes", SCHEDULED_HARD_RESET_MINUTES)
+
+    async def _handle_scheduled_reset(self, _now):
+        await self.async_reset_connection("scheduled interval")
 
     async def _async_update_data(self):
         """Fetch data from API client."""
@@ -92,6 +103,17 @@ class NestCoordinator(DataUpdateCoordinator):
             _LOGGER.error("Observer failed: %s", e, exc_info=True)
             await asyncio.sleep(5)
             self._observer_task = self.hass.loop.create_task(self._run_observer())
+    async def async_reset_connection(self, reason: str):
+        _LOGGER.info("Resetting Nest Yale connection due to: %s", reason)
+        await self.api_client.reset_connection(reason)
+        if self._observer_task:
+            self._observer_task.cancel()
+            try:
+                await self._observer_task
+            except asyncio.CancelledError:
+                pass
+            self._observer_task = self.hass.loop.create_task(self._run_observer())
+        await self.async_request_refresh()
 
     async def async_unload(self):
         """Unload the coordinator."""
@@ -103,5 +125,8 @@ class NestCoordinator(DataUpdateCoordinator):
                 await self._observer_task
             except asyncio.CancelledError:
                 _LOGGER.debug("Observer task cancelled")
+        if self._scheduled_reset_unsub:
+            self._scheduled_reset_unsub()
+            self._scheduled_reset_unsub = None
         await self.api_client.close()
         _LOGGER.debug("Coordinator unloaded")

@@ -1,0 +1,8 @@
+reset_connection:
+  name: Reset Connection
+  description: Force the Nest x Yale integration to reauthenticate and rebuild its connection.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: Optional config entry id to target; when omitted, all active entries are reset.
+      example: "01ABCDEF1234567890"

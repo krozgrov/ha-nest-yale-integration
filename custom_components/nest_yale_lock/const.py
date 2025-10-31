@@ -42,6 +42,7 @@ API_NEST_REAUTH_MINUTES = 20 * 24 * 60  # 20 days
 API_HTTP2_PING_INTERVAL_SECONDS = 60
 OBSERVE_IDLE_RESET_SECONDS = 300  # Force reconnect if stream idle this long
 CONNECT_FAILURE_RESET_THRESHOLD = 3  # Recreate session after N consecutive connect errors
+SCHEDULED_HARD_RESET_MINUTES = 60
 
 # REST API Endpoints (from nest-endpoints.js)
 URL_NEST_AUTH = "https://{api_hostname}/session"
@@ -64,24 +65,11 @@ CLIENT_ID_FT = "384529615266-57v6vaptkmhm64n9hn5dcmkr4at14p8j.apps.googleusercon
 
 # Home Assistant Integration Constants
 DOMAIN = "nest_yale_lock"
-PLATFORMS = ["lock", "button", "sensor"]
+PLATFORMS = ["lock"]
 CONF_ISSUE_TOKEN = "issue_token"
 CONF_COOKIES = "cookies"
 UPDATE_INTERVAL_SECONDS = timedelta(seconds=30)  # Use timedelta for DataUpdateCoordinator
-
-DATA_DIAGNOSTIC_STATUS = "diagnostic_status"
-DATA_KNOWN_DEVICE_IDS = "known_device_ids"
-SIGNAL_DIAGNOSTIC_STATUS_UPDATED = "nest_yale_lock_diagnostic_status"
-SIGNAL_DEVICE_DISCOVERED = "nest_yale_lock_device_discovered"
-DIAGNOSTIC_STATUS_AVAILABLE = "Available"
-DIAGNOSTIC_STATUS_UNAVAILABLE = "Unavailable"
-DIAGNOSTIC_STATUS_UNKNOWN = "Unknown"
-DEFAULT_DIAGNOSTIC_STATUS = DIAGNOSTIC_STATUS_UNKNOWN
-DIAGNOSTIC_STATUS_OPTIONS = [
-    DIAGNOSTIC_STATUS_AVAILABLE,
-    DIAGNOSTIC_STATUS_UNAVAILABLE,
-    DIAGNOSTIC_STATUS_UNKNOWN,
-]
+SERVICE_RESET_CONNECTION = "reset_connection"
 
 def parse_cookies(cookie_string):
     """Parses a cookie string into a dictionary."""

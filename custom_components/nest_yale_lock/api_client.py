@@ -464,51 +464,35 @@ class NestAPIClient:
                 self._last_yale_update = time.monotonic()
                 self._last_reset = time.monotonic()
 
-    #async def send_command(self, command, device_id):
+    async def reset_connection(self, reason: str):
+        await self._hard_reset(reason)
+
     async def send_command(self, command, device_id, structure_id=None):
-        if not self.access_token:
-            await self.authenticate()
-
         request_id = str(uuid.uuid4())
-        base_headers = {
-            "Authorization": f"Basic {self.access_token}",
-            "Content-Type": "application/x-protobuf",
-            "User-Agent": USER_AGENT_STRING,
-            "X-Accept-Content-Transfer-Encoding": "binary",
-            "X-Accept-Response-Streaming": "true",
-            "Accept": "application/x-protobuf",
-            "Accept-Encoding": "gzip, deflate, br",
-            "referer": "https://home.nest.com/",
-            "origin": "https://home.nest.com",
-            "request-id": request_id,
-        }
-
-        # Match Homebridge more closely: do not send optional X-Nest-Structure-Id / X-nl-user-id for SendCommand
-
         cmd_any = any_pb2.Any()
         cmd_any.type_url = command["command"]["type_url"]
-        cmd_any.value = command["command"]["value"] if isinstance(command["command"]["value"], bytes) else command["command"]["value"].SerializeToString()
+        cmd_any.value = (
+            command["command"]["value"]
+            if isinstance(command["command"]["value"], bytes)
+            else command["command"]["value"].SerializeToString()
+        )
 
         request = v1_pb2.ResourceCommandRequest()
         resource_command = request.resourceCommands.add()
         resource_command.command.CopyFrom(cmd_any)
         if command.get("traitLabel"):
             resource_command.traitLabel = command["traitLabel"]
-        # Use the bare device_id (matches 2025.10.18.1 working behavior)
         request.resourceRequest.resourceId = device_id
         request.resourceRequest.requestId = request_id
         encoded_data = request.SerializeToString()
 
         _LOGGER.debug(
-            "Sending command to %s (trait=%s), bytes=%d, structure_id=%s",
+            "Sending command to %s (trait=%s), bytes=%d",
             device_id,
             command.get("command", {}).get("type_url"),
             len(encoded_data),
-            self._structure_id,
         )
 
-        last_error = None
-        # First, try an ephemeral one-off command session similar to the standalone test client
         try:
             raw = await self._send_command_ephemeral(encoded_data, device_id, structure_id, request_id)
             if raw is not None:
@@ -516,74 +500,9 @@ class NestAPIClient:
                 await self.refresh_state()
                 return raw
         except Exception as e:
-            _LOGGER.warning("Ephemeral SendCommand failed; falling back to persistent session: %s", e)
-        for base_url in self._candidate_bases():
-            api_url = f"{base_url}{ENDPOINT_SENDCOMMAND}"
-            reauthed = False
-            for attempt in range(3):
-                try:
-                    # Try header variants to match backend expectations
-                    eff_sid = structure_id or self._structure_id
-                    header_variants = []
-                    header_variants.append(("minimal", dict(base_headers)))
-                    if eff_sid:
-                        h = dict(base_headers); h["X-Nest-Structure-Id"] = eff_sid; header_variants.append(("structure", h))
-                    if self._user_id:
-                        h = dict(base_headers); h["X-nl-user-id"] = str(self._user_id); header_variants.append(("user", h))
-                    if eff_sid or self._user_id:
-                        h = dict(base_headers)
-                        if eff_sid:
-                            h["X-Nest-Structure-Id"] = eff_sid
-                        if self._user_id:
-                            h["X-nl-user-id"] = str(self._user_id)
-                        header_variants.append(("enriched", h))
-
-                    sent = False
-                    for label, headers in header_variants:
-                        _LOGGER.debug("SendCommand trying headers variant=%s (structure=%s user=%s)", label, bool(eff_sid), bool(self._user_id))
-                        raw_data = await self.connection.post(api_url, headers, encoded_data)
-                        self.transport_url = base_url
-                        try:
-                            decoded = v1_pb2.ResourceCommandResponseFromAPI()
-                            decoded.ParseFromString(raw_data)
-                            _LOGGER.debug("Decoded command response (variant=%s ops=%d)", label, len(getattr(decoded, 'resouceCommandResponse', [])))
-                            sent = True
-                            break
-                        except Exception as dec_err:
-                            _LOGGER.warning("Variant %s response not protobuf: %s", label, dec_err)
-                            continue
-                    if not sent:
-                        _LOGGER.warning("All header variants failed to decode; reauth and retry (attempt %d)", attempt + 1)
-                        await self.authenticate()
-                        continue
-                    await asyncio.sleep(2)
-                    await self.refresh_state()
-                    return raw_data
-                except aiohttp.ClientResponseError as cre:
-                    if cre.status in (401, 403) and not reauthed:
-                        _LOGGER.info("Command got %s; reauthenticating and retrying", cre.status)
-                        await self.authenticate()
-                        reauthed = True
-                        # On retry after reauth, send enriched headers again
-                        continue
-                        continue
-                    last_error = cre
-                    _LOGGER.error("Failed to send command to %s via %s: %s", device_id, api_url, cre, exc_info=True)
-                    break
-                except Exception as err:
-                    last_error = err
-                    _LOGGER.warning("Command error to %s via %s (attempt %d): %s", device_id, api_url, attempt + 1, err)
-                    self._note_connect_failure(err)
-                    # Try aggressive recovery: rebuild session and reauth
-                    try:
-                        await self._reset_session()
-                        await self.authenticate()
-                        continue
-                    except Exception:
-                        break
-        if last_error:
-            raise last_error
-        raise RuntimeError(f"Failed to send command to {device_id} for unknown reasons")
+            _LOGGER.error("Ephemeral SendCommand failed for %s: %s", device_id, e, exc_info=True)
+            await self._hard_reset("command failure")
+            raise
 
     async def _send_command_ephemeral(self, encoded_data: bytes, device_id: str, structure_id: str | None, request_id: str):
         """Send a command using a fresh session + fresh auth, then close it.

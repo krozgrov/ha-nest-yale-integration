@@ -27,10 +27,8 @@
     "protobuf==6.32.0",
     "PyJWT>=2.8.0,<3.0"
   ],
-  "version": "2025.10.19.7b31",
+  "version": "2025.10.19.7b32",
   "platforms": [
-    "lock",
-    "button",
-    "sensor"
+    "lock"
   ]
 }
