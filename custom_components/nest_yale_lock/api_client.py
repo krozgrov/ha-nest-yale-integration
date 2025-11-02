@@ -130,6 +130,7 @@ class NestAPIClient:
         self._last_yale_update = time.monotonic()
         self._empty_updates = 0
         self._reset_lock = asyncio.Lock()
+        self._ready_event = asyncio.Event()
         self._last_reset = time.monotonic()
         self._periodic_reset_seconds = 2 * 60 * 60  # 2 hours
         _LOGGER.debug("NestAPIClient initialized with session")
@@ -186,6 +187,7 @@ class NestAPIClient:
     async def authenticate(self):
         _LOGGER.debug("Authenticating with Nest API")
         try:
+            self._ready_event.clear()
             self.auth_data = await self.authenticator.authenticate(self.session)
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
@@ -205,7 +207,7 @@ class NestAPIClient:
             else:
                 _LOGGER.warning(f"No id_token in auth_data, awaiting stream for user_id and structure_id")
             _LOGGER.info(f"Authenticated with access_token: {self.access_token[:10]}..., user_id: {self._user_id}, structure_id: {self._structure_id}")
-            await self.refresh_state()  # Initial refresh to discover IDs
+            await self.refresh_state(skip_ready=True)  # Initial refresh to discover IDs
             # Also ensure structure_id is set via REST directly (only if available)
             new_sid = await self.fetch_structure_id()
             if new_sid:
@@ -213,6 +215,7 @@ class NestAPIClient:
                 self.current_state["structure_id"] = self._structure_id
             # Schedule preemptive re-auth
             self._schedule_reauth()
+            self._ready_event.set()
         except Exception as e:
             _LOGGER.error(f"Authentication failed: {e}", exc_info=True)
             # Recreate the HTTP session immediately to avoid using a closed session
@@ -252,7 +255,9 @@ class NestAPIClient:
                 return None
             return next(iter(structures.keys()))
 
-    async def refresh_state(self):
+    async def refresh_state(self, skip_ready: bool = False):
+        if not skip_ready:
+            await self.ensure_ready()
         if not self.access_token:
             await self.authenticate()
 
@@ -334,6 +339,7 @@ class NestAPIClient:
 
         Avoids raising on transient errors to keep the coordinator loop alive.
         """
+        await self.ensure_ready()
         if not self.access_token or not self.connection.connected:
             await self.authenticate()
 
@@ -443,6 +449,7 @@ class NestAPIClient:
             return
         async with self._reset_lock:
             _LOGGER.warning("Hard reset transport/auth due to: %s", reason)
+            self._ready_event.clear()
             try:
                 await self.connection.close()
             except Exception:
@@ -459,15 +466,24 @@ class NestAPIClient:
                 await self.authenticate()
             except Exception as e:
                 _LOGGER.error("Hard reset authenticate failed: %s", e, exc_info=True)
+                self._ready_event.clear()
             finally:
                 self._empty_updates = 0
                 self._last_yale_update = time.monotonic()
                 self._last_reset = time.monotonic()
+                if self.access_token:
+                    self._ready_event.set()
 
     async def reset_connection(self, reason: str):
         await self._hard_reset(reason)
 
+    async def ensure_ready(self):
+        if not self._ready_event.is_set():
+            _LOGGER.debug("Waiting for API client readiness")
+        await self._ready_event.wait()
+
     async def send_command(self, command, device_id, structure_id=None):
+        await self.ensure_ready()
         request_id = str(uuid.uuid4())
         cmd_any = any_pb2.Any()
         cmd_any.type_url = command["command"]["type_url"]
