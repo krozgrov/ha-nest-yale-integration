@@ -1,5 +1,4 @@
 import logging
-import random
 import uuid
 import aiohttp
 import asyncio
@@ -16,8 +15,6 @@ from .const import (
     PRODUCTION_HOSTNAME,
     USER_AGENT_STRING,
     API_GOOGLE_REAUTH_MINUTES,
-    OBSERVE_IDLE_RESET_SECONDS,
-    CONNECT_FAILURE_RESET_THRESHOLD,
 )
 from .proto.nestlabs.gateway import v1_pb2
 from .proto.nestlabs.gateway import v2_pb2
@@ -42,73 +39,6 @@ def _transport_candidates(session_base):
 
 _LOGGER = logging.getLogger(__name__)
 
-class ConnectionShim:
-    def __init__(self, session):
-        self.connected = True
-        self.session = session
-
-    async def stream(self, api_url, headers, data, read_timeout=None):
-        async with self.session.post(api_url, headers=headers, data=data) as response:
-            _LOGGER.debug(f"Response headers: {dict(response.headers)}")
-            if response.status != 200:
-                # Raise a response error with status for upstream handling
-                body = await response.text()
-                _LOGGER.error(f"HTTP {response.status}: {body}")
-                self.connected = False
-                raise aiohttp.ClientResponseError(
-                    request_info=response.request_info,
-                    history=(),
-                    status=response.status,
-                    message=body,
-                    headers=response.headers,
-                )
-            self.connected = True
-            try:
-                while True:
-                    chunk = await asyncio.wait_for(response.content.readany(), timeout=read_timeout)
-                    if not chunk:
-                        break
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug(
-                            "Stream chunk received (length=%d): %s...",
-                            len(chunk),
-                            chunk[:100].hex(),
-                        )
-                    yield chunk
-            except asyncio.TimeoutError:
-                _LOGGER.warning("Stream read timed out; marking connection as closed")
-                self.connected = False
-                raise
-
-    async def post(self, api_url, headers, data):
-        _LOGGER.debug(f"Sending POST to {api_url}, len(data)={len(data)}")
-        async with self.session.post(api_url, headers=headers, data=data) as response:
-            response_data = await response.read()
-            _LOGGER.debug(f"Post response status: {response.status}, len(response)={len(response_data)}")
-            if response.status != 200:
-                body = await response.text()
-                _LOGGER.error(f"HTTP {response.status}: {body}")
-                self.connected = False
-                raise aiohttp.ClientResponseError(
-                    request_info=response.request_info,
-                    history=(),
-                    status=response.status,
-                    message=body,
-                    headers=response.headers,
-                )
-            self.connected = True
-            return response_data
-
-    async def close(self):
-        # Close owned session if possible
-        try:
-            if self.session and not self.session.closed:
-                await self.session.close()
-        except Exception:
-            pass
-        self.connected = False
-        _LOGGER.debug("ConnectionShim session closed")
-
 class NestAPIClient:
     def __init__(self, hass, issue_token, api_key, cookies):
         self.hass = hass
@@ -120,19 +50,15 @@ class NestAPIClient:
         self._user_id = None  # Discover dynamically
         self._structure_id = None  # Discover dynamically
         self.current_state = {"devices": {"locks": {}}, "user_id": self._user_id, "structure_id": self._structure_id}
-        # Use dedicated session so we can recreate it on failures
-        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600))
-        self.connection = ConnectionShim(self.session)
+        # Use Home Assistant's shared client session for REST calls
+        self.session = async_get_clientsession(hass)
         self._observe_payload = self._build_observe_payload()
-        self._connect_failures = 0
         self._reauth_task = None
         # Staleness/health tracking
         self._last_yale_update = time.monotonic()
-        self._empty_updates = 0
         self._reset_lock = asyncio.Lock()
         self._ready_event = asyncio.Event()
         self._last_reset = time.monotonic()
-        self._periodic_reset_seconds = 2 * 60 * 60  # 2 hours
         _LOGGER.debug("NestAPIClient initialized with session")
 
     @property
@@ -312,20 +238,12 @@ class NestAPIClient:
                             self.transport_url = base_url
                             return locks_data["yale"]
                 except RuntimeError as re:
-                    # Handle "Session is closed" immediately by rebuilding the session
-                    if "Session is closed" in str(re):
-                        _LOGGER.warning("Refresh state encountered closed session; rebuilding HTTP session")
-                        await self._reset_session()
-                        continue
                     last_error = re
                     _LOGGER.error("Refresh state failed via %s: %s", api_url, re, exc_info=True)
-                    self._note_connect_failure(re)
                     continue
                 except Exception as err:
                     last_error = err
                     _LOGGER.error("Refresh state failed via %s: %s", api_url, err, exc_info=True)
-                    # Note connect failures and maybe reset session
-                    self._note_connect_failure(err)
                     continue
             retries += 1
             if retries < max_retries:
@@ -334,114 +252,6 @@ class NestAPIClient:
             _LOGGER.error("Max retries reached, giving up on refresh_state: %s", last_error)
         return {}
 
-    async def observe(self):
-        """Yield real-time updates, reconnecting on timeouts/errors indefinitely.
-
-        Avoids raising on transient errors to keep the coordinator loop alive.
-        """
-        await self.ensure_ready()
-        if not self.access_token or not self.connection.connected:
-            await self.authenticate()
-
-        headers = {
-            "Authorization": f"Basic {self.access_token}",
-            "Content-Type": "application/x-protobuf",
-            "User-Agent": USER_AGENT_STRING,
-            "X-Accept-Response-Streaming": "true",
-            "X-Accept-Content-Transfer-Encoding": "binary",
-            "Accept": "application/x-protobuf",
-            "Accept-Encoding": "gzip, deflate, br",
-            "referer": "https://home.nest.com/",
-            "origin": "https://home.nest.com",
-        }
-
-        observe_payload = self._get_observe_payload()
-        backoff = API_RETRY_DELAY_SECONDS
-
-        while True:
-            for base_url in self._candidate_bases():
-                api_url = f"{base_url}{ENDPOINT_OBSERVE}"
-                _LOGGER.debug("Starting observe stream with URL: %s", api_url)
-                # Periodic forced refresh to mimic full reload stability
-                if (time.monotonic() - self._last_reset) > self._periodic_reset_seconds:
-                    await self._hard_reset("periodic refresh interval reached")
-                    self.connection.connected = False
-                    # small backoff before reconnecting
-                    await asyncio.sleep(1)
-                    continue
-                try:
-                    async for chunk in self.connection.stream(api_url, headers, observe_payload, read_timeout=OBSERVE_IDLE_RESET_SECONDS):
-                        # Reset backoff on any successful data
-                        backoff = API_RETRY_DELAY_SECONDS
-                        self._connect_failures = 0
-                        locks_data = await self.protobuf_handler._process_message(chunk)
-                        if locks_data.get("auth_failed"):
-                            _LOGGER.info("Observe indicated authentication failure; performing hard reset")
-                            await self._hard_reset("in-band auth_failed in observe")
-                            self.connection.connected = False
-                            break
-                        if "yale" in locks_data:
-                            if locks_data.get("yale"):
-                                # Successful device data; mark healthy
-                                self._last_yale_update = time.monotonic()
-                                self._empty_updates = 0
-                            else:
-                                # Empty device data; track consecutive empties and staleness
-                                self._empty_updates += 1
-                                stale_for = time.monotonic() - self._last_yale_update
-                                if self._empty_updates >= 10 or stale_for > 90:
-                                    # Similar to Homebridge: perform a hard reset of transport/auth
-                                    await self._hard_reset(
-                                        f"stale observe (empty_updates={self._empty_updates}, last_yale={int(stale_for)}s)"
-                                    )
-                                    self.connection.connected = False
-                                    break
-                            if locks_data.get("user_id"):
-                                old_user_id = self._user_id
-                                self._user_id = locks_data["user_id"]
-                                self.current_state["user_id"] = self._user_id
-                                if old_user_id != self._user_id:
-                                    _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                            if locks_data.get("structure_id"):
-                                old_structure_id = self._structure_id
-                                self._structure_id = locks_data["structure_id"]
-                                self.current_state["structure_id"] = self._structure_id
-                                if old_structure_id != self._structure_id:
-                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                            self.transport_url = base_url
-                        yield locks_data.get("yale", {})
-                    _LOGGER.debug("Observe stream finished for %s; reconnecting", api_url)
-                    self.connection.connected = False
-                except RuntimeError as re:
-                    if "Session is closed" in str(re):
-                        _LOGGER.warning("Observe encountered closed session; rebuilding HTTP session")
-                        await self._reset_session()
-                        self.connection.connected = False
-                        continue
-                    _LOGGER.error("Error in observe stream via %s: %s", api_url, re, exc_info=True)
-                    self.connection.connected = False
-                except asyncio.TimeoutError:
-                    _LOGGER.warning("Observe stream timed out via %s; retrying", api_url)
-                    self.connection.connected = False
-                except aiohttp.ClientResponseError as cre:
-                    if cre.status in (401, 403):
-                        _LOGGER.info("Observe received %s; reauthenticating and retrying", cre.status)
-                        try:
-                            await self.authenticate()
-                        except Exception:
-                            _LOGGER.warning("Reauthentication failed during observe; will backoff and retry")
-                        self.connection.connected = False
-                        continue
-                    _LOGGER.error("Error in observe stream via %s: %s", api_url, cre, exc_info=True)
-                    self.connection.connected = False
-                except Exception as err:
-                    _LOGGER.error("Error in observe stream via %s: %s", api_url, err, exc_info=True)
-                    self.connection.connected = False
-                    self._note_connect_failure(err)
-            # Exponential backoff with jitter, capped to 60s
-            sleep_for = min(backoff, 60) + random.uniform(0, min(backoff, 60) / 2)
-            await asyncio.sleep(sleep_for)
-            backoff = min(backoff * 2, 60)
 
     async def _hard_reset(self, reason: str):
         """Aggressively rebuild HTTP session and reauthenticate, similar to a full reload."""
@@ -450,26 +260,14 @@ class NestAPIClient:
         async with self._reset_lock:
             _LOGGER.warning("Hard reset transport/auth due to: %s", reason)
             self._ready_event.clear()
-            try:
-                await self.connection.close()
-            except Exception:
-                pass
-            try:
-                if self.session and not self.session.closed:
-                    await self.session.close()
-            except Exception:
-                pass
-            self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600))
-            self.connection = ConnectionShim(self.session)
-            self._connect_failures = 0
+            self.access_token = None
+            self.transport_url = None
             try:
                 await self.authenticate()
             except Exception as e:
                 _LOGGER.error("Hard reset authenticate failed: %s", e, exc_info=True)
                 self._ready_event.clear()
             finally:
-                self._empty_updates = 0
-                self._last_yale_update = time.monotonic()
                 self._last_reset = time.monotonic()
                 if self.access_token:
                     self._ready_event.set()
@@ -573,9 +371,6 @@ class NestAPIClient:
                 pass
 
     async def close(self):
-        if self.connection and self.connection.connected:
-            await self.connection.close()
-            _LOGGER.debug("NestAPIClient connection closed")
         # Cancel preemptive reauth task if running
         if self._reauth_task and not self._reauth_task.done():
             self._reauth_task.cancel()
@@ -621,23 +416,4 @@ class NestAPIClient:
 
         self._reauth_task = asyncio.create_task(_timer())
 
-    def _note_connect_failure(self, err: Exception):
-        # Increment on typical connection failures
-        if isinstance(err, (aiohttp.ClientConnectorError, asyncio.TimeoutError)) or 'Cannot connect to host' in str(err):
-            self._connect_failures += 1
-            if self._connect_failures >= CONNECT_FAILURE_RESET_THRESHOLD:
-                _LOGGER.warning("Consecutive connect failures reached threshold; recreating HTTP session")
-                asyncio.create_task(self._reset_session())
-        else:
-            # Not a connect failure; reset counter
-            self._connect_failures = 0
-
-    async def _reset_session(self):
-        try:
-            await self.connection.close()
-        except Exception:
-            pass
-        # Recreate dedicated session to clear stale connections
-        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600))
-        self.connection = ConnectionShim(self.session)
         self._connect_failures = 0
