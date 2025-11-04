@@ -21,7 +21,6 @@ from .proto.nestlabs.gateway import v1_pb2, v2_pb2
 
 _LOGGER = logging.getLogger(__name__)
 
-
 class NestAPIClient:
     def __init__(self, hass, issue_token, api_key, cookies):
         self.hass = hass
@@ -38,12 +37,8 @@ class NestAPIClient:
     async def refresh_state(self):
         async with self._state_lock:
             session = async_get_clientsession(self.hass)
-            try:
-                data = await self._fetch_state(session)
-                return data
-            except Exception as exc:
-                _LOGGER.error("Failed to refresh Nest Yale state: %s", exc, exc_info=True)
-                raise
+            data = await self._fetch_state(session)
+            return data
 
     async def send_command(self, command, device_id, structure_id=None):
         async with self._state_lock:

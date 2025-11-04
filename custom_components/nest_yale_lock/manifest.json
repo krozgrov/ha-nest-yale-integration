@@ -27,7 +27,7 @@
     "protobuf==6.32.0",
     "PyJWT>=2.8.0,<3.0"
   ],
-  "version": "2025.10.19.7b36",
+  "version": "2025.10.19.7b37",
   "platforms": [
     "lock"
   ]
