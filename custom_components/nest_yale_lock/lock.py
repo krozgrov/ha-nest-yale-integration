@@ -156,19 +156,28 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                 _LOGGER.warning("Command failed with 12020802, not updating local state")
                 return
 
+            # Optimistically update state
             self._device["bolt_moving"] = True
             self._device["bolt_moving_to"] = lock
             self._state = LockState.LOCKING if lock else LockState.UNLOCKING
-            self.async_schedule_update_ha_state()  # Replace force_refresh
-            await asyncio.sleep(5)
-            self._device["bolt_moving"] = False
-            await self._coordinator.async_request_refresh()
-            _LOGGER.debug("Refresh successful, updated state: %s", self._device)
+            self.async_write_ha_state()
+            
+            # Wait for command to process, then let the observe stream update state
+            # The stream will provide the actual state change
+            await asyncio.sleep(3)
+            
+            # If stream hasn't updated yet, clear moving state
+            # The coordinator will get updates from the observe stream
+            if self._device.get("bolt_moving"):
+                self._device["bolt_moving"] = False
+                self.async_write_ha_state()
+            _LOGGER.debug("Command sent, waiting for stream update. Current state: %s", self._device)
 
         except Exception as e:
             _LOGGER.error("Command failed for %s: %s", self._attr_unique_id, e, exc_info=True)
             self._device["bolt_moving"] = False
-            self.async_schedule_update_ha_state()  # Replace force_refresh
+            self.async_write_ha_state()
+            # Don't raise - let HA handle the error, but ensure state is consistent
             raise
 
     async def async_added_to_hass(self):
@@ -202,15 +211,26 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             self.async_write_ha_state()
 
     async def _clear_bolt_moving(self):
+        """Clear bolt_moving flag after delay."""
         await asyncio.sleep(5)
         self._device["bolt_moving"] = False
-        self.async_schedule_update_ha_state()  # Replace force_refresh
+        self.async_write_ha_state()
         _LOGGER.debug("Cleared bolt_moving for %s after delay", self._attr_unique_id)
 
     @property
     def available(self):
-        available = bool(self._device) and self._coordinator.last_update_success
-        _LOGGER.debug("Availability check for %s: %s", self._attr_unique_id, available)
+        """Check if entity is available."""
+        # Check coordinator health and connection status
+        coordinator_healthy = self._coordinator.last_update_success
+        has_device_data = bool(self._device)
+        # Check if API client connection is healthy
+        api_healthy = getattr(self._coordinator.api_client, '_connection_healthy', True)
+        available = has_device_data and coordinator_healthy and api_healthy
+        if not available:
+            _LOGGER.debug(
+                "Availability check for %s: device_data=%s, coordinator=%s, api=%s",
+                self._attr_unique_id, has_device_data, coordinator_healthy, api_healthy
+            )
         return available
 
     @property

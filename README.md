@@ -23,6 +23,13 @@ However, the integration still depends on partially reversed protobuf messages t
 - Additional message types beyond the basic lock trait are unmapped, limiting advanced diagnostics and telemetry.
 - API response formats and authentication flows may change, potentially causing breaking updates.
 
+## Recent Improvements
+
+- **Long-running observe stream**: The integration now maintains a persistent connection to the Nest API, eliminating the need for manual reloads.
+- **Automatic reconnection**: Connection failures are automatically detected and the stream reconnects with exponential backoff.
+- **Push-based updates**: State changes are pushed in real-time via the observe stream instead of polling.
+- **Improved error handling**: Better error recovery and connection health monitoring.
+
 
 ## Installation
 

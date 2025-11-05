@@ -3,6 +3,7 @@ import uuid
 import asyncio
 import aiohttp
 import jwt
+from typing import Callable, Optional
 
 from google.protobuf import any_pb2
 
@@ -16,6 +17,8 @@ from .const import (
     ENDPOINT_SENDCOMMAND,
     PRODUCTION_HOSTNAME,
     USER_AGENT_STRING,
+    API_RETRY_DELAY_SECONDS,
+    API_OBSERVE_TIMEOUT_SECONDS,
 )
 from .proto.nestlabs.gateway import v1_pb2, v2_pb2
 
@@ -30,6 +33,13 @@ class NestAPIClient:
         self.current_state = {"devices": {"locks": {}}, "user_id": None, "structure_id": None}
         self._observe_payload = self._build_observe_payload()
         self._state_lock = asyncio.Lock()
+        # Long-running observe stream management
+        self._observe_task: Optional[asyncio.Task] = None
+        self._observe_callback: Optional[Callable] = None
+        self._shutdown_event = asyncio.Event()
+        self._reconnect_delay = API_RETRY_DELAY_SECONDS
+        self._max_reconnect_delay = 300  # Max 5 minutes
+        self._connection_healthy = False
 
     @property
     def user_id(self) -> str | None:
@@ -40,13 +50,28 @@ class NestAPIClient:
         return self._structure_id
 
     async def async_setup(self):
+        """Initialize and start the observe stream."""
+        # Do an initial authentication to get user_id and structure_id
         await self.refresh_state()
+        # Start the long-running observe stream as a background task
+        # Use async_create_background_task for long-running tasks (HA 2024.2+)
+        if hasattr(self.hass, 'async_create_background_task'):
+            self._observe_task = self.hass.async_create_background_task(
+                self._run_observe_stream(), "nest_yale_observe_stream"
+            )
+        else:
+            # Fallback for older HA versions
+            self._observe_task = self.hass.async_create_task(self._run_observe_stream())
 
     @classmethod
     async def create(cls, hass, issue_token, api_key=None, cookies=None, user_id=None):
         instance = cls(hass, issue_token, api_key, cookies)
         await instance.async_setup()
         return instance
+
+    def set_state_callback(self, callback: Callable):
+        """Set callback for state updates from observe stream."""
+        self._observe_callback = callback
 
     async def authenticate(self):
         """Compat shim used by config flow for credential validation."""
@@ -56,13 +81,14 @@ class NestAPIClient:
             self._user_id = user_id
             self.current_state["user_id"] = user_id
         # Trigger a lightweight state fetch to verify credentials
-        await self._fetch_state(session, access_token, transport_url)
+        await self._fetch_state_once(session, access_token, transport_url)
         return True
 
     async def refresh_state(self):
+        """Refresh state by doing a one-time fetch (for initial setup)."""
         async with self._state_lock:
             session = async_get_clientsession(self.hass)
-            data = await self._fetch_state(session)
+            data = await self._fetch_state_once(session)
             return data
 
     async def send_command(self, command, device_id, structure_id=None):
@@ -117,12 +143,49 @@ class NestAPIClient:
                 _LOGGER.debug("Command response ops=%d", len(getattr(decoded, 'resouceCommandResponse', [])))
 
             await asyncio.sleep(2)
-            await self._fetch_state(session, access_token, transport_url)
+            # Trigger a refresh through the coordinator if callback is set
+            if self._observe_callback:
+                # Do a quick state fetch to get updated state after command
+                try:
+                    async with session.post(
+                        self._resolve_url(transport_url, ENDPOINT_OBSERVE),
+                        headers=self._build_observe_headers(access_token),
+                        data=self._observe_payload,
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as resp:
+                        if resp.status == 200:
+                            handler = NestProtobufHandler()
+                            async for chunk in resp.content.iter_chunked(2048):
+                                locks_data = await handler._process_message(chunk)
+                                if locks_data.get("yale"):
+                                    async with self._state_lock:
+                                        self._apply_state(locks_data)
+                                    if self._observe_callback:
+                                        self._observe_callback(locks_data)
+                                    break
+                except Exception as e:
+                    _LOGGER.debug("Failed to fetch state after command: %s", e)
             return True
 
     async def reset_connection(self, reason: str):
+        """Reset the observe stream connection."""
         _LOGGER.info("Resetting Nest Yale connection due to: %s", reason)
-        await self.refresh_state()
+        self._connection_healthy = False
+        # Cancel existing observe task if running
+        if self._observe_task and not self._observe_task.done():
+            self._observe_task.cancel()
+            try:
+                await self._observe_task
+            except asyncio.CancelledError:
+                pass
+        # Restart the observe stream
+        if not self._shutdown_event.is_set():
+            if hasattr(self.hass, 'async_create_background_task'):
+                self._observe_task = self.hass.async_create_background_task(
+                    self._run_observe_stream(), "nest_yale_observe_stream"
+                )
+            else:
+                self._observe_task = self.hass.async_create_task(self._run_observe_stream())
 
     async def _authenticate(self, session):
         auth_data = await self.authenticator.authenticate(session)
@@ -138,13 +201,153 @@ class NestAPIClient:
             user_id = decoded.get("sub")
         return access_token, user_id, transport_url
 
-    async def _fetch_state(self, session, access_token=None, transport_url=None):
+    async def _fetch_state_once(self, session, access_token=None, transport_url=None):
+        """Fetch state once (for initial setup only)."""
         if access_token is None:
             access_token, user_id, transport_url = await self._authenticate(session)
             if user_id:
                 self._user_id = user_id
                 self.current_state["user_id"] = user_id
 
+        headers = self._build_observe_headers(access_token)
+        api_url = self._resolve_url(transport_url, ENDPOINT_OBSERVE)
+        handler = NestProtobufHandler()
+        payload = self._observe_payload
+
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with session.post(api_url, headers=headers, data=payload, timeout=timeout) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                raise aiohttp.ClientResponseError(
+                    request_info=resp.request_info,
+                    history=(),
+                    status=resp.status,
+                    message=body,
+                    headers=resp.headers,
+                )
+            # Read first few chunks to get initial state
+            chunk_count = 0
+            async for chunk in resp.content.iter_chunked(2048):
+                chunk_count += 1
+                locks_data = await handler._process_message(chunk)
+                if locks_data.get("auth_failed"):
+                    raise RuntimeError("Observe reported authentication failure")
+                if locks_data.get("yale") or locks_data.get("structure_id") or locks_data.get("user_id"):
+                    self._apply_state(locks_data)
+                    if chunk_count >= 10:  # Limit initial fetch to avoid blocking
+                        break
+            return self.current_state.get("devices", {}).get("locks", {})
+
+    async def _run_observe_stream(self):
+        """Run the long-running observe stream with auto-reconnect."""
+        _LOGGER.info("Starting observe stream")
+        consecutive_failures = 0
+        
+        while not self._shutdown_event.is_set():
+            try:
+                session = async_get_clientsession(self.hass)
+                access_token, user_id, transport_url = await self._authenticate(session)
+                if user_id:
+                    self._user_id = user_id
+                    self.current_state["user_id"] = user_id
+
+                headers = self._build_observe_headers(access_token)
+                api_url = self._resolve_url(transport_url, ENDPOINT_OBSERVE)
+                handler = NestProtobufHandler()
+                payload = self._observe_payload
+
+                # Use longer timeout for streaming connection
+                timeout = aiohttp.ClientTimeout(total=API_OBSERVE_TIMEOUT_SECONDS or 300)
+                
+                _LOGGER.debug("Connecting to observe stream at %s", api_url)
+                async with session.post(api_url, headers=headers, data=payload, timeout=timeout) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        _LOGGER.error("Observe stream returned status %d: %s", resp.status, body[:200])
+                        raise aiohttp.ClientResponseError(
+                            request_info=resp.request_info,
+                            history=(),
+                            status=resp.status,
+                            message=body,
+                            headers=resp.headers,
+                        )
+                    
+                    _LOGGER.info("Observe stream connected successfully")
+                    self._connection_healthy = True
+                    consecutive_failures = 0
+                    self._reconnect_delay = API_RETRY_DELAY_SECONDS
+                    
+                    # Process stream chunks continuously
+                    last_update_time = asyncio.get_event_loop().time()
+                    async for chunk in resp.content.iter_chunked(2048):
+                        if self._shutdown_event.is_set():
+                            break
+                            
+                        try:
+                            locks_data = await handler._process_message(chunk)
+                            
+                            if locks_data.get("auth_failed"):
+                                _LOGGER.warning("Observe stream reported authentication failure")
+                                raise RuntimeError("Observe reported authentication failure")
+                            
+                            # Update state for any meaningful data
+                            if locks_data.get("yale") or locks_data.get("structure_id") or locks_data.get("user_id"):
+                                async with self._state_lock:
+                                    self._apply_state(locks_data)
+                                
+                                # Notify coordinator of update
+                                if self._observe_callback:
+                                    try:
+                                        self._observe_callback(locks_data)
+                                    except Exception as e:
+                                        _LOGGER.error("Error in state callback: %s", e, exc_info=True)
+                                
+                                last_update_time = asyncio.get_event_loop().time()
+                                
+                        except Exception as e:
+                            _LOGGER.error("Error processing observe chunk: %s", e, exc_info=True)
+                            # Continue processing other chunks
+                    
+                    # Connection closed normally
+                    _LOGGER.warning("Observe stream connection closed")
+                    self._connection_healthy = False
+                    
+            except asyncio.CancelledError:
+                _LOGGER.info("Observe stream task cancelled")
+                self._connection_healthy = False
+                break
+            except aiohttp.ClientError as e:
+                _LOGGER.error("Observe stream client error: %s", e)
+                self._connection_healthy = False
+                consecutive_failures += 1
+            except RuntimeError as e:
+                if "authentication failure" in str(e):
+                    _LOGGER.error("Authentication failure in observe stream: %s", e)
+                    self._connection_healthy = False
+                    consecutive_failures += 1
+                    # Force re-authentication
+                    self.authenticator.access_token = None
+                else:
+                    raise
+            except Exception as e:
+                _LOGGER.error("Unexpected error in observe stream: %s", e, exc_info=True)
+                self._connection_healthy = False
+                consecutive_failures += 1
+            
+            # Reconnect with exponential backoff
+            if not self._shutdown_event.is_set():
+                delay = min(self._reconnect_delay * (2 ** min(consecutive_failures - 1, 4)), self._max_reconnect_delay)
+                _LOGGER.info("Reconnecting observe stream in %d seconds (failure count: %d)", delay, consecutive_failures)
+                try:
+                    await asyncio.wait_for(self._shutdown_event.wait(), timeout=delay)
+                    break  # Shutdown was requested
+                except asyncio.TimeoutError:
+                    pass  # Continue to reconnect
+        
+        _LOGGER.info("Observe stream task ended")
+
+    def _build_observe_headers(self, access_token):
+        """Build headers for observe requests."""
         headers = {
             "Authorization": f"Basic {access_token}",
             "Content-Type": "application/x-protobuf",
@@ -160,33 +363,14 @@ class NestAPIClient:
             headers["X-Nest-Structure-Id"] = self._structure_id
         if self._user_id:
             headers["X-nl-user-id"] = str(self._user_id)
-
-        api_url = self._resolve_url(transport_url, ENDPOINT_OBSERVE)
-        handler = NestProtobufHandler()
-        payload = self._observe_payload
-
-        async with session.post(api_url, headers=headers, data=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-            if resp.status != 200:
-                body = await resp.text()
-                raise aiohttp.ClientResponseError(
-                    request_info=resp.request_info,
-                    history=(),
-                    status=resp.status,
-                    message=body,
-                    headers=resp.headers,
-                )
-            async for chunk in resp.content.iter_chunked(2048):
-                locks_data = await handler._process_message(chunk)
-                if locks_data.get("auth_failed"):
-                    raise RuntimeError("Observe reported authentication failure")
-                if locks_data.get("yale"):
-                    self._apply_state(locks_data)
-                    return locks_data
-        return {"yale": {}}
+        return headers
 
     def _apply_state(self, locks_data):
+        """Apply state updates from observe stream, merging with existing state."""
         yale = locks_data.get("yale", {})
-        self.current_state["devices"]["locks"] = yale
+        if yale:
+            # Merge lock data instead of replacing
+            self.current_state["devices"]["locks"].update(yale)
         if locks_data.get("user_id"):
             self._user_id = locks_data["user_id"]
             self.current_state["user_id"] = self._user_id
@@ -245,5 +429,17 @@ class NestAPIClient:
         return headers
 
     async def close(self):
-        """No-op close to satisfy config flow expectations."""
-        return
+        """Close the API client and stop the observe stream."""
+        _LOGGER.debug("Closing NestAPIClient")
+        self._shutdown_event.set()
+        
+        if self._observe_task and not self._observe_task.done():
+            self._observe_task.cancel()
+            try:
+                await asyncio.wait_for(self._observe_task, timeout=5.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+        
+        self._observe_task = None
+        self._observe_callback = None
+        _LOGGER.debug("NestAPIClient closed")
