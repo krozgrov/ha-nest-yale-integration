@@ -154,10 +154,11 @@ class NestAPIClient:
             if default_url not in transport_candidates:
                 transport_candidates.append(default_url)
 
-            _LOGGER.debug(
-                "Sending command to %s (trait=%s), trying %d transport candidate(s)",
+            _LOGGER.info(
+                "Sending command to %s (trait=%s, device_id=%s), trying %d transport candidate(s)",
                 device_id,
                 command.get("command", {}).get("type_url"),
+                device_id,
                 len(transport_candidates),
             )
 
@@ -167,7 +168,7 @@ class NestAPIClient:
             for base_url in transport_candidates:
                 api_url = f"{base_url}{ENDPOINT_SENDCOMMAND}"
                 try:
-                    _LOGGER.debug("Posting command to %s", api_url)
+                    _LOGGER.info("Attempting command POST to %s for device %s", api_url, device_id)
                     async with session.post(
                         api_url,
                         headers=headers,
@@ -193,10 +194,21 @@ class NestAPIClient:
                         # Parse response to verify command was accepted
                         response_message = v1_pb2.ResourceCommandResponseFromAPI()
                         response_message.ParseFromString(payload)
-                        _LOGGER.debug(
-                            "Command succeeded, response ops=%d",
-                            len(getattr(response_message, 'resouceCommandResponse', [])),
+                        
+                        # Log response details for debugging
+                        response_ops = getattr(response_message, 'resouceCommandResponse', [])
+                        _LOGGER.info(
+                            "Command succeeded for %s at %s, response ops=%d, payload_len=%d",
+                            device_id,
+                            api_url,
+                            len(response_ops),
+                            len(payload),
                         )
+                        if response_ops:
+                            _LOGGER.debug("Response details: %s", response_message)
+                        else:
+                            _LOGGER.warning("Command response has no operations - command may not have been processed")
+                        
                         break  # Success, exit retry loop
                         
                 except aiohttp.ClientError as err:
