@@ -92,6 +92,7 @@ class NestAPIClient:
             return data
 
     async def send_command(self, command, device_id, structure_id=None):
+        """Send a command to a device, matching the test project structure."""
         async with self._state_lock:
             session = async_get_clientsession(self.hass)
             access_token, user_id, transport_url = await self._authenticate(session)
@@ -100,6 +101,8 @@ class NestAPIClient:
                 self.current_state["user_id"] = user_id
 
             request_id = str(uuid.uuid4())
+            
+            # Build command structure matching test project (main.py lines 244-256)
             cmd_any = any_pb2.Any()
             cmd_any.type_url = command["command"]["type_url"]
             cmd_any.value = (
@@ -108,63 +111,67 @@ class NestAPIClient:
                 else command["command"]["value"].SerializeToString()
             )
 
-            request = v1_pb2.ResourceCommandRequest()
-            resource_command = request.resourceCommands.add()
+            # Create ResourceCommand separately, then extend (like test project)
+            resource_command = v1_pb2.ResourceCommand()
             resource_command.command.CopyFrom(cmd_any)
             if command.get("traitLabel"):
                 resource_command.traitLabel = command["traitLabel"]
+
+            request = v1_pb2.ResourceCommandRequest()
+            request.resourceCommands.extend([resource_command])  # Use extend like test project
             request.resourceRequest.resourceId = device_id
             request.resourceRequest.requestId = request_id
             encoded_data = request.SerializeToString()
 
             headers = self._build_command_headers(access_token, request_id, structure_id)
-            api_url = self._resolve_url(transport_url, ENDPOINT_SENDCOMMAND)
+            
+            # Try multiple transport candidates like test project (lines 270-276)
+            transport_candidates = []
+            if transport_url:
+                transport_candidates.append(transport_url.rstrip("/"))
+            default_url = URL_PROTOBUF.format(grpc_hostname=PRODUCTION_HOSTNAME["grpc_hostname"]).rstrip("/")
+            if default_url not in transport_candidates:
+                transport_candidates.append(default_url)
 
             _LOGGER.debug(
-                "Sending command to %s (trait=%s), bytes=%d",
+                "Sending command to %s (trait=%s), bytes=%d, transport_candidates=%s",
                 device_id,
                 command.get("command", {}).get("type_url"),
                 len(encoded_data),
+                transport_candidates,
             )
 
-            async with session.post(api_url, headers=headers, data=encoded_data, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                payload = await resp.read()
-                if resp.status != 200:
-                    body = await resp.text()
-                    raise aiohttp.ClientResponseError(
-                        request_info=resp.request_info,
-                        history=(),
-                        status=resp.status,
-                        message=body,
-                        headers=resp.headers,
-                    )
-                decoded = v1_pb2.ResourceCommandResponseFromAPI()
-                decoded.ParseFromString(payload)
-                _LOGGER.debug("Command response ops=%d", len(getattr(decoded, 'resouceCommandResponse', [])))
-
-            await asyncio.sleep(2)
-            # Trigger a refresh through the coordinator if callback is set
-            if self._observe_callback:
-                # Do a quick state fetch to get updated state after command
+            # Try each transport candidate (like test project lines 278-297)
+            last_error = None
+            response_message = None
+            for base_url in transport_candidates:
+                api_url = f"{base_url}{ENDPOINT_SENDCOMMAND}"
                 try:
-                    async with session.post(
-                        self._resolve_url(transport_url, ENDPOINT_OBSERVE),
-                        headers=self._build_observe_headers(access_token),
-                        data=self._observe_payload,
-                        timeout=aiohttp.ClientTimeout(total=10)
-                    ) as resp:
-                        if resp.status == 200:
-                            handler = NestProtobufHandler()
-                            async for chunk in resp.content.iter_chunked(2048):
-                                locks_data = await handler._process_message(chunk)
-                                if locks_data.get("yale"):
-                                    async with self._state_lock:
-                                        self._apply_state(locks_data)
-                                    if self._observe_callback:
-                                        self._observe_callback(locks_data)
-                                    break
-                except Exception as e:
-                    _LOGGER.debug("Failed to fetch state after command: %s", e)
+                    _LOGGER.debug("Posting command to %s", api_url)
+                    async with session.post(api_url, headers=headers, data=encoded_data, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                        payload = await resp.read()
+                        if resp.status != 200:
+                            body = await resp.text()
+                            _LOGGER.error("Command response status %d: %s", resp.status, body[:200])
+                            raise aiohttp.ClientResponseError(
+                                request_info=resp.request_info,
+                                history=(),
+                                status=resp.status,
+                                message=body,
+                                headers=resp.headers,
+                            )
+                        response_message = v1_pb2.ResourceCommandResponseFromAPI()
+                        response_message.ParseFromString(payload)
+                        _LOGGER.debug("Command response ops=%d", len(getattr(response_message, 'resouceCommandResponse', [])))
+                        break  # Success, exit loop
+                except Exception as err:
+                    last_error = err
+                    _LOGGER.warning("Command attempt failed for %s: %s", api_url, err)
+            
+            if response_message is None:
+                raise last_error or RuntimeError("Command failed for all transport endpoints")
+
+            # Don't try to fetch state here - let the observe stream handle it
             return True
 
     async def reset_connection(self, reason: str):

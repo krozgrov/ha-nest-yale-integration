@@ -146,7 +146,7 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         try:
             _LOGGER.debug("Sending %s command to %s with cmd_any (user_id=%s, structure_id=%s): %s",
                           "lock" if lock else "unlock", self._attr_unique_id, self._user_id, self._structure_id, cmd_any)
-            response = await self._coordinator.api_client.send_command(cmd_any, self._device_id)
+            response = await self._coordinator.api_client.send_command(cmd_any, self._device_id, self._structure_id)
             response_hex = response.hex() if isinstance(response, bytes) else None
             if response_hex is not None:
                 _LOGGER.debug("Lock command response: %s", response_hex)
