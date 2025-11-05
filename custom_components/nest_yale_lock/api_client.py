@@ -34,6 +34,12 @@ class NestAPIClient:
     async def async_setup(self):
         await self.refresh_state()
 
+    @classmethod
+    async def create(cls, hass, issue_token, api_key=None, cookies=None, user_id=None):
+        instance = cls(hass, issue_token, api_key, cookies)
+        await instance.async_setup()
+        return instance
+
     async def authenticate(self):
         """Compat shim used by config flow for credential validation."""
         session = async_get_clientsession(self.hass)
