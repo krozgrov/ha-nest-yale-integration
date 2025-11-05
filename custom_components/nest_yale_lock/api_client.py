@@ -206,15 +206,19 @@ class NestAPIClient:
                         # Log response details (HA best practice: informative logging)
                         response_ops = getattr(response_message, 'resouceCommandResponse', [])
                         _LOGGER.info(
-                            "Command succeeded for %s at %s, response ops=%d",
+                            "Command succeeded for %s at %s, response ops=%d, payload_len=%d",
                             device_id,
                             api_url,
                             len(response_ops),
+                            len(payload),
                         )
                         
+                        # Note: Empty response operations may be normal for some commands
+                        # The HTTP 200 status indicates the command was accepted
+                        # The observe stream will confirm if the command was actually processed
                         if not response_ops:
-                            _LOGGER.warning(
-                                "Command response has no operations for %s - verify command was processed",
+                            _LOGGER.debug(
+                                "Command response has no operations for %s - observe stream will confirm state change",
                                 device_id,
                             )
                         
