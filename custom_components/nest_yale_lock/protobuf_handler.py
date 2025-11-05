@@ -110,7 +110,9 @@ class NestProtobufHandler:
             del self.buffer[:self.pending_length]
             self.pending_length = None
             locks_data = await self._process_message(message)
-            if locks_data.get("yale"):
+            # Return all messages, not just ones with "yale" data
+            # Structure and user info are also important for initial setup
+            if locks_data.get("yale") or locks_data.get("structure_id") or locks_data.get("user_id"):
                 results.append(locks_data)
 
         if (
@@ -122,7 +124,9 @@ class NestProtobufHandler:
             del self.buffer[:self.pending_length]
             self.pending_length = None
             locks_data = await self._process_message(message)
-            if locks_data.get("yale"):
+            # Return all messages, not just ones with "yale" data
+            # Structure and user info are also important for initial setup
+            if locks_data.get("yale") or locks_data.get("structure_id") or locks_data.get("user_id"):
                 results.append(locks_data)
 
         return results
