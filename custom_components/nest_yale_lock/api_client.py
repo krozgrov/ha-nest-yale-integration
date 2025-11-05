@@ -202,7 +202,11 @@ class NestAPIClient:
         return access_token, user_id, transport_url
 
     async def _fetch_state_once(self, session, access_token=None, transport_url=None):
-        """Fetch state once (for initial setup only)."""
+        """Fetch state once (for initial setup only).
+        
+        This is a lightweight initial fetch that doesn't wait for stream data.
+        The actual state will come from the background observe stream.
+        """
         if access_token is None:
             access_token, user_id, transport_url = await self._authenticate(session)
             if user_id:
@@ -214,29 +218,14 @@ class NestAPIClient:
         handler = NestProtobufHandler()
         payload = self._observe_payload
 
-        timeout = aiohttp.ClientTimeout(total=60)
-        async with session.post(api_url, headers=headers, data=payload, timeout=timeout) as resp:
-            if resp.status != 200:
-                body = await resp.text()
-                raise aiohttp.ClientResponseError(
-                    request_info=resp.request_info,
-                    history=(),
-                    status=resp.status,
-                    message=body,
-                    headers=resp.headers,
-                )
-            # Read first few chunks to get initial state
-            chunk_count = 0
-            async for chunk in resp.content.iter_chunked(2048):
-                chunk_count += 1
-                locks_data = await handler._process_message(chunk)
-                if locks_data.get("auth_failed"):
-                    raise RuntimeError("Observe reported authentication failure")
-                if locks_data.get("yale") or locks_data.get("structure_id") or locks_data.get("user_id"):
-                    self._apply_state(locks_data)
-                    if chunk_count >= 10:  # Limit initial fetch to avoid blocking
-                        break
-            return self.current_state.get("devices", {}).get("locks", {})
+        # For initial setup, we just verify authentication works
+        # The actual state will come from the background observe stream
+        # We don't try to read chunks here to avoid blocking startup
+        _LOGGER.debug("Performing initial authentication (state will come from background stream)")
+        
+        # Just verify we can authenticate - don't try to read observe stream
+        # The background stream will handle the actual data fetching
+        return {}
 
     async def _run_observe_stream(self):
         """Run the long-running observe stream with auto-reconnect."""
