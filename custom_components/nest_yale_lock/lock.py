@@ -66,7 +66,8 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             "sw_version": metadata["firmware_revision"],
             "serial_number": serial_number,
         }
-        self._attr_supported_features = 0
+        # Don't set supported_features - LockEntity provides lock/unlock by default
+        # Setting it to 0 would make the entity read-only
         self._attr_has_entity_name = False
         self._attr_should_poll = False
         self._state = None
