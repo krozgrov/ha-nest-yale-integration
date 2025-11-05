@@ -95,11 +95,16 @@ class NestAPIClient:
     async def send_command(self, command, device_id, structure_id=None):
         """Send a command to a device.
         
-        Follows Home Assistant best practices:
-        - Proper async/await patterns
-        - Comprehensive error handling
-        - Multiple transport candidate retry logic
-        - Returns success/failure status
+        Implementation is based on the working test project (main.py) but adapted
+        to follow Home Assistant best practices:
+        - Proper async/await patterns with aiohttp
+        - Comprehensive error handling with specific exception types
+        - Multiple transport candidate retry logic (prioritizing observe_base)
+        - Non-blocking execution
+        
+        The command structure and headers match the working test project to ensure
+        compatibility with the Nest API, while error handling and async patterns
+        follow HA conventions.
         
         Args:
             command: Command dictionary with traitLabel and command details
@@ -122,7 +127,8 @@ class NestAPIClient:
 
             request_id = str(uuid.uuid4())
             
-            # Build protobuf command structure (required format for Nest API)
+            # Build protobuf command structure matching working test project
+            # (main.py lines 244-256) - this structure is required by Nest API
             cmd_any = any_pb2.Any()
             cmd_any.type_url = command["command"]["type_url"]
             cmd_any.value = (
@@ -131,8 +137,7 @@ class NestAPIClient:
                 else command["command"]["value"].SerializeToString()
             )
 
-            # Create ResourceCommand and add to request
-            # Using extend() as required by the Nest API protobuf structure
+            # Create ResourceCommand separately, then extend (required by Nest API)
             resource_command = v1_pb2.ResourceCommand()
             resource_command.command.CopyFrom(cmd_any)
             if command.get("traitLabel"):
@@ -146,21 +151,10 @@ class NestAPIClient:
 
             headers = self._build_command_headers(access_token, request_id, structure_id)
             
-            # Build transport candidate list matching main.py logic (lines 270-276)
-            # Prioritize the observe_base URL that successfully connected
-            transport_candidates = []
-            if self._observe_base_url:
-                transport_candidates.append(self._observe_base_url)
-            
-            # Add other transport candidates
-            if transport_url:
-                normalized_transport = transport_url.rstrip("/")
-                if normalized_transport not in transport_candidates:
-                    transport_candidates.append(normalized_transport)
-            
-            default_url = URL_PROTOBUF.format(grpc_hostname=PRODUCTION_HOSTNAME["grpc_hostname"]).rstrip("/")
-            if default_url not in transport_candidates:
-                transport_candidates.append(default_url)
+            # Build transport candidate list based on working test project pattern
+            # (main.py lines 270-276): prioritize observe_base, then fallback candidates
+            # This improves reliability by using the endpoint that's already working
+            transport_candidates = self._get_transport_candidates(transport_url)
 
             _LOGGER.info(
                 "Sending command to %s (trait=%s, device_id=%s), trying %d transport candidate(s)",
@@ -171,19 +165,25 @@ class NestAPIClient:
             )
 
             # Try each transport candidate until one succeeds
+            # This follows HA best practices: comprehensive error handling, clear logging
             last_error = None
             response_message = None
+            
             for base_url in transport_candidates:
                 api_url = f"{base_url}{ENDPOINT_SENDCOMMAND}"
                 try:
                     _LOGGER.info("Attempting command POST to %s for device %s", api_url, device_id)
+                    
                     async with session.post(
                         api_url,
                         headers=headers,
                         data=encoded_data,
                         timeout=aiohttp.ClientTimeout(total=60)
                     ) as resp:
+                        # Read response payload
                         payload = await resp.read()
+                        
+                        # Validate HTTP status (HA best practice: explicit error handling)
                         if resp.status != 200:
                             body = await resp.text()
                             _LOGGER.error(
@@ -199,40 +199,46 @@ class NestAPIClient:
                                 headers=resp.headers,
                             )
                         
-                        # Parse response to verify command was accepted
+                        # Parse protobuf response to verify command was accepted
                         response_message = v1_pb2.ResourceCommandResponseFromAPI()
                         response_message.ParseFromString(payload)
                         
-                        # Log response details for debugging
+                        # Log response details (HA best practice: informative logging)
                         response_ops = getattr(response_message, 'resouceCommandResponse', [])
                         _LOGGER.info(
-                            "Command succeeded for %s at %s, response ops=%d, payload_len=%d",
+                            "Command succeeded for %s at %s, response ops=%d",
                             device_id,
                             api_url,
                             len(response_ops),
-                            len(payload),
                         )
-                        if response_ops:
-                            _LOGGER.debug("Response details: %s", response_message)
-                        else:
-                            _LOGGER.warning("Command response has no operations - command may not have been processed")
+                        
+                        if not response_ops:
+                            _LOGGER.warning(
+                                "Command response has no operations for %s - verify command was processed",
+                                device_id,
+                            )
                         
                         break  # Success, exit retry loop
                         
                 except aiohttp.ClientError as err:
+                    # Network/HTTP errors - log and try next candidate
                     last_error = err
                     _LOGGER.warning("Command attempt failed for %s: %s", api_url, err)
                 except Exception as err:
+                    # Unexpected errors - log and try next candidate
                     last_error = err
-                    _LOGGER.warning("Unexpected error sending command to %s: %s", api_url, err)
+                    _LOGGER.warning("Unexpected error sending command to %s: %s", api_url, err, exc_info=True)
             
+            # Verify we got a successful response (HA best practice: explicit failure handling)
             if response_message is None:
                 error_msg = f"Command failed for all {len(transport_candidates)} transport endpoint(s)"
                 if last_error:
                     error_msg += f": {last_error}"
+                _LOGGER.error(error_msg)
                 raise RuntimeError(error_msg)
 
-            # Success - observe stream will handle state updates
+            # Success - coordinator/observe stream will handle state updates
+            # (HA best practice: don't block, let coordinator pattern handle updates)
             return True
 
     async def reset_connection(self, reason: str):
@@ -468,8 +474,53 @@ class NestAPIClient:
         base = transport_url or URL_PROTOBUF.format(grpc_hostname=PRODUCTION_HOSTNAME["grpc_hostname"])
         return f"{base}{endpoint}"
 
+    def _get_transport_candidates(self, transport_url):
+        """Get transport candidate URLs for command requests.
+        
+        Based on working test project pattern (main.py lines 270-276):
+        - Prioritize observe_base (the URL that successfully connected to observe stream)
+        - Fallback to transport_url from session
+        - Final fallback to default production URL
+        
+        This improves reliability by using endpoints that are known to work.
+        
+        Returns:
+            List of transport base URLs in priority order
+        """
+        candidates = []
+        
+        # First priority: use the base URL that successfully connected to observe stream
+        if self._observe_base_url:
+            candidates.append(self._observe_base_url)
+        
+        # Second priority: use transport URL from authentication session
+        if transport_url:
+            normalized_transport = transport_url.rstrip("/")
+            if normalized_transport not in candidates:
+                candidates.append(normalized_transport)
+        
+        # Final fallback: default production URL
+        default_url = URL_PROTOBUF.format(grpc_hostname=PRODUCTION_HOSTNAME["grpc_hostname"]).rstrip("/")
+        if default_url not in candidates:
+            candidates.append(default_url)
+        
+        return candidates
+
     def _build_command_headers(self, access_token, request_id, structure_id):
-        """Build command headers matching the working test project exactly."""
+        """Build command headers based on working test project.
+        
+        Headers match the minimal set used in main.py (lines 232-242) that successfully
+        sends commands. Additional headers are omitted as they're not required and
+        may cause issues with the Nest API.
+        
+        Args:
+            access_token: Nest API access token
+            request_id: Unique request ID for tracking
+            structure_id: Optional structure ID for command context
+            
+        Returns:
+            Dictionary of HTTP headers for command request
+        """
         headers = {
             "Authorization": f"Basic {access_token}",
             "Content-Type": "application/x-protobuf",
@@ -478,12 +529,12 @@ class NestAPIClient:
             "X-Accept-Response-Streaming": "true",
             "request-id": request_id,
         }
+        
         # Add structure_id if available (matches main.py line 267-268)
         eff_structure = structure_id or self._structure_id
         if eff_structure:
             headers["X-Nest-Structure-Id"] = eff_structure
-        # Note: Not including referer, origin, Accept, Accept-Encoding, or X-nl-user-id
-        # as they are not in the working test project
+        
         return headers
 
     async def close(self):
