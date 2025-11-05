@@ -31,6 +31,14 @@ class NestAPIClient:
         self._observe_payload = self._build_observe_payload()
         self._state_lock = asyncio.Lock()
 
+    @property
+    def user_id(self) -> str | None:
+        return self._user_id
+
+    @property
+    def structure_id(self) -> str | None:
+        return self._structure_id
+
     async def async_setup(self):
         await self.refresh_state()
 
