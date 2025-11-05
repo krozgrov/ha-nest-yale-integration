@@ -43,19 +43,32 @@ class NestCoordinator(DataUpdateCoordinator):
         from the observe stream. It processes the data and notifies
         all registered listeners (entities).
         """
-        _LOGGER.debug("Received stream update: %s", locks_data)
+        _LOGGER.info("Coordinator received stream update: %s", locks_data)
         try:
             normalized_data = locks_data.get("yale", {}) if isinstance(locks_data, dict) else {}
             if normalized_data:
+                _LOGGER.info("Processing %d lock device(s) from stream update", len(normalized_data))
                 for device_id, device in normalized_data.items():
                     if not isinstance(device, dict):
+                        _LOGGER.warning("Invalid device data for %s: %s", device_id, type(device))
                         continue
                     device.setdefault("device_id", device_id)
                     device["bolt_moving"] = device.get("bolt_moving", False)
+                    _LOGGER.info(
+                        "Updating device %s: bolt_locked=%s, bolt_moving=%s",
+                        device_id,
+                        device.get("bolt_locked"),
+                        device.get("bolt_moving"),
+                    )
+                
                 # Update coordinator data and notify listeners
+                old_data = self.data.copy()
                 self.data.update(normalized_data)
+                _LOGGER.info("Coordinator data updated, notifying %d listener(s)", len(self._listeners))
                 self.async_update_listeners()
-                _LOGGER.debug("Updated coordinator data from stream: %s", normalized_data)
+                _LOGGER.info("Listeners notified for devices: %s", list(normalized_data.keys()))
+            else:
+                _LOGGER.debug("Stream update had no yale data: %s", locks_data)
         except Exception as exc:
             _LOGGER.error("Failed to process stream update: %s", exc, exc_info=True)
 

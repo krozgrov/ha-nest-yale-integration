@@ -360,8 +360,28 @@ class NestAPIClient:
                                 _LOGGER.warning("Observe stream reported authentication failure")
                                 raise RuntimeError("Observe reported authentication failure")
                             
-                            # Update state for any meaningful data
-                            if locks_data.get("yale") or locks_data.get("structure_id") or locks_data.get("user_id"):
+                            # Log all received data for debugging
+                            has_yale = bool(locks_data.get("yale"))
+                            has_structure = bool(locks_data.get("structure_id"))
+                            has_user = bool(locks_data.get("user_id"))
+                            
+                            if has_yale or has_structure or has_user:
+                                _LOGGER.info(
+                                    "Observe stream data received: yale=%s, structure_id=%s, user_id=%s",
+                                    has_yale,
+                                    locks_data.get("structure_id"),
+                                    locks_data.get("user_id"),
+                                )
+                                
+                                if has_yale:
+                                    for device_id, device_data in locks_data["yale"].items():
+                                        _LOGGER.info(
+                                            "Lock state update for %s: bolt_locked=%s, bolt_moving=%s",
+                                            device_id,
+                                            device_data.get("bolt_locked"),
+                                            device_data.get("bolt_moving"),
+                                        )
+                                
                                 async with self._state_lock:
                                     self._apply_state(locks_data)
                                 
@@ -369,10 +389,15 @@ class NestAPIClient:
                                 if self._observe_callback:
                                     try:
                                         self._observe_callback(locks_data)
+                                        _LOGGER.debug("Coordinator callback invoked for stream update")
                                     except Exception as e:
                                         _LOGGER.error("Error in state callback: %s", e, exc_info=True)
+                                else:
+                                    _LOGGER.warning("No observe callback set - coordinator won't receive updates")
                                 
                                 last_update_time = asyncio.get_event_loop().time()
+                            else:
+                                _LOGGER.debug("Observe stream chunk received but no relevant data: %s", locks_data)
                                 
                         except Exception as e:
                             _LOGGER.error("Error processing observe chunk: %s", e, exc_info=True)
