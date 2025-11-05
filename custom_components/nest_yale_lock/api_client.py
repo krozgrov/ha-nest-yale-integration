@@ -92,7 +92,26 @@ class NestAPIClient:
             return data
 
     async def send_command(self, command, device_id, structure_id=None):
-        """Send a command to a device, matching the test project structure."""
+        """Send a command to a device.
+        
+        Follows Home Assistant best practices:
+        - Proper async/await patterns
+        - Comprehensive error handling
+        - Multiple transport candidate retry logic
+        - Returns success/failure status
+        
+        Args:
+            command: Command dictionary with traitLabel and command details
+            device_id: Target device ID
+            structure_id: Optional structure ID for command headers
+            
+        Returns:
+            True if command succeeded
+            
+        Raises:
+            RuntimeError: If command fails for all transport endpoints
+            aiohttp.ClientResponseError: For HTTP errors
+        """
         async with self._state_lock:
             session = async_get_clientsession(self.hass)
             access_token, user_id, transport_url = await self._authenticate(session)
@@ -102,7 +121,7 @@ class NestAPIClient:
 
             request_id = str(uuid.uuid4())
             
-            # Build command structure matching test project (main.py lines 244-256)
+            # Build protobuf command structure (required format for Nest API)
             cmd_any = any_pb2.Any()
             cmd_any.type_url = command["command"]["type_url"]
             cmd_any.value = (
@@ -111,21 +130,23 @@ class NestAPIClient:
                 else command["command"]["value"].SerializeToString()
             )
 
-            # Create ResourceCommand separately, then extend (like test project)
+            # Create ResourceCommand and add to request
+            # Using extend() as required by the Nest API protobuf structure
             resource_command = v1_pb2.ResourceCommand()
             resource_command.command.CopyFrom(cmd_any)
             if command.get("traitLabel"):
                 resource_command.traitLabel = command["traitLabel"]
 
             request = v1_pb2.ResourceCommandRequest()
-            request.resourceCommands.extend([resource_command])  # Use extend like test project
+            request.resourceCommands.extend([resource_command])
             request.resourceRequest.resourceId = device_id
             request.resourceRequest.requestId = request_id
             encoded_data = request.SerializeToString()
 
             headers = self._build_command_headers(access_token, request_id, structure_id)
             
-            # Try multiple transport candidates like test project (lines 270-276)
+            # Build transport candidate list with fallback options
+            # This improves reliability if one endpoint is unavailable
             transport_candidates = []
             if transport_url:
                 transport_candidates.append(transport_url.rstrip("/"))
@@ -134,25 +155,33 @@ class NestAPIClient:
                 transport_candidates.append(default_url)
 
             _LOGGER.debug(
-                "Sending command to %s (trait=%s), bytes=%d, transport_candidates=%s",
+                "Sending command to %s (trait=%s), trying %d transport candidate(s)",
                 device_id,
                 command.get("command", {}).get("type_url"),
-                len(encoded_data),
-                transport_candidates,
+                len(transport_candidates),
             )
 
-            # Try each transport candidate (like test project lines 278-297)
+            # Try each transport candidate until one succeeds
             last_error = None
             response_message = None
             for base_url in transport_candidates:
                 api_url = f"{base_url}{ENDPOINT_SENDCOMMAND}"
                 try:
                     _LOGGER.debug("Posting command to %s", api_url)
-                    async with session.post(api_url, headers=headers, data=encoded_data, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                    async with session.post(
+                        api_url,
+                        headers=headers,
+                        data=encoded_data,
+                        timeout=aiohttp.ClientTimeout(total=60)
+                    ) as resp:
                         payload = await resp.read()
                         if resp.status != 200:
                             body = await resp.text()
-                            _LOGGER.error("Command response status %d: %s", resp.status, body[:200])
+                            _LOGGER.error(
+                                "Command failed with status %d: %s",
+                                resp.status,
+                                body[:200] if body else "No response body",
+                            )
                             raise aiohttp.ClientResponseError(
                                 request_info=resp.request_info,
                                 history=(),
@@ -160,18 +189,30 @@ class NestAPIClient:
                                 message=body,
                                 headers=resp.headers,
                             )
+                        
+                        # Parse response to verify command was accepted
                         response_message = v1_pb2.ResourceCommandResponseFromAPI()
                         response_message.ParseFromString(payload)
-                        _LOGGER.debug("Command response ops=%d", len(getattr(response_message, 'resouceCommandResponse', [])))
-                        break  # Success, exit loop
-                except Exception as err:
+                        _LOGGER.debug(
+                            "Command succeeded, response ops=%d",
+                            len(getattr(response_message, 'resouceCommandResponse', [])),
+                        )
+                        break  # Success, exit retry loop
+                        
+                except aiohttp.ClientError as err:
                     last_error = err
                     _LOGGER.warning("Command attempt failed for %s: %s", api_url, err)
+                except Exception as err:
+                    last_error = err
+                    _LOGGER.warning("Unexpected error sending command to %s: %s", api_url, err)
             
             if response_message is None:
-                raise last_error or RuntimeError("Command failed for all transport endpoints")
+                error_msg = f"Command failed for all {len(transport_candidates)} transport endpoint(s)"
+                if last_error:
+                    error_msg += f": {last_error}"
+                raise RuntimeError(error_msg)
 
-            # Don't try to fetch state here - let the observe stream handle it
+            # Success - observe stream will handle state updates
             return True
 
     async def reset_connection(self, reason: str):

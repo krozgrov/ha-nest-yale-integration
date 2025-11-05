@@ -125,15 +125,26 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         await self._send_command(False)
 
     async def _send_command(self, lock: bool):
-        # Refresh identifiers before issuing the command to keep payload accurate.
+        """Send lock/unlock command following Home Assistant best practices.
+        
+        - Optimistically updates state for immediate UI feedback
+        - Relies on coordinator/observe stream for actual state updates
+        - Proper error handling with state consistency
+        """
+        # Refresh identifiers before issuing the command to keep payload accurate
         self._user_id = self._coordinator.api_client.user_id
         self._structure_id = self._coordinator.api_client.structure_id
 
+        if not self._user_id:
+            _LOGGER.error("Cannot send command: user_id not available")
+            raise RuntimeError("User ID not available for command")
+
+        # Build the protobuf command request
         state = weave_security_pb2.BoltLockTrait.BOLT_STATE_EXTENDED if lock else weave_security_pb2.BoltLockTrait.BOLT_STATE_RETRACTED
         request = weave_security_pb2.BoltLockTrait.BoltLockChangeRequest()
         request.state = state
         request.boltLockActor.method = weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_EXPLICIT
-        request.boltLockActor.originator.resourceId = str(self._user_id) if self._user_id else "UNKNOWN_USER_ID"
+        request.boltLockActor.originator.resourceId = str(self._user_id)
 
         cmd_any = {
             "traitLabel": "bolt_lock",
@@ -143,41 +154,35 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             }
         }
 
+        # Optimistically update state for immediate UI feedback
+        # The observe stream will provide the actual state confirmation
+        self._device["bolt_moving"] = True
+        self._device["bolt_moving_to"] = lock
+        self._state = LockState.LOCKING if lock else LockState.UNLOCKING
+        self.async_write_ha_state()
+
         try:
-            _LOGGER.debug("Sending %s command to %s with cmd_any (user_id=%s, structure_id=%s): %s",
-                          "lock" if lock else "unlock", self._attr_unique_id, self._user_id, self._structure_id, cmd_any)
-            response = await self._coordinator.api_client.send_command(cmd_any, self._device_id, self._structure_id)
-            response_hex = response.hex() if isinstance(response, bytes) else None
-            if response_hex is not None:
-                _LOGGER.debug("Lock command response: %s", response_hex)
-            else:
-                _LOGGER.debug("Lock command response (non-bytes): %s", response)
-            if response_hex == "12020802":  # Updated to match actual response
-                _LOGGER.warning("Command failed with 12020802, not updating local state")
-                return
-
-            # Optimistically update state
-            self._device["bolt_moving"] = True
-            self._device["bolt_moving_to"] = lock
-            self._state = LockState.LOCKING if lock else LockState.UNLOCKING
-            self.async_write_ha_state()
+            _LOGGER.debug(
+                "Sending %s command to %s (user_id=%s, structure_id=%s)",
+                "lock" if lock else "unlock",
+                self._attr_unique_id,
+                self._user_id,
+                self._structure_id,
+            )
             
-            # Wait for command to process, then let the observe stream update state
-            # The stream will provide the actual state change
-            await asyncio.sleep(3)
+            # Send command - this may raise an exception
+            await self._coordinator.api_client.send_command(cmd_any, self._device_id, self._structure_id)
             
-            # If stream hasn't updated yet, clear moving state
-            # The coordinator will get updates from the observe stream
-            if self._device.get("bolt_moving"):
-                self._device["bolt_moving"] = False
-                self.async_write_ha_state()
-            _LOGGER.debug("Command sent, waiting for stream update. Current state: %s", self._device)
-
+            _LOGGER.debug("Command sent successfully, waiting for observe stream to confirm state")
+            # Note: We don't wait here - the observe stream will update state automatically
+            # The optimistic update above provides immediate feedback
+            
         except Exception as e:
             _LOGGER.error("Command failed for %s: %s", self._attr_unique_id, e, exc_info=True)
+            # Revert optimistic state on error
             self._device["bolt_moving"] = False
             self.async_write_ha_state()
-            # Don't raise - let HA handle the error, but ensure state is consistent
+            # Re-raise to let Home Assistant handle the error appropriately
             raise
 
     async def async_added_to_hass(self):
