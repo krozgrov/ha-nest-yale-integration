@@ -218,3 +218,7 @@ class NestAPIClient:
         if self._user_id:
             headers["X-nl-user-id"] = str(self._user_id)
         return headers
+
+    async def close(self):
+        """No-op close to satisfy config flow expectations."""
+        return
