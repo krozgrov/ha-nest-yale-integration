@@ -348,60 +348,61 @@ class NestAPIClient:
                     _LOGGER.debug("Stored observe_base_url: %s", self._observe_base_url)
                     
                     # Process stream chunks continuously
-                    # Use _ingest_chunk to properly buffer multi-chunk protobuf messages
-                    # (matches working test project pattern - main.py uses iter_content with handler._process_message)
+                    # Match working test project: call _process_message directly on each chunk
+                    # (test project main.py line 166-171: iter_content -> _process_message)
                     last_update_time = asyncio.get_event_loop().time()
                     async for chunk in resp.content.iter_chunked(2048):
                         if self._shutdown_event.is_set():
                             break
                             
-                        try:
-                            # _ingest_chunk buffers chunks and returns list of complete messages
-                            # This handles cases where protobuf messages span multiple network chunks
-                            results = await handler._ingest_chunk(chunk)
+                        if not chunk:
+                            continue
                             
-                            # Process each complete message from the buffer
-                            for locks_data in results:
-                                if locks_data.get("auth_failed"):
-                                    _LOGGER.warning("Observe stream reported authentication failure")
-                                    raise RuntimeError("Observe reported authentication failure")
+                        try:
+                            # Call _process_message directly like test project does
+                            # It handles incomplete messages by returning empty data
+                            locks_data = await handler._process_message(chunk)
+                            
+                            if locks_data.get("auth_failed"):
+                                _LOGGER.warning("Observe stream reported authentication failure")
+                                raise RuntimeError("Observe reported authentication failure")
+                            
+                            # Log all received data for debugging
+                            has_yale = bool(locks_data.get("yale"))
+                            has_structure = bool(locks_data.get("structure_id"))
+                            has_user = bool(locks_data.get("user_id"))
+                            
+                            if has_yale or has_structure or has_user:
+                                _LOGGER.info(
+                                    "Observe stream data received: yale=%s, structure_id=%s, user_id=%s",
+                                    has_yale,
+                                    locks_data.get("structure_id"),
+                                    locks_data.get("user_id"),
+                                )
                                 
-                                # Log all received data for debugging
-                                has_yale = bool(locks_data.get("yale"))
-                                has_structure = bool(locks_data.get("structure_id"))
-                                has_user = bool(locks_data.get("user_id"))
+                                if has_yale:
+                                    for device_id, device_data in locks_data["yale"].items():
+                                        _LOGGER.info(
+                                            "Lock state update for %s: bolt_locked=%s, bolt_moving=%s",
+                                            device_id,
+                                            device_data.get("bolt_locked"),
+                                            device_data.get("bolt_moving"),
+                                        )
                                 
-                                if has_yale or has_structure or has_user:
-                                    _LOGGER.info(
-                                        "Observe stream data received: yale=%s, structure_id=%s, user_id=%s",
-                                        has_yale,
-                                        locks_data.get("structure_id"),
-                                        locks_data.get("user_id"),
-                                    )
-                                    
-                                    if has_yale:
-                                        for device_id, device_data in locks_data["yale"].items():
-                                            _LOGGER.info(
-                                                "Lock state update for %s: bolt_locked=%s, bolt_moving=%s",
-                                                device_id,
-                                                device_data.get("bolt_locked"),
-                                                device_data.get("bolt_moving"),
-                                            )
-                                    
-                                    async with self._state_lock:
-                                        self._apply_state(locks_data)
-                                    
-                                    # Notify coordinator of update
-                                    if self._observe_callback:
-                                        try:
-                                            self._observe_callback(locks_data)
-                                            _LOGGER.debug("Coordinator callback invoked for stream update")
-                                        except Exception as e:
-                                            _LOGGER.error("Error in state callback: %s", e, exc_info=True)
-                                    else:
-                                        _LOGGER.warning("No observe callback set - coordinator won't receive updates")
-                                    
-                                    last_update_time = asyncio.get_event_loop().time()
+                                async with self._state_lock:
+                                    self._apply_state(locks_data)
+                                
+                                # Notify coordinator of update
+                                if self._observe_callback:
+                                    try:
+                                        self._observe_callback(locks_data)
+                                        _LOGGER.debug("Coordinator callback invoked for stream update")
+                                    except Exception as e:
+                                        _LOGGER.error("Error in state callback: %s", e, exc_info=True)
+                                else:
+                                    _LOGGER.warning("No observe callback set - coordinator won't receive updates")
+                                
+                                last_update_time = asyncio.get_event_loop().time()
                                 
                         except Exception as e:
                             _LOGGER.error("Error processing observe chunk: %s", e, exc_info=True)
