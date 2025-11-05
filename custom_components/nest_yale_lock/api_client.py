@@ -34,6 +34,17 @@ class NestAPIClient:
     async def async_setup(self):
         await self.refresh_state()
 
+    async def authenticate(self):
+        """Compat shim used by config flow for credential validation."""
+        session = async_get_clientsession(self.hass)
+        access_token, user_id, transport_url = await self._authenticate(session)
+        if user_id:
+            self._user_id = user_id
+            self.current_state["user_id"] = user_id
+        # Trigger a lightweight state fetch to verify credentials
+        await self._fetch_state(session, access_token, transport_url)
+        return True
+
     async def refresh_state(self):
         async with self._state_lock:
             session = async_get_clientsession(self.hass)
