@@ -40,6 +40,7 @@ class NestAPIClient:
         self._reconnect_delay = API_RETRY_DELAY_SECONDS
         self._max_reconnect_delay = 300  # Max 5 minutes
         self._connection_healthy = False
+        self._observe_base_url = None  # Track the base URL that successfully connected to observe
 
     @property
     def user_id(self) -> str | None:
@@ -145,11 +146,18 @@ class NestAPIClient:
 
             headers = self._build_command_headers(access_token, request_id, structure_id)
             
-            # Build transport candidate list with fallback options
-            # This improves reliability if one endpoint is unavailable
+            # Build transport candidate list matching main.py logic (lines 270-276)
+            # Prioritize the observe_base URL that successfully connected
             transport_candidates = []
+            if self._observe_base_url:
+                transport_candidates.append(self._observe_base_url)
+            
+            # Add other transport candidates
             if transport_url:
-                transport_candidates.append(transport_url.rstrip("/"))
+                normalized_transport = transport_url.rstrip("/")
+                if normalized_transport not in transport_candidates:
+                    transport_candidates.append(normalized_transport)
+            
             default_url = URL_PROTOBUF.format(grpc_hostname=PRODUCTION_HOSTNAME["grpc_hostname"]).rstrip("/")
             if default_url not in transport_candidates:
                 transport_candidates.append(default_url)
@@ -325,6 +333,9 @@ class NestAPIClient:
                     self._connection_healthy = True
                     consecutive_failures = 0
                     self._reconnect_delay = API_RETRY_DELAY_SECONDS
+                    # Store the base URL that successfully connected (for command prioritization)
+                    self._observe_base_url = api_url.rsplit(ENDPOINT_OBSERVE, 1)[0].rstrip("/")
+                    _LOGGER.debug("Stored observe_base_url: %s", self._observe_base_url)
                     
                     # Process stream chunks continuously
                     last_update_time = asyncio.get_event_loop().time()
@@ -458,23 +469,21 @@ class NestAPIClient:
         return f"{base}{endpoint}"
 
     def _build_command_headers(self, access_token, request_id, structure_id):
+        """Build command headers matching the working test project exactly."""
         headers = {
             "Authorization": f"Basic {access_token}",
             "Content-Type": "application/x-protobuf",
             "User-Agent": USER_AGENT_STRING,
             "X-Accept-Content-Transfer-Encoding": "binary",
             "X-Accept-Response-Streaming": "true",
-            "Accept": "application/x-protobuf",
-            "Accept-Encoding": "gzip, deflate, br",
-            "referer": "https://home.nest.com/",
-            "origin": "https://home.nest.com",
             "request-id": request_id,
         }
+        # Add structure_id if available (matches main.py line 267-268)
         eff_structure = structure_id or self._structure_id
         if eff_structure:
             headers["X-Nest-Structure-Id"] = eff_structure
-        if self._user_id:
-            headers["X-nl-user-id"] = str(self._user_id)
+        # Note: Not including referer, origin, Accept, Accept-Encoding, or X-nl-user-id
+        # as they are not in the working test project
         return headers
 
     async def close(self):
