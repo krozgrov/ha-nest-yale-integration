@@ -334,6 +334,15 @@ class NestAPIClient:
                         self._connect_failures = 0
                         current_time = asyncio.get_event_loop().time()
                         locks_data = await self.protobuf_handler._process_message(chunk)
+                        
+                        # Check for authentication failure
+                        if locks_data.get("auth_failed"):
+                            _LOGGER.warning("Observe stream reported authentication failure, triggering re-auth")
+                            self.connection.connected = False
+                            self.access_token = None
+                            await self.authenticate()
+                            break  # Break inner loop to reconnect with new token
+                        
                         if "yale" in locks_data:
                             last_data_time = current_time
                             _LOGGER.debug("Observe stream received yale data")
