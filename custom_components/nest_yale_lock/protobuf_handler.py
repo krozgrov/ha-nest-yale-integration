@@ -110,9 +110,7 @@ class NestProtobufHandler:
             del self.buffer[:self.pending_length]
             self.pending_length = None
             locks_data = await self._process_message(message)
-            # Return all messages, not just ones with "yale" data
-            # Structure and user info are also important for initial setup
-            if locks_data.get("yale") or locks_data.get("structure_id") or locks_data.get("user_id"):
+            if locks_data.get("yale"):
                 results.append(locks_data)
 
         if (
@@ -124,9 +122,7 @@ class NestProtobufHandler:
             del self.buffer[:self.pending_length]
             self.pending_length = None
             locks_data = await self._process_message(message)
-            # Return all messages, not just ones with "yale" data
-            # Structure and user info are also important for initial setup
-            if locks_data.get("yale") or locks_data.get("structure_id") or locks_data.get("user_id"):
+            if locks_data.get("yale"):
                 results.append(locks_data)
 
         return results
@@ -138,20 +134,6 @@ class NestProtobufHandler:
         if not message:
             _LOGGER.error("Empty protobuf message received.")
             return {"yale": {}, "user_id": None, "structure_id": None}
-
-        # Detect server-side plaintext error messages (e.g., "authentication failed")
-        try:
-            if all(b < 128 for b in message):
-                text = message.decode(errors="ignore").lower()
-                if "authentication failed" in text:
-                    _LOGGER.warning("Observe stream reported 'authentication failed'; will trigger reauth")
-                    return {"yale": {}, "user_id": None, "structure_id": None, "auth_failed": True}
-                # Detect HTML login pages or general HTML error responses
-                if "<!doctype html" in text or "<html" in text or "sign in" in text or "log in" in text:
-                    _LOGGER.warning("Observe stream returned HTML content (likely login); will trigger reauth")
-                    return {"yale": {}, "user_id": None, "structure_id": None, "auth_failed": True}
-        except Exception:
-            pass
 
         locks_data = {"yale": {}, "user_id": None, "structure_id": None}
 

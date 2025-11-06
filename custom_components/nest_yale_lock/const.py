@@ -40,6 +40,8 @@ API_RETRY_DELAY_SECONDS = 10
 API_GOOGLE_REAUTH_MINUTES = 55
 API_NEST_REAUTH_MINUTES = 20 * 24 * 60  # 20 days
 API_HTTP2_PING_INTERVAL_SECONDS = 60
+OBSERVE_IDLE_RESET_SECONDS = 300  # Force reconnect if stream idle this long
+CONNECT_FAILURE_RESET_THRESHOLD = 3  # Recreate session after N consecutive connect errors
 
 # REST API Endpoints (from nest-endpoints.js)
 URL_NEST_AUTH = "https://{api_hostname}/session"
@@ -66,7 +68,6 @@ PLATFORMS = ["lock"]
 CONF_ISSUE_TOKEN = "issue_token"
 CONF_COOKIES = "cookies"
 UPDATE_INTERVAL_SECONDS = timedelta(seconds=30)  # Use timedelta for DataUpdateCoordinator
-SERVICE_RESET_CONNECTION = "reset_connection"
 
 def parse_cookies(cookie_string):
     """Parses a cookie string into a dictionary."""
