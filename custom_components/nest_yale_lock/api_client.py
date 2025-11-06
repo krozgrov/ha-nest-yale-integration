@@ -348,19 +348,25 @@ class NestAPIClient:
                     _LOGGER.debug("Stored observe_base_url: %s", self._observe_base_url)
                     
                     # Process stream chunks continuously
-                    # Match working test project: call _process_message directly on each chunk
-                    # (test project main.py line 166-171: iter_content -> _process_message)
+                    # Use readany() instead of iter_chunked() to get chunks as they arrive
+                    # (matches old working version 2025.10.19.5 approach)
                     last_update_time = asyncio.get_event_loop().time()
+                    read_timeout = 300  # 5 minutes idle timeout (OBSERVE_IDLE_RESET_SECONDS)
                     
                     _LOGGER.info("Starting to read chunks from observe stream")
-                    async for chunk in resp.content.iter_chunked(2048):
-                        if self._shutdown_event.is_set():
-                            break
-                            
-                        if not chunk:
-                            continue
-                            
+                    while not self._shutdown_event.is_set():
                         try:
+                            # readany() returns as soon as ANY data is available (not waiting for full chunk size)
+                            # This is key - iter_chunked() was waiting for 2048 bytes which never came
+                            chunk = await asyncio.wait_for(
+                                resp.content.readany(),
+                                timeout=read_timeout
+                            )
+                            
+                            if not chunk:
+                                _LOGGER.info("Observe stream connection closed by server")
+                                break
+                            
                             # Call _process_message directly like test project does
                             # It handles incomplete messages by returning empty data
                             locks_data = await handler._process_message(chunk)
@@ -406,6 +412,9 @@ class NestAPIClient:
                                 
                                 last_update_time = asyncio.get_event_loop().time()
                                 
+                        except asyncio.TimeoutError:
+                            _LOGGER.warning("Observe stream idle timeout (%d seconds) - will reconnect", read_timeout)
+                            break
                         except Exception as e:
                             _LOGGER.error("Error processing observe chunk: %s", e, exc_info=True)
                             # Continue processing other chunks
