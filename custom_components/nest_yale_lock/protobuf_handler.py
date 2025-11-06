@@ -142,6 +142,12 @@ class NestProtobufHandler:
             self.stream_body.ParseFromString(message)
             _LOGGER.debug(f"Parsed StreamBody: {self.stream_body}")
 
+            # Check for authentication failure (status code 7)
+            if self.stream_body.HasField("status") and self.stream_body.status.code == 7:
+                _LOGGER.warning("Authentication failed detected in stream (status code 7): %s", self.stream_body.status.message)
+                locks_data["auth_failed"] = True
+                return locks_data
+
             for msg in self.stream_body.message:
                 for get_op in msg.get:
                     obj_id = get_op.object.id if get_op.object.id else None

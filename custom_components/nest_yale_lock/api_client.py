@@ -447,8 +447,8 @@ class NestAPIClient:
                 try:
                     raw_data = await self.connection.post(api_url, headers, encoded_data)
                     self.transport_url = base_url
-                    await asyncio.sleep(2)
-                    await self.refresh_state()
+                    _LOGGER.info("Command succeeded for %s at %s, response ops=%d, payload_len=%d",
+                                 device_id, api_url, len(raw_data) if raw_data else 0, len(raw_data) if raw_data else 0)
                     return raw_data
                 except aiohttp.ClientResponseError as cre:
                     if cre.status in (401, 403) and not reauthed:

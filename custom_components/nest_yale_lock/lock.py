@@ -62,7 +62,6 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             "name": self._attr_name,
             "sw_version": metadata["firmware_revision"],
         }
-        self._attr_supported_features = 0
         self._attr_has_entity_name = False
         self._attr_should_poll = False
         self._state = None
@@ -141,9 +140,9 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         }
 
         try:
-            _LOGGER.debug("Sending %s command to %s with cmd_any (user_id=%s, structure_id=%s): %s",
-                          "lock" if lock else "unlock", self._attr_unique_id, self._user_id, self._structure_id, cmd_any)
-            response = await self._coordinator.api_client.send_command(cmd_any, self._device_id)
+            _LOGGER.info("Sending %s command to %s (user_id=%s, structure_id=%s, device_id=%s)",
+                          "lock" if lock else "unlock", self._attr_unique_id, self._user_id, self._structure_id, self._device_id)
+            response = await self._coordinator.api_client.send_command(cmd_any, self._device_id, structure_id=self._structure_id)
             response_hex = response.hex() if isinstance(response, bytes) else None
             if response_hex is not None:
                 _LOGGER.debug("Lock command response: %s", response_hex)
@@ -153,14 +152,12 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                 _LOGGER.warning("Command failed with 12020802, not updating local state")
                 return
 
+            # Set optimistic state - the observe stream will confirm the actual state
             self._device["bolt_moving"] = True
             self._device["bolt_moving_to"] = lock
-            self._state = LockState.LOCKING if lock else LockState.UNLOCKING
-            self.async_schedule_update_ha_state()  # Replace force_refresh
-            await asyncio.sleep(5)
-            self._device["bolt_moving"] = False
-            await self._coordinator.async_request_refresh()
-            _LOGGER.debug("Refresh successful, updated state: %s", self._device)
+            self.async_write_ha_state()
+            _LOGGER.info("Command %s sent successfully for %s, waiting for observe stream to confirm state change",
+                         "lock" if lock else "unlock", self._attr_unique_id)
 
         except Exception as e:
             _LOGGER.error("Command failed for %s: %s", self._attr_unique_id, e, exc_info=True)
@@ -176,25 +173,47 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         new_data = self._coordinator.data.get(self._device_id)
         if new_data:
             old_state = self._device.copy()
+            old_bolt_locked = self._device.get("bolt_locked", False)
+            
+            # Update device data
             self._device.update(new_data)
             self._user_id = self._coordinator.api_client.user_id
             self._structure_id = self._coordinator.api_client.structure_id
-            # Normalize movement flag
-            if "bolt_moving" in new_data and new_data["bolt_moving"]:
-                self._device["bolt_moving"] = True
-                asyncio.create_task(self._clear_bolt_moving())
+            
+            # Update bolt_moving based on actuator state
+            if "actuator_state" in new_data:
+                actuator_state = new_data["actuator_state"]
+                self._device["bolt_moving"] = actuator_state not in [weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_OK]
+            elif "bolt_moving" in new_data:
+                self._device["bolt_moving"] = new_data["bolt_moving"]
             else:
                 self._device["bolt_moving"] = False
-            # Set HA state
+            
+            # Clear optimistic state when we get a real update
+            if old_bolt_locked != self._device.get("bolt_locked", False):
+                # State actually changed, clear optimistic flags
+                self._device["bolt_moving"] = False
+                self._device["bolt_moving_to"] = None
+                _LOGGER.info("Lock state changed for %s: %s -> %s", self._attr_unique_id, 
+                            "locked" if old_bolt_locked else "unlocked",
+                            "locked" if self._device.get("bolt_locked", False) else "unlocked")
+            
+            # Set HA state based on actual lock state
             if self.is_locked:
                 self._state = LockState.LOCKED
+            elif self.is_unlocking:
+                self._state = LockState.UNLOCKING
+            elif self.is_locking:
+                self._state = LockState.LOCKING
             else:
                 self._state = LockState.UNLOCKED
+            
             self.async_write_ha_state()
             _LOGGER.debug("Updated lock state for %s: old=%s, new=%s", self._attr_unique_id, old_state, self._device)
         else:
             _LOGGER.debug("No updated data for lock %s in coordinator", self._attr_unique_id)
             self._device["bolt_moving"] = False
+            self._device["bolt_moving_to"] = None
             self.async_write_ha_state()
 
     async def _clear_bolt_moving(self):
