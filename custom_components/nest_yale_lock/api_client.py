@@ -319,18 +319,24 @@ class NestAPIClient:
 
         observe_payload = self._get_observe_payload()
         backoff = API_RETRY_DELAY_SECONDS
+        last_data_time = asyncio.get_event_loop().time()
 
+        _LOGGER.info("Observe stream starting (will auto-reconnect on timeout/error)")
         while True:
             for base_url in self._candidate_bases():
                 api_url = f"{base_url}{ENDPOINT_OBSERVE}"
                 _LOGGER.debug("Starting observe stream with URL: %s", api_url)
                 try:
+                    _LOGGER.info("Observe stream connected to %s", api_url)
                     async for chunk in self.connection.stream(api_url, headers, observe_payload, read_timeout=OBSERVE_IDLE_RESET_SECONDS):
                         # Reset backoff on any successful data
                         backoff = API_RETRY_DELAY_SECONDS
                         self._connect_failures = 0
+                        current_time = asyncio.get_event_loop().time()
                         locks_data = await self.protobuf_handler._process_message(chunk)
                         if "yale" in locks_data:
+                            last_data_time = current_time
+                            _LOGGER.debug("Observe stream received yale data")
                             if locks_data.get("user_id"):
                                 old_user_id = self._user_id
                                 self._user_id = locks_data["user_id"]
@@ -345,10 +351,15 @@ class NestAPIClient:
                                     _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
                             self.transport_url = base_url
                         yield locks_data.get("yale", {})
-                    _LOGGER.debug("Observe stream finished for %s; reconnecting", api_url)
+                    _LOGGER.warning("Observe stream finished for %s; reconnecting", api_url)
                     self.connection.connected = False
                 except asyncio.TimeoutError:
-                    _LOGGER.warning("Observe stream timed out via %s; retrying", api_url)
+                    elapsed = asyncio.get_event_loop().time() - last_data_time
+                    _LOGGER.warning(
+                        "Observe stream timed out via %s after %.1f seconds idle; reconnecting",
+                        api_url,
+                        elapsed
+                    )
                     self.connection.connected = False
                 except aiohttp.ClientResponseError as cre:
                     if cre.status in (401, 403):
