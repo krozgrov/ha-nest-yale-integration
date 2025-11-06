@@ -351,6 +351,8 @@ class NestAPIClient:
                     # Match working test project: call _process_message directly on each chunk
                     # (test project main.py line 166-171: iter_content -> _process_message)
                     last_update_time = asyncio.get_event_loop().time()
+                    
+                    _LOGGER.info("Starting to read chunks from observe stream")
                     async for chunk in resp.content.iter_chunked(2048):
                         if self._shutdown_event.is_set():
                             break
@@ -430,7 +432,12 @@ class NestAPIClient:
                 else:
                     raise
             except Exception as e:
-                _LOGGER.error("Unexpected error in observe stream: %s", e, exc_info=True)
+                _LOGGER.error(
+                    "Unexpected error in observe stream (type=%s): %s",
+                    type(e).__name__,
+                    str(e),
+                    exc_info=True,
+                )
                 self._connection_healthy = False
                 consecutive_failures += 1
             
