@@ -297,15 +297,9 @@ class NestAPIClient:
             _LOGGER.error("Max retries reached, giving up on refresh_state: %s", last_error)
         return {}
 
-    async def observe(self):
-        """Yield real-time updates, reconnecting on timeouts/errors indefinitely.
-
-        Avoids raising on transient errors to keep the coordinator loop alive.
-        """
-        if not self.access_token or not self.connection.connected:
-            await self.authenticate()
-
-        headers = {
+    def _build_observe_headers(self):
+        """Build headers for observe stream with current access token."""
+        return {
             "Authorization": f"Basic {self.access_token}",
             "Content-Type": "application/x-protobuf",
             "User-Agent": USER_AGENT_STRING,
@@ -317,12 +311,28 @@ class NestAPIClient:
             "origin": "https://home.nest.com",
         }
 
+    async def observe(self):
+        """Yield real-time updates, reconnecting on timeouts/errors indefinitely.
+
+        Avoids raising on transient errors to keep the coordinator loop alive.
+        """
+        if not self.access_token or not self.connection.connected:
+            await self.authenticate()
+
         observe_payload = self._get_observe_payload()
         backoff = API_RETRY_DELAY_SECONDS
         last_data_time = asyncio.get_event_loop().time()
 
         _LOGGER.info("Observe stream starting (will auto-reconnect on timeout/error)")
         while True:
+            # Ensure we have a valid token before each connection attempt
+            if not self.access_token:
+                _LOGGER.warning("No access token before observe connection, authenticating")
+                await self.authenticate()
+            
+            # Rebuild headers with current token for each connection attempt
+            headers = self._build_observe_headers()
+            
             for base_url in self._candidate_bases():
                 api_url = f"{base_url}{ENDPOINT_OBSERVE}"
                 _LOGGER.debug("Starting observe stream with URL: %s", api_url)
@@ -341,6 +351,9 @@ class NestAPIClient:
                             self.connection.connected = False
                             self.access_token = None
                             await self.authenticate()
+                            # Rebuild headers with new token before reconnecting
+                            headers = self._build_observe_headers()
+                            _LOGGER.info("Re-authenticated, reconnecting observe stream with new token")
                             break  # Break inner loop to reconnect with new token
                         
                         if "yale" in locks_data:
@@ -375,6 +388,8 @@ class NestAPIClient:
                         _LOGGER.info("Observe received %s; reauthenticating and retrying", cre.status)
                         try:
                             await self.authenticate()
+                            # Rebuild headers with new token
+                            headers = self._build_observe_headers()
                         except Exception:
                             _LOGGER.warning("Reauthentication failed during observe; will backoff and retry")
                         self.connection.connected = False
@@ -392,7 +407,9 @@ class NestAPIClient:
 
     #async def send_command(self, command, device_id):
     async def send_command(self, command, device_id, structure_id=None):
+        # Ensure we have a valid token before sending command
         if not self.access_token:
+            _LOGGER.warning("No access token before send_command, authenticating")
             await self.authenticate()
 
         request_id = str(uuid.uuid4())
@@ -454,6 +471,12 @@ class NestAPIClient:
                     if cre.status in (401, 403) and not reauthed:
                         _LOGGER.info("Command got %s; reauthenticating and retrying", cre.status)
                         await self.authenticate()
+                        # Rebuild headers with new token
+                        headers["Authorization"] = f"Basic {self.access_token}"
+                        if effective_structure_id:
+                            headers["X-Nest-Structure-Id"] = effective_structure_id
+                        if self._user_id:
+                            headers["X-nl-user-id"] = str(self._user_id)
                         reauthed = True
                         continue
                     last_error = cre
