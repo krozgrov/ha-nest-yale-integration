@@ -67,7 +67,9 @@ DOMAIN = "nest_yale_lock"
 PLATFORMS = ["lock"]
 CONF_ISSUE_TOKEN = "issue_token"
 CONF_COOKIES = "cookies"
-UPDATE_INTERVAL_SECONDS = timedelta(seconds=30)  # Use timedelta for DataUpdateCoordinator
+# Update interval for coordinator fallback polling (observe stream is primary)
+# Set to 10 minutes since we rely on push-based observe stream for real-time updates
+UPDATE_INTERVAL_SECONDS = timedelta(minutes=10)  # Use timedelta for DataUpdateCoordinator
 
 # Command Response Error Codes
 COMMAND_ERROR_CODE_FAILED = "12020802"  # Protobuf error code indicating command failure

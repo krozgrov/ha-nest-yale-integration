@@ -20,6 +20,7 @@ class NestCoordinator(DataUpdateCoordinator):
         )
         self.api_client = api_client
         self._observer_task = None
+        self._observer_healthy = False  # Track if observe stream is working
         self.data = {}
         _LOGGER.debug("Initialized NestCoordinator with initial data: %s", self.data)
 
@@ -38,8 +39,13 @@ class NestCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Observer task created: %s", self._observer_task)
 
     async def _async_update_data(self):
-        """Fetch data from API client."""
-        _LOGGER.debug("Starting _async_update_data")
+        """Fetch data from API client (fallback only when observe stream is unhealthy)."""
+        # Skip polling if observe stream is healthy - it provides real-time updates
+        if self._observer_healthy:
+            _LOGGER.debug("Skipping fallback poll - observe stream is healthy")
+            return self.data
+        
+        _LOGGER.debug("Starting fallback _async_update_data (observe stream unhealthy)")
         try:
             new_data = await self.api_client.refresh_state()
             if not new_data:
@@ -64,6 +70,9 @@ class NestCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Starting _run_observer")
         try:
             async for update in self.api_client.observe():
+                # Mark observer as healthy when we receive updates
+                self._observer_healthy = True
+                
                 if update:
                     _LOGGER.debug("Received observer update: %s", update)
                     normalized_update = update.get("yale", update) if update else {}
@@ -90,6 +99,7 @@ class NestCoordinator(DataUpdateCoordinator):
                     self.async_set_updated_data(self.data)
         except Exception as e:
             _LOGGER.error("Observer failed: %s", e, exc_info=True)
+            self._observer_healthy = False  # Mark as unhealthy on failure
             await asyncio.sleep(5)
             self._observer_task = self.hass.loop.create_task(self._run_observer())
 
