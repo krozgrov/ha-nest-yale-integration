@@ -405,7 +405,6 @@ class NestAPIClient:
             await asyncio.sleep(sleep_for)
             backoff = min(backoff * 2, 60)
 
-    #async def send_command(self, command, device_id):
     async def send_command(self, command, device_id, structure_id=None):
         # Ensure we have a valid token before sending command
         if not self.access_token:
@@ -430,7 +429,7 @@ class NestAPIClient:
         effective_structure_id = structure_id or self._structure_id
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
-            _LOGGER.debug(f"[nest_yale_lock] Using structure_id: {effective_structure_id}")
+            _LOGGER.debug("Using structure_id: %s", effective_structure_id)
         if self._user_id:
             headers["X-nl-user-id"] = str(self._user_id)
 

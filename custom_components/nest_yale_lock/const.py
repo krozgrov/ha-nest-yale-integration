@@ -69,6 +69,9 @@ CONF_ISSUE_TOKEN = "issue_token"
 CONF_COOKIES = "cookies"
 UPDATE_INTERVAL_SECONDS = timedelta(seconds=30)  # Use timedelta for DataUpdateCoordinator
 
+# Command Response Error Codes
+COMMAND_ERROR_CODE_FAILED = "12020802"  # Protobuf error code indicating command failure
+
 def parse_cookies(cookie_string):
     """Parses a cookie string into a dictionary."""
     cookies = {}

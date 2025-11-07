@@ -5,7 +5,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from .const import DOMAIN
+from .const import DOMAIN, COMMAND_ERROR_CODE_FAILED
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 
 _LOGGER = logging.getLogger(__name__)
@@ -148,8 +148,8 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                 _LOGGER.debug("Lock command response: %s", response_hex)
             else:
                 _LOGGER.debug("Lock command response (non-bytes): %s", response)
-            if response_hex == "12020802":  # Updated to match actual response
-                _LOGGER.warning("Command failed with 12020802, not updating local state")
+            if response_hex == COMMAND_ERROR_CODE_FAILED:
+                _LOGGER.warning("Command failed with error code %s, not updating local state", COMMAND_ERROR_CODE_FAILED)
                 return
 
             # Set optimistic state - the observe stream will confirm the actual state
