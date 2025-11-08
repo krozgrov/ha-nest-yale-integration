@@ -32,9 +32,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             unique_id = f"{DOMAIN}_battery_{device_id}"
             if unique_id in added:
                 continue
-            new_entities.append(NestYaleBatterySensor(coordinator, device))
-            added.add(unique_id)
-            _LOGGER.debug("Prepared new battery sensor entity: %s", unique_id)
+            try:
+                new_entities.append(NestYaleBatterySensor(coordinator, device))
+                added.add(unique_id)
+                _LOGGER.debug("Prepared new battery sensor entity: %s", unique_id)
+            except Exception as e:
+                _LOGGER.error("Failed to create battery sensor for %s: %s", device_id, e, exc_info=True)
         if new_entities:
             _LOGGER.info("Adding %d Nest Yale battery sensors", len(new_entities))
             async_add_entities(new_entities)
@@ -52,8 +55,12 @@ class NestYaleBatterySensor(NestYaleEntity, SensorEntity):
     def __init__(self, coordinator, device):
         """Initialize the battery sensor."""
         device_id = device.get("device_id")
+        if not device_id:
+            raise ValueError("device_id is required for battery sensor")
         super().__init__(coordinator, device_id, device)
+        # Override unique_id to include "battery" prefix
         self._attr_unique_id = f"{DOMAIN}_battery_{device_id}"
+        # Append "Battery" to the name
         self._attr_name = f"{self._attr_name} Battery"
         self._attr_device_class = SensorDeviceClass.BATTERY
         self._attr_state_class = SensorStateClass.MEASUREMENT
@@ -98,4 +105,10 @@ class NestYaleBatterySensor(NestYaleEntity, SensorEntity):
             # Update device_info from traits (handled by base class)
             self._update_device_info_from_traits()
         self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        available = bool(self._device_data) and self._coordinator.last_update_success
+        return available
 
