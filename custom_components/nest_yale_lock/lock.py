@@ -57,6 +57,8 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         self._attr_has_entity_name = False
         self._attr_should_poll = False
         self._state: LockState | None = None
+        # Note: user_id and structure_id are now accessed via _get_device_attributes() in base class
+        # Keeping these for backward compatibility with existing code that references them
         self._user_id = self._coordinator.api_client.user_id
         self._structure_id = self._coordinator.api_client.structure_id
         _LOGGER.debug(
@@ -90,44 +92,29 @@ class NestYaleLock(NestYaleEntity, LockEntity):
 
     @property
     def extra_state_attributes(self):
-        """Return extra state attributes in logical order."""
-        # Get serial number from identifiers (prefer serial number over device_id)
-        identifiers = self._attr_device_info["identifiers"]
-        serial_number = self._device_id  # Default to device_id
-        for domain, identifier in identifiers:
-            if domain == DOMAIN and identifier != self._device_id:
-                serial_number = identifier  # Use non-device_id identifier (should be serial number)
-                break
+        """Return extra state attributes in logical order.
         
-        # Extract trait data from device
-        traits = self._device_data.get("traits", {})
-        
-        # DeviceIdentityTrait data
-        device_identity = traits.get("DeviceIdentityTrait", {})
-        if device_identity:
-            if device_identity.get("serial_number"):
-                serial_number = device_identity["serial_number"]
-            if device_identity.get("firmware_version"):
-                firmware_revision = device_identity["firmware_version"]
-            else:
-                firmware_revision = self._attr_device_info.get("sw_version", "unknown")
-        else:
-            firmware_revision = self._attr_device_info.get("sw_version", "unknown")
+        Follows HA best practices:
+        - Entity-specific attributes (bolt_moving) in entity class
+        - Device-level attributes from base class
+        - Battery info grouped together
+        """
+        # Get common device-level attributes from base class
+        attrs = self._get_device_attributes()
         
         # Build attributes in logical order:
-        # 1. Bolt Moving
+        # 1. Bolt Moving (lock-specific)
         # 2. Battery info (all battery-related attributes grouped)
-        # 3. Structure ID
-        # 4. Device ID
-        # 5. User ID
-        # 6. Firmware
-        # 7. Serial Number
+        # 3-7. Device-level attributes (from base class)
+        
+        # 1. Bolt Moving - lock-specific attribute
         attrs = {
-            # 1. Bolt Moving
             "bolt_moving": self._bolt_moving,
+            **attrs,  # Merge device-level attributes
         }
         
         # 2. Battery info - group all battery attributes together
+        traits = self._device_data.get("traits", {})
         battery_trait = traits.get("BatteryPowerSourceTrait", {})
         if battery_trait:
             if battery_trait.get("battery_level") is not None:
@@ -148,30 +135,28 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             if battery_trait.get("replacement_indicator") is not None:
                 attrs["battery_replacement_indicator"] = battery_trait["replacement_indicator"]
         
-        # 3. Structure ID
-        attrs["structure_id"] = self._structure_id
+        # Reorder to match requested order:
+        # 1. Bolt Moving, 2. Battery info, 3. Structure ID, 4. Device ID, 5. User ID, 6. Firmware, 7. Serial Number
+        ordered_attrs = {
+            "bolt_moving": attrs.pop("bolt_moving"),
+        }
         
-        # 4. Device ID
-        attrs["device_id"] = self._device_id
+        # Add battery attributes if present
+        battery_keys = ["battery_level", "battery_voltage", "battery_condition", "battery_status", "battery_replacement_indicator"]
+        for key in battery_keys:
+            if key in attrs:
+                ordered_attrs[key] = attrs.pop(key)
         
-        # 5. User ID
-        attrs["user_id"] = self._user_id
+        # Add remaining device-level attributes in order
+        for key in ["structure_id", "device_id", "user_id", "firmware_revision", "serial_number"]:
+            if key in attrs:
+                ordered_attrs[key] = attrs.pop(key)
         
-        # 6. Firmware
-        attrs["firmware_revision"] = firmware_revision
+        # Add any remaining attributes (manufacturer, model, etc.)
+        ordered_attrs.update(attrs)
         
-        # 7. Serial Number
-        attrs["serial_number"] = serial_number
-        
-        # Additional device identity attributes (if available)
-        if device_identity:
-            if device_identity.get("manufacturer"):
-                attrs["manufacturer"] = device_identity["manufacturer"]
-            if device_identity.get("model"):
-                attrs["model"] = device_identity["model"]
-        
-        _LOGGER.debug("Extra state attributes for %s: %s", self._attr_unique_id, attrs)
-        return attrs
+        _LOGGER.debug("Extra state attributes for %s: %s", self._attr_unique_id, ordered_attrs)
+        return ordered_attrs
 
     async def async_lock(self, **kwargs):
         _LOGGER.debug("UI triggered async_lock for %s, kwargs: %s, current state: %s",

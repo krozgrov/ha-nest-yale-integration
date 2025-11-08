@@ -218,3 +218,62 @@ class NestYaleEntity(CoordinatorEntity):
         
         return device_info
 
+    def _get_device_attributes(self):
+        """Get common device-level attributes shared by all entities.
+        
+        This method provides device-level information that should be consistent
+        across all entities for the same device (lock, sensor, etc.).
+        
+        Returns:
+            dict: Dictionary of device-level attributes
+        """
+        # Get serial number from identifiers (prefer serial number over device_id)
+        identifiers = self._attr_device_info["identifiers"]
+        serial_number = self._device_id  # Default to device_id
+        for domain, identifier in identifiers:
+            if domain == DOMAIN and identifier != self._device_id:
+                serial_number = identifier  # Use non-device_id identifier (should be serial number)
+                break
+        
+        # Extract trait data from device
+        traits = self._device_data.get("traits", {})
+        
+        # DeviceIdentityTrait data
+        device_identity = traits.get("DeviceIdentityTrait", {})
+        if device_identity:
+            if device_identity.get("serial_number"):
+                serial_number = device_identity["serial_number"]
+            if device_identity.get("firmware_version"):
+                firmware_revision = device_identity["firmware_version"]
+            else:
+                firmware_revision = self._attr_device_info.get("sw_version", "unknown")
+        else:
+            firmware_revision = self._attr_device_info.get("sw_version", "unknown")
+        
+        # Get user_id and structure_id from coordinator
+        user_id = self._coordinator.api_client.user_id
+        structure_id = self._coordinator.api_client.structure_id
+        
+        # Return device-level attributes in logical order:
+        # 3. Structure ID
+        # 4. Device ID
+        # 5. User ID
+        # 6. Firmware
+        # 7. Serial Number
+        attrs = {
+            "structure_id": structure_id,
+            "device_id": self._device_id,
+            "user_id": user_id,
+            "firmware_revision": firmware_revision,
+            "serial_number": serial_number,
+        }
+        
+        # Additional device identity attributes (if available)
+        if device_identity:
+            if device_identity.get("manufacturer"):
+                attrs["manufacturer"] = device_identity["manufacturer"]
+            if device_identity.get("model"):
+                attrs["model"] = device_identity["model"]
+        
+        return attrs
+
