@@ -137,6 +137,9 @@ class NestProtobufHandler:
 
         locks_data = {"yale": {}, "user_id": None, "structure_id": None, "all_traits": {}}
         all_traits = {}
+        # Track which device IDs are locks (identified by BoltLockTrait)
+        # This allows us to skip processing traits for non-lock devices
+        lock_device_ids = set()
 
         try:
             self.stream_body.Clear()
@@ -149,6 +152,22 @@ class NestProtobufHandler:
                 locks_data["auth_failed"] = True
                 return locks_data
 
+            # First pass: Identify lock devices by BoltLockTrait
+            for msg in self.stream_body.message:
+                for get_op in msg.get:
+                    obj_id = get_op.object.id if get_op.object.id else None
+                    property_any = getattr(get_op.data, "property", None)
+                    property_any = _normalize_any_type(property_any) if property_any else None
+                    type_url = getattr(property_any, "type_url", None) if property_any else None
+                    if not type_url and 7 in get_op:
+                        type_url = "weave.trait.security.BoltLockTrait"
+                    
+                    # Track devices with BoltLockTrait as locks
+                    if obj_id and "BoltLockTrait" in (type_url or ""):
+                        lock_device_ids.add(obj_id)
+                        _LOGGER.debug("Identified lock device: %s", obj_id)
+
+            # Second pass: Process traits only for lock devices, structures, and users
             for msg in self.stream_body.message:
                 for get_op in msg.get:
                     obj_id = get_op.object.id if get_op.object.id else None
@@ -162,8 +181,16 @@ class NestProtobufHandler:
 
                     _LOGGER.debug("Extracting `%s` for `%s` with key `%s`", type_url, obj_id, obj_key)
 
-                    # Extract trait data for ALL traits (including HomeKit traits)
-                    if property_any and type_url:
+                    # Determine if this is a lock device, structure, or user (all should be processed)
+                    # Skip processing traits for non-lock devices (thermostats, cameras, etc.)
+                    is_lock_device = obj_id in lock_device_ids if obj_id else False
+                    is_structure_or_user = obj_id and (obj_id.startswith("STRUCTURE_") or obj_id.startswith("USER_"))
+                    should_process = is_lock_device or is_structure_or_user or not obj_id
+                    
+                    # Only process HomeKit traits (DeviceIdentityTrait, BatteryPowerSourceTrait) for lock devices
+                    # Also process StructureInfoTrait and UserInfoTrait for metadata
+                    # Skip all other traits for non-lock devices
+                    if property_any and type_url and should_process:
                         trait_key = f"{obj_id}:{type_url}" if obj_id and type_url else None
                         trait_info = {"object_id": obj_id, "type_url": type_url, "decoded": False}
                         
@@ -200,10 +227,11 @@ class NestProtobufHandler:
                             trait_info["error"] = str(e)
                             _LOGGER.debug("Error decoding trait %s: %s", type_url, e)
                         
-                        # Store trait info
-                        if trait_key:
+                        # Store trait info (only for lock devices, structures, and users)
+                        if trait_key and should_process:
                             all_traits[trait_key] = trait_info
 
+                    # Only process BoltLockTrait for lock devices
                     if "BoltLockTrait" in (type_url or "") and obj_id:
                         bolt_lock = weave_security_pb2.BoltLockTrait()
                         try:
