@@ -245,28 +245,30 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                         # Device registry methods are thread-safe and can be called from callbacks
                         try:
                             device_registry = dr.async_get(self.hass)
-                            # Try to find device by current identifier first, then by device_id
+                            # Try to find device by current identifier first, then by device_id, then by new serial
                             device = device_registry.async_get_device(identifiers={(DOMAIN, self._initial_identifier)})
                             if not device:
                                 device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
+                            if not device and new_serial:
+                                device = device_registry.async_get_device(identifiers={(DOMAIN, new_serial)})
                             
                             if device:
                                 update_kwargs = {}
-                                if new_serial:
+                                if new_serial and device.identifiers != {(DOMAIN, new_serial)}:
                                     update_kwargs["new_identifiers"] = {(DOMAIN, new_serial)}
-                                if new_firmware:
+                                if new_firmware and device.sw_version != new_firmware:
                                     update_kwargs["sw_version"] = new_firmware
-                                if new_manufacturer:
+                                if new_manufacturer and device.manufacturer != new_manufacturer:
                                     update_kwargs["manufacturer"] = new_manufacturer
-                                if new_model:
+                                if new_model and device.model != new_model:
                                     update_kwargs["model"] = new_model
                                 
                                 if update_kwargs:
                                     device_registry.async_update_device(device.id, **update_kwargs)
                                     _LOGGER.info("Updated device registry for %s: %s", self._attr_unique_id, update_kwargs)
                             else:
-                                _LOGGER.warning("Could not find device in registry for %s (device_id=%s, serial=%s)", 
-                                              self._attr_unique_id, self._device_id, new_serial)
+                                _LOGGER.warning("Could not find device in registry for %s (initial_id=%s, device_id=%s, serial=%s)", 
+                                              self._attr_unique_id, self._initial_identifier, self._device_id, new_serial)
                         except Exception as e:
                             _LOGGER.error("Error updating device registry for %s: %s", self._attr_unique_id, e, exc_info=True)
                         
@@ -322,7 +324,23 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
 
     @property
     def device_info(self):
-        return self._attr_device_info
+        # Return dynamic device_info that includes trait data if available
+        device_info = self._attr_device_info.copy()
+        
+        # Update with trait data if available
+        traits = self._device.get("traits", {})
+        device_identity = traits.get("DeviceIdentityTrait", {})
+        if device_identity:
+            if device_identity.get("serial_number"):
+                device_info["identifiers"] = {(DOMAIN, device_identity["serial_number"])}
+            if device_identity.get("firmware_version"):
+                device_info["sw_version"] = device_identity["firmware_version"]
+            if device_identity.get("manufacturer"):
+                device_info["manufacturer"] = device_identity["manufacturer"]
+            if device_identity.get("model"):
+                device_info["model"] = device_identity["model"]
+        
+        return device_info
 
     @property
     def state(self):
