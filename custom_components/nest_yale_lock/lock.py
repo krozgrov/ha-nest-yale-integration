@@ -267,74 +267,74 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                     # Update device registry so HA UI reflects the changes
                     # Use serial number as primary identifier if available, device_id as secondary
                     try:
-                            device_registry = dr.async_get(self.hass)
-                            _LOGGER.debug("Looking up device in registry for %s: device_id=%s, serial=%s", 
-                                         self._attr_unique_id, self._device_id, new_serial)
+                        device_registry = dr.async_get(self.hass)
+                        _LOGGER.debug("Looking up device in registry for %s: device_id=%s, serial=%s", 
+                                     self._attr_unique_id, self._device_id, new_serial)
+                        
+                        # Find device by checking both device_id and serial number
+                        device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
+                        if not device and new_serial:
+                            _LOGGER.debug("Device not found by device_id, trying serial number")
+                            device = device_registry.async_get_device(identifiers={(DOMAIN, new_serial)})
+                        
+                        if device:
+                            _LOGGER.debug("Found device in registry: id=%s, identifiers=%s, sw_version=%s", 
+                                         device.id, device.identifiers, device.sw_version)
+                            update_kwargs = {}
+                            # Update identifiers: use serial as primary, device_id as secondary
+                            # Home Assistant uses the first identifier as the "primary" one shown in Device Info
+                            if new_serial:
+                                # Create identifiers set with serial first (primary), then device_id (secondary)
+                                new_identifiers = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
+                                current_identifiers = set(device.identifiers)
+                                if current_identifiers != new_identifiers:
+                                    update_kwargs["new_identifiers"] = new_identifiers
+                                    _LOGGER.info("Updating device identifiers: %s -> %s", current_identifiers, new_identifiers)
                             
-                            # Find device by checking both device_id and serial number
-                            device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
-                            if not device and new_serial:
-                                _LOGGER.debug("Device not found by device_id, trying serial number")
-                                device = device_registry.async_get_device(identifiers={(DOMAIN, new_serial)})
+                            # Always update firmware if we have it from trait data
+                            if new_firmware:
+                                if device.sw_version != new_firmware:
+                                    update_kwargs["sw_version"] = new_firmware
+                                    _LOGGER.info("Updating device firmware: %s -> %s", device.sw_version, new_firmware)
+                                elif device.sw_version is None or device.sw_version == "unknown":
+                                    update_kwargs["sw_version"] = new_firmware
+                                    _LOGGER.info("Setting device firmware: %s (was unknown)", new_firmware)
                             
-                            if device:
-                                _LOGGER.debug("Found device in registry: id=%s, identifiers=%s, sw_version=%s", 
-                                             device.id, device.identifiers, device.sw_version)
-                                update_kwargs = {}
-                                # Update identifiers: use serial as primary, device_id as secondary
-                                # Home Assistant uses the first identifier as the "primary" one shown in Device Info
-                                if new_serial:
-                                    # Create identifiers set with serial first (primary), then device_id (secondary)
-                                    new_identifiers = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
-                                    current_identifiers = set(device.identifiers)
-                                    if current_identifiers != new_identifiers:
-                                        update_kwargs["new_identifiers"] = new_identifiers
-                                        _LOGGER.info("Updating device identifiers: %s -> %s", current_identifiers, new_identifiers)
-                                
-                                # Always update firmware if we have it from trait data
-                                if new_firmware:
-                                    if device.sw_version != new_firmware:
-                                        update_kwargs["sw_version"] = new_firmware
-                                        _LOGGER.info("Updating device firmware: %s -> %s", device.sw_version, new_firmware)
-                                    elif device.sw_version is None or device.sw_version == "unknown":
-                                        update_kwargs["sw_version"] = new_firmware
-                                        _LOGGER.info("Setting device firmware: %s (was unknown)", new_firmware)
-                                
-                                if new_manufacturer and device.manufacturer != new_manufacturer:
-                                    update_kwargs["manufacturer"] = new_manufacturer
-                                    _LOGGER.info("Updating device manufacturer: %s -> %s", device.manufacturer, new_manufacturer)
-                                
-                                if new_model and device.model != new_model:
-                                    update_kwargs["model"] = new_model
-                                    _LOGGER.info("Updating device model: %s -> %s", device.model, new_model)
-                                
-                                if update_kwargs:
-                                    device_registry.async_update_device(device.id, **update_kwargs)
-                                    _LOGGER.info("✅ Successfully updated device registry for %s: %s", self._attr_unique_id, update_kwargs)
-                                else:
-                                    _LOGGER.debug("No device registry updates needed for %s (already up to date)", self._attr_unique_id)
-                                
-                                # Always update _attr_device_info to match latest trait data (for device_info property)
-                                if new_serial:
-                                    self._attr_device_info["identifiers"] = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
-                                if new_firmware:
-                                    self._attr_device_info["sw_version"] = new_firmware
-                                if new_manufacturer:
-                                    self._attr_device_info["manufacturer"] = new_manufacturer
-                                if new_model:
-                                    self._attr_device_info["model"] = new_model
+                            if new_manufacturer and device.manufacturer != new_manufacturer:
+                                update_kwargs["manufacturer"] = new_manufacturer
+                                _LOGGER.info("Updating device manufacturer: %s -> %s", device.manufacturer, new_manufacturer)
+                            
+                            if new_model and device.model != new_model:
+                                update_kwargs["model"] = new_model
+                                _LOGGER.info("Updating device model: %s -> %s", device.model, new_model)
+                            
+                            if update_kwargs:
+                                device_registry.async_update_device(device.id, **update_kwargs)
+                                _LOGGER.info("✅ Successfully updated device registry for %s: %s", self._attr_unique_id, update_kwargs)
                             else:
-                                _LOGGER.warning("Could not find device in registry for %s (device_id=%s, serial=%s). Device may not be registered yet.", 
-                                              self._attr_unique_id, self._device_id, new_serial)
-                                # Still update _attr_device_info even if device not found in registry
-                                if new_serial:
-                                    self._attr_device_info["identifiers"] = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
-                                if new_firmware:
-                                    self._attr_device_info["sw_version"] = new_firmware
-                                if new_manufacturer:
-                                    self._attr_device_info["manufacturer"] = new_manufacturer
-                                if new_model:
-                                    self._attr_device_info["model"] = new_model
+                                _LOGGER.debug("No device registry updates needed for %s (already up to date)", self._attr_unique_id)
+                            
+                            # Always update _attr_device_info to match latest trait data (for device_info property)
+                            if new_serial:
+                                self._attr_device_info["identifiers"] = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
+                            if new_firmware:
+                                self._attr_device_info["sw_version"] = new_firmware
+                            if new_manufacturer:
+                                self._attr_device_info["manufacturer"] = new_manufacturer
+                            if new_model:
+                                self._attr_device_info["model"] = new_model
+                        else:
+                            _LOGGER.warning("Could not find device in registry for %s (device_id=%s, serial=%s). Device may not be registered yet.", 
+                                          self._attr_unique_id, self._device_id, new_serial)
+                            # Still update _attr_device_info even if device not found in registry
+                            if new_serial:
+                                self._attr_device_info["identifiers"] = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
+                            if new_firmware:
+                                self._attr_device_info["sw_version"] = new_firmware
+                            if new_manufacturer:
+                                self._attr_device_info["manufacturer"] = new_manufacturer
+                            if new_model:
+                                self._attr_device_info["model"] = new_model
                     except Exception as e:
                         _LOGGER.error("Error updating device registry for %s: %s", self._attr_unique_id, e, exc_info=True)
                         # Still update _attr_device_info even if registry update fails
