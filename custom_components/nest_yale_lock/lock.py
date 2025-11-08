@@ -56,10 +56,11 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         self._attr_unique_id = f"{DOMAIN}_{self._device_id}"
         metadata = self._coordinator.api_client.get_device_metadata(self._device_id)
         self._attr_name = metadata["name"]
-        # Initialize with device_id as identifier so we can find it in registry later
-        # Will be updated to serial number when trait data arrives
+        # Use metadata serial_number (may be device_id initially, will be updated when trait data arrives)
+        # Store device_id separately for registry lookup
+        self._initial_identifier = metadata["serial_number"]
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, self._device_id)},
+            "identifiers": {(DOMAIN, self._initial_identifier)},
             "manufacturer": "Nest",
             "model": "Nest x Yale Lock",
             "name": self._attr_name,
@@ -244,8 +245,10 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                         # Device registry methods are thread-safe and can be called from callbacks
                         try:
                             device_registry = dr.async_get(self.hass)
-                            # Find device by current identifiers (device_id)
-                            device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
+                            # Try to find device by current identifier first, then by device_id
+                            device = device_registry.async_get_device(identifiers={(DOMAIN, self._initial_identifier)})
+                            if not device:
+                                device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
                             
                             if device:
                                 update_kwargs = {}
