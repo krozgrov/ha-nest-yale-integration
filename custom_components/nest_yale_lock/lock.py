@@ -126,10 +126,12 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         battery_trait = traits.get("BatteryPowerSourceTrait", {})
         if battery_trait:
             if battery_trait.get("battery_level") is not None:
-                # Convert to percentage (0.0-1.0 -> 0-100)
+                # Convert to percentage (0.0-1.0 -> 0-100) and round to whole number
                 battery_level = battery_trait["battery_level"]
                 if isinstance(battery_level, float):
-                    attrs["battery_level"] = round(battery_level * 100, 1)
+                    attrs["battery_level"] = round(battery_level * 100)
+                elif isinstance(battery_level, (int, float)):
+                    attrs["battery_level"] = int(round(battery_level * 100 if battery_level <= 1.0 else battery_level))
                 else:
                     attrs["battery_level"] = battery_level
             if battery_trait.get("voltage") is not None:
