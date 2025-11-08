@@ -56,8 +56,10 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         self._attr_unique_id = f"{DOMAIN}_{self._device_id}"
         metadata = self._coordinator.api_client.get_device_metadata(self._device_id)
         self._attr_name = metadata["name"]
+        # Initialize with device_id as identifier so we can find it in registry later
+        # Will be updated to serial number when trait data arrives
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, metadata["serial_number"])},
+            "identifiers": {(DOMAIN, self._device_id)},
             "manufacturer": "Nest",
             "model": "Nest x Yale Lock",
             "name": self._attr_name,
@@ -68,6 +70,7 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         self._state = None
         self._user_id = self._coordinator.api_client.user_id
         self._structure_id = self._coordinator.api_client.structure_id
+        self._device_info_updated = False  # Track if we've updated device_info from traits
         _LOGGER.debug(
             "Initialized lock with user_id: %s, structure_id: %s, device_id=%s, unique_id=%s, device=%s",
             self._user_id,
@@ -213,52 +216,58 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             self._user_id = self._coordinator.api_client.user_id
             self._structure_id = self._coordinator.api_client.structure_id
             
-            # Update device_info if we have trait data with better metadata
-            traits = self._device.get("traits", {})
-            device_identity = traits.get("DeviceIdentityTrait", {})
-            if device_identity:
-                updated = False
-                new_serial = device_identity.get("serial_number")
-                new_firmware = device_identity.get("firmware_version")
-                new_manufacturer = device_identity.get("manufacturer")
-                new_model = device_identity.get("model")
-                
-                if new_serial:
-                    # Update identifiers with actual serial number
-                    self._attr_device_info["identifiers"] = {(DOMAIN, new_serial)}
-                    updated = True
-                if new_firmware:
-                    self._attr_device_info["sw_version"] = new_firmware
-                    updated = True
-                if new_manufacturer:
-                    self._attr_device_info["manufacturer"] = new_manufacturer
-                    updated = True
-                if new_model:
-                    self._attr_device_info["model"] = new_model
-                    updated = True
-                
-                if updated:
-                    _LOGGER.info("Updated device_info for %s with trait data: serial=%s, fw=%s", 
-                               self._attr_unique_id, new_serial, new_firmware)
+            # Update device_info if we have trait data with better metadata (only once)
+            if not self._device_info_updated:
+                traits = self._device.get("traits", {})
+                device_identity = traits.get("DeviceIdentityTrait", {})
+                if device_identity:
+                    new_serial = device_identity.get("serial_number")
+                    new_firmware = device_identity.get("firmware_version")
+                    new_manufacturer = device_identity.get("manufacturer")
+                    new_model = device_identity.get("model")
                     
-                    # Update device registry so HA UI reflects the changes
-                    device_registry = dr.async_get(self.hass)
-                    device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
-                    if device:
-                        updates = {}
+                    if new_serial or new_firmware:
+                        # Update _attr_device_info
                         if new_serial:
-                            # Update identifiers - need to remove old and add new
-                            device_registry.async_update_device(
-                                device.id,
-                                new_identifiers={(DOMAIN, new_serial)}
-                            )
+                            self._attr_device_info["identifiers"] = {(DOMAIN, new_serial)}
                         if new_firmware:
-                            device_registry.async_update_device(device.id, sw_version=new_firmware)
+                            self._attr_device_info["sw_version"] = new_firmware
                         if new_manufacturer:
-                            device_registry.async_update_device(device.id, manufacturer=new_manufacturer)
+                            self._attr_device_info["manufacturer"] = new_manufacturer
                         if new_model:
-                            device_registry.async_update_device(device.id, model=new_model)
-                        _LOGGER.info("Updated device registry for %s", self._attr_unique_id)
+                            self._attr_device_info["model"] = new_model
+                        
+                        _LOGGER.info("Updated device_info for %s with trait data: serial=%s, fw=%s", 
+                                   self._attr_unique_id, new_serial, new_firmware)
+                        
+                        # Update device registry so HA UI reflects the changes
+                        # Device registry methods are thread-safe and can be called from callbacks
+                        try:
+                            device_registry = dr.async_get(self.hass)
+                            # Find device by current identifiers (device_id)
+                            device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
+                            
+                            if device:
+                                update_kwargs = {}
+                                if new_serial:
+                                    update_kwargs["new_identifiers"] = {(DOMAIN, new_serial)}
+                                if new_firmware:
+                                    update_kwargs["sw_version"] = new_firmware
+                                if new_manufacturer:
+                                    update_kwargs["manufacturer"] = new_manufacturer
+                                if new_model:
+                                    update_kwargs["model"] = new_model
+                                
+                                if update_kwargs:
+                                    device_registry.async_update_device(device.id, **update_kwargs)
+                                    _LOGGER.info("Updated device registry for %s: %s", self._attr_unique_id, update_kwargs)
+                            else:
+                                _LOGGER.warning("Could not find device in registry for %s (device_id=%s, serial=%s)", 
+                                              self._attr_unique_id, self._device_id, new_serial)
+                        except Exception as e:
+                            _LOGGER.error("Error updating device registry for %s: %s", self._attr_unique_id, e, exc_info=True)
+                        
+                        self._device_info_updated = True
             
             # Update bolt_moving based on actuator state
             if "actuator_state" in new_data:
