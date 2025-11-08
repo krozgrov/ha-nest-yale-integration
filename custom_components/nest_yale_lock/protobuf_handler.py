@@ -179,13 +179,18 @@ class NestProtobufHandler:
                     if not type_url and 7 in get_op:
                         type_url = "weave.trait.security.BoltLockTrait"
 
-                    _LOGGER.debug("Extracting `%s` for `%s` with key `%s`", type_url, obj_id, obj_key)
-
                     # Determine if this is a lock device, structure, or user (all should be processed)
                     # Skip processing traits for non-lock devices (thermostats, cameras, etc.)
                     is_lock_device = obj_id in lock_device_ids if obj_id else False
                     is_structure_or_user = obj_id and (obj_id.startswith("STRUCTURE_") or obj_id.startswith("USER_"))
                     should_process = is_lock_device or is_structure_or_user or not obj_id
+                    
+                    # Only log and process traits for devices we care about
+                    if should_process:
+                        _LOGGER.debug("Extracting `%s` for `%s` with key `%s`", type_url, obj_id, obj_key)
+                    elif obj_id and obj_id.startswith("DEVICE_"):
+                        # Silently skip non-lock devices (reduce log noise)
+                        continue
                     
                     # Only process HomeKit traits (DeviceIdentityTrait, BatteryPowerSourceTrait) for lock devices
                     # Also process StructureInfoTrait and UserInfoTrait for metadata
