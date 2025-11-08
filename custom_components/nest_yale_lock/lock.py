@@ -241,16 +241,18 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             self._structure_id = self._coordinator.api_client.structure_id
             
             # Update device_info if we have trait data with better metadata (only once)
-            if not self._device_info_updated:
-                traits = self._device.get("traits", {})
-                device_identity = traits.get("DeviceIdentityTrait", {})
-                if device_identity:
-                    new_serial = device_identity.get("serial_number")
-                    new_firmware = device_identity.get("firmware_version")
-                    new_manufacturer = device_identity.get("manufacturer")
-                    new_model = device_identity.get("model")
-                    
-                    if new_serial or new_firmware:
+            traits = self._device.get("traits", {})
+            device_identity = traits.get("DeviceIdentityTrait", {})
+            if device_identity and not self._device_info_updated:
+                new_serial = device_identity.get("serial_number")
+                new_firmware = device_identity.get("firmware_version")
+                new_manufacturer = device_identity.get("manufacturer")
+                new_model = device_identity.get("model")
+                
+                _LOGGER.debug("Processing trait data for %s: serial=%s, fw=%s, manufacturer=%s, model=%s, device_info_updated=%s",
+                             self._attr_unique_id, new_serial, new_firmware, new_manufacturer, new_model, self._device_info_updated)
+                
+                if new_serial or new_firmware:
                         # Update _attr_device_info (but keep device_id as identifier to prevent duplicates)
                         if new_firmware:
                             self._attr_device_info["sw_version"] = new_firmware
@@ -266,12 +268,18 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                         # Use serial number as primary identifier if available, device_id as secondary
                         try:
                             device_registry = dr.async_get(self.hass)
+                            _LOGGER.debug("Looking up device in registry for %s: device_id=%s, serial=%s", 
+                                         self._attr_unique_id, self._device_id, new_serial)
+                            
                             # Find device by checking both device_id and serial number
                             device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
                             if not device and new_serial:
+                                _LOGGER.debug("Device not found by device_id, trying serial number")
                                 device = device_registry.async_get_device(identifiers={(DOMAIN, new_serial)})
                             
                             if device:
+                                _LOGGER.debug("Found device in registry: id=%s, identifiers=%s, sw_version=%s", 
+                                             device.id, device.identifiers, device.sw_version)
                                 update_kwargs = {}
                                 # Update identifiers: use serial as primary, device_id as secondary
                                 # Home Assistant uses the first identifier as the "primary" one shown in Device Info
