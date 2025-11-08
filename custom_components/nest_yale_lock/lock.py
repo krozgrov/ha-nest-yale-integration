@@ -90,7 +90,7 @@ class NestYaleLock(NestYaleEntity, LockEntity):
 
     @property
     def extra_state_attributes(self):
-        """Return extra state attributes."""
+        """Return extra state attributes in logical order."""
         # Get serial number from identifiers (prefer serial number over device_id)
         identifiers = self._attr_device_info["identifiers"]
         serial_number = self._device_id  # Default to device_id
@@ -98,14 +98,6 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             if domain == DOMAIN and identifier != self._device_id:
                 serial_number = identifier  # Use non-device_id identifier (should be serial number)
                 break
-        attrs = {
-            "device_id": self._device_id,
-            "bolt_moving": self._bolt_moving,
-            "serial_number": serial_number,
-            "firmware_revision": self._attr_device_info.get("sw_version", "unknown"),
-            "user_id": self._user_id,
-            "structure_id": self._structure_id,
-        }
         
         # Extract trait data from device
         traits = self._device_data.get("traits", {})
@@ -114,15 +106,28 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         device_identity = traits.get("DeviceIdentityTrait", {})
         if device_identity:
             if device_identity.get("serial_number"):
-                attrs["serial_number"] = device_identity["serial_number"]
+                serial_number = device_identity["serial_number"]
             if device_identity.get("firmware_version"):
-                attrs["firmware_revision"] = device_identity["firmware_version"]
-            if device_identity.get("manufacturer"):
-                attrs["manufacturer"] = device_identity["manufacturer"]
-            if device_identity.get("model"):
-                attrs["model"] = device_identity["model"]
+                firmware_revision = device_identity["firmware_version"]
+            else:
+                firmware_revision = self._attr_device_info.get("sw_version", "unknown")
+        else:
+            firmware_revision = self._attr_device_info.get("sw_version", "unknown")
         
-        # BatteryPowerSourceTrait data - only include if we have actual values
+        # Build attributes in logical order:
+        # 1. Bolt Moving
+        # 2. Battery info (all battery-related attributes grouped)
+        # 3. Structure ID
+        # 4. Device ID
+        # 5. User ID
+        # 6. Firmware
+        # 7. Serial Number
+        attrs = {
+            # 1. Bolt Moving
+            "bolt_moving": self._bolt_moving,
+        }
+        
+        # 2. Battery info - group all battery attributes together
         battery_trait = traits.get("BatteryPowerSourceTrait", {})
         if battery_trait:
             if battery_trait.get("battery_level") is not None:
@@ -142,6 +147,28 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                 attrs["battery_status"] = battery_trait["status"]
             if battery_trait.get("replacement_indicator") is not None:
                 attrs["battery_replacement_indicator"] = battery_trait["replacement_indicator"]
+        
+        # 3. Structure ID
+        attrs["structure_id"] = self._structure_id
+        
+        # 4. Device ID
+        attrs["device_id"] = self._device_id
+        
+        # 5. User ID
+        attrs["user_id"] = self._user_id
+        
+        # 6. Firmware
+        attrs["firmware_revision"] = firmware_revision
+        
+        # 7. Serial Number
+        attrs["serial_number"] = serial_number
+        
+        # Additional device identity attributes (if available)
+        if device_identity:
+            if device_identity.get("manufacturer"):
+                attrs["manufacturer"] = device_identity["manufacturer"]
+            if device_identity.get("model"):
+                attrs["model"] = device_identity["model"]
         
         _LOGGER.debug("Extra state attributes for %s: %s", self._attr_unique_id, attrs)
         return attrs
