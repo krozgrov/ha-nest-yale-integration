@@ -253,20 +253,20 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                              self._attr_unique_id, new_serial, new_firmware, new_manufacturer, new_model, self._device_info_updated)
                 
                 if new_serial or new_firmware:
-                        # Update _attr_device_info (but keep device_id as identifier to prevent duplicates)
-                        if new_firmware:
-                            self._attr_device_info["sw_version"] = new_firmware
-                        if new_manufacturer:
-                            self._attr_device_info["manufacturer"] = new_manufacturer
-                        if new_model:
-                            self._attr_device_info["model"] = new_model
+                    # Update _attr_device_info (but keep device_id as identifier to prevent duplicates)
+                    if new_firmware:
+                        self._attr_device_info["sw_version"] = new_firmware
+                    if new_manufacturer:
+                        self._attr_device_info["manufacturer"] = new_manufacturer
+                    if new_model:
+                        self._attr_device_info["model"] = new_model
+                    
+                    _LOGGER.info("Updated device_info for %s with trait data: serial=%s, fw=%s", 
+                               self._attr_unique_id, new_serial, new_firmware)
                         
-                        _LOGGER.info("Updated device_info for %s with trait data: serial=%s, fw=%s", 
-                                   self._attr_unique_id, new_serial, new_firmware)
-                        
-                        # Update device registry so HA UI reflects the changes
-                        # Use serial number as primary identifier if available, device_id as secondary
-                        try:
+                    # Update device registry so HA UI reflects the changes
+                    # Use serial number as primary identifier if available, device_id as secondary
+                    try:
                             device_registry = dr.async_get(self.hass)
                             _LOGGER.debug("Looking up device in registry for %s: device_id=%s, serial=%s", 
                                          self._attr_unique_id, self._device_id, new_serial)
@@ -335,17 +335,17 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                                     self._attr_device_info["manufacturer"] = new_manufacturer
                                 if new_model:
                                     self._attr_device_info["model"] = new_model
-                        except Exception as e:
-                            _LOGGER.error("Error updating device registry for %s: %s", self._attr_unique_id, e, exc_info=True)
-                            # Still update _attr_device_info even if registry update fails
-                            if new_firmware:
-                                self._attr_device_info["sw_version"] = new_firmware
-                            if new_manufacturer:
-                                self._attr_device_info["manufacturer"] = new_manufacturer
-                            if new_model:
-                                self._attr_device_info["model"] = new_model
-                        
-                        self._device_info_updated = True
+                    except Exception as e:
+                        _LOGGER.error("Error updating device registry for %s: %s", self._attr_unique_id, e, exc_info=True)
+                        # Still update _attr_device_info even if registry update fails
+                        if new_firmware:
+                            self._attr_device_info["sw_version"] = new_firmware
+                        if new_manufacturer:
+                            self._attr_device_info["manufacturer"] = new_manufacturer
+                        if new_model:
+                            self._attr_device_info["model"] = new_model
+                    
+                    self._device_info_updated = True
             
             # Update bolt_moving based on actuator state
             if "actuator_state" in new_data:
