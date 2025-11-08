@@ -1,6 +1,4 @@
 import logging
-import asyncio
-import os
 from google.protobuf.message import DecodeError
 from google.protobuf.any_pb2 import Any
 from base64 import b64decode
@@ -9,14 +7,6 @@ import binascii
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 from .proto.nest.trait import structure_pb2 as nest_structure_pb2
 from .proto.nest import rpc_pb2 as rpc_pb2
-from .protobuf_manager import read_protobuf_file
-
-from .const import (
-    USER_AGENT_STRING,
-    URL_PROTOBUF,
-    ENDPOINT_OBSERVE,
-    PRODUCTION_HOSTNAME,
-)
 
 _LOGGER = logging.getLogger(__name__)
 

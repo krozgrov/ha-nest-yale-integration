@@ -6,7 +6,9 @@ An integration for Home Assistant that connects your Google Nest x Yale Lock, en
 
 - Real-time Yale lock state via Nest Observe stream
 - Manual lock / unlock commands
-- Serial number, firmware, and basic diagnostics attributes 
+- Battery level sensor entity with percentage display
+- Serial number, firmware, and device information in Device Info card
+- Comprehensive device attributes (battery status, device ID, structure ID, etc.) 
 
 ## Status
 
