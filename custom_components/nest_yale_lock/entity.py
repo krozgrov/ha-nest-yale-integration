@@ -86,6 +86,22 @@ class NestYaleEntity(CoordinatorEntity):
                    self._attr_unique_id, new_serial, new_firmware)
         
         # Update device registry so HA UI reflects the changes
+        # Only update registry if entity has been added to hass (self.hass is available)
+        if not hasattr(self, 'hass') or self.hass is None:
+            _LOGGER.debug("Entity %s not yet added to hass, skipping device registry update", self._attr_unique_id)
+            # Still update _attr_device_info even if not in hass yet
+            if new_serial:
+                self._attr_device_info["identifiers"] = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
+                self._attr_device_info["serial_number"] = new_serial
+            if new_firmware:
+                self._attr_device_info["sw_version"] = new_firmware
+            if new_manufacturer:
+                self._attr_device_info["manufacturer"] = new_manufacturer
+            if new_model:
+                self._attr_device_info["model"] = new_model
+            self._device_info_updated = True
+            return
+        
         try:
             device_registry = dr.async_get(self.hass)
             _LOGGER.debug("Looking up device in registry for %s: device_id=%s, serial=%s", 
