@@ -313,6 +313,11 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                                 update_kwargs["model"] = new_model
                                 _LOGGER.info("Updating device model: %s -> %s", device.model, new_model)
                             
+                            # Update serial_number field (this is what shows in Device Info card per HA docs)
+                            if new_serial and device.serial_number != new_serial:
+                                update_kwargs["serial_number"] = new_serial
+                                _LOGGER.info("Updating device serial_number: %s -> %s", device.serial_number, new_serial)
+                            
                             if update_kwargs:
                                 device_registry.async_update_device(device.id, **update_kwargs)
                                 _LOGGER.info("✅ Successfully updated device registry for %s: %s", self._attr_unique_id, update_kwargs)
