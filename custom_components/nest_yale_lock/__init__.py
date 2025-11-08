@@ -51,7 +51,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.warning("Initial data still empty; continuing setup and waiting for observer updates")
     except Exception as e:
         _LOGGER.error("Failed to initialize API client or coordinator: %s", e, exc_info=True)
-        return False
+        raise ConfigEntryNotReady(f"Failed to initialize: {e}") from e
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     hass.data[DOMAIN].setdefault("entities", [])

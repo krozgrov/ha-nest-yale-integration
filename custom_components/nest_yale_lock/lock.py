@@ -46,18 +46,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entry.async_on_unload(cancel)
 
 class NestYaleLock(CoordinatorEntity, LockEntity):
+    """Representation of a Nest Yale Lock."""
+    
     def __init__(self, coordinator, device):
+        """Initialize the lock entity."""
         super().__init__(coordinator)
         self._coordinator = coordinator
         self._device = device.copy()
-        self._device["bolt_moving"] = False
-        self._device["bolt_moving_to"] = None
+        # Store internal state as entity attributes, not in device dict
+        self._bolt_moving = False
+        self._bolt_moving_to: bool | None = None
         self._device_id = device.get("device_id")
         self._attr_unique_id = f"{DOMAIN}_{self._device_id}"
         metadata = self._coordinator.api_client.get_device_metadata(self._device_id)
         self._attr_name = metadata["name"]
-        # Always use device_id as the identifier to prevent duplicate devices
-        # Serial number will be added via device registry update when trait data arrives
+        # Use device_id as stable identifier (never change it)
+        # Serial number will be added as secondary identifier when trait data arrives
         self._attr_device_info = {
             "identifiers": {(DOMAIN, self._device_id)},
             "manufacturer": "Nest",
@@ -67,7 +71,7 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         }
         self._attr_has_entity_name = False
         self._attr_should_poll = False
-        self._state = None
+        self._state: LockState | None = None
         self._user_id = self._coordinator.api_client.user_id
         self._structure_id = self._coordinator.api_client.structure_id
         self._device_info_updated = False  # Track if we've updated device_info from traits
@@ -88,22 +92,25 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
 
     @property
     def is_locking(self):
-        state = self._device.get("bolt_moving", False) and self._device.get("bolt_moving_to", False)
+        """Return true if lock is currently locking."""
+        state = self._bolt_moving and self._bolt_moving_to is True
         _LOGGER.debug("is_locking check for %s: %s", self._attr_unique_id, state)
         return state
 
     @property
     def is_unlocking(self):
-        state = self._device.get("bolt_moving", False) and not self._device.get("bolt_moving_to", True)
+        """Return true if lock is currently unlocking."""
+        state = self._bolt_moving and self._bolt_moving_to is False
         _LOGGER.debug("is_unlocking check for %s: %s", self._attr_unique_id, state)
         return state
 
     @property
     def extra_state_attributes(self):
+        """Return extra state attributes."""
         # Get serial number from identifiers (may be device_id initially, serial_number when trait data arrives)
         serial_number = next(iter(self._attr_device_info["identifiers"]))[1]
         attrs = {
-            "bolt_moving": self._device.get("bolt_moving", False),
+            "bolt_moving": self._bolt_moving,
             "serial_number": serial_number,
             "firmware_revision": self._attr_device_info.get("sw_version", "unknown"),
             "user_id": self._user_id,
@@ -190,16 +197,17 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                 return
 
             # Set optimistic state - the observe stream will confirm the actual state
-            self._device["bolt_moving"] = True
-            self._device["bolt_moving_to"] = lock
+            self._bolt_moving = True
+            self._bolt_moving_to = lock
             self.async_write_ha_state()
             _LOGGER.info("Command %s sent successfully for %s, waiting for observe stream to confirm state change",
                          "lock" if lock else "unlock", self._attr_unique_id)
 
         except Exception as e:
             _LOGGER.error("Command failed for %s: %s", self._attr_unique_id, e, exc_info=True)
-            self._device["bolt_moving"] = False
-            self.async_schedule_update_ha_state()  # Replace force_refresh
+            self._bolt_moving = False
+            self._bolt_moving_to = None
+            self.async_schedule_update_ha_state()
             raise
 
     async def async_added_to_hass(self):
@@ -240,17 +248,20 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                                    self._attr_unique_id, new_serial, new_firmware)
                         
                         # Update device registry so HA UI reflects the changes
-                        # Use device_id to find device, then update with serial number as new identifier
+                        # Best practice: Keep device_id as primary identifier, add serial as secondary
                         try:
                             device_registry = dr.async_get(self.hass)
-                            # Find device by device_id (our consistent identifier)
+                            # Find device by device_id (our stable identifier)
                             device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
                             
                             if device:
                                 update_kwargs = {}
-                                # Update identifier to serial number if we have it (this is what shows in Device Info)
-                                if new_serial and device.identifiers != {(DOMAIN, new_serial)}:
-                                    update_kwargs["new_identifiers"] = {(DOMAIN, new_serial)}
+                                # Add serial number as secondary identifier (Home Assistant supports multiple identifiers)
+                                if new_serial:
+                                    current_identifiers = set(device.identifiers)
+                                    new_identifiers = current_identifiers | {(DOMAIN, new_serial)}
+                                    if new_identifiers != current_identifiers:
+                                        update_kwargs["new_identifiers"] = new_identifiers
                                 if new_firmware and device.sw_version != new_firmware:
                                     update_kwargs["sw_version"] = new_firmware
                                 if new_manufacturer and device.manufacturer != new_manufacturer:
@@ -261,9 +272,15 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                                 if update_kwargs:
                                     device_registry.async_update_device(device.id, **update_kwargs)
                                     _LOGGER.info("Updated device registry for %s: %s", self._attr_unique_id, update_kwargs)
-                                    # Also update _attr_device_info identifiers to match registry
+                                    # Update _attr_device_info to match registry (for device_info property)
                                     if new_serial:
-                                        self._attr_device_info["identifiers"] = {(DOMAIN, new_serial)}
+                                        self._attr_device_info["identifiers"] = {(DOMAIN, self._device_id), (DOMAIN, new_serial)}
+                                    if new_firmware:
+                                        self._attr_device_info["sw_version"] = new_firmware
+                                    if new_manufacturer:
+                                        self._attr_device_info["manufacturer"] = new_manufacturer
+                                    if new_model:
+                                        self._attr_device_info["model"] = new_model
                             else:
                                 _LOGGER.warning("Could not find device in registry for %s (device_id=%s, serial=%s)", 
                                               self._attr_unique_id, self._device_id, new_serial)
@@ -275,17 +292,16 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             # Update bolt_moving based on actuator state
             if "actuator_state" in new_data:
                 actuator_state = new_data["actuator_state"]
-                self._device["bolt_moving"] = actuator_state not in [weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_OK]
-            elif "bolt_moving" in new_data:
-                self._device["bolt_moving"] = new_data["bolt_moving"]
+                self._bolt_moving = actuator_state not in [weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_OK]
             else:
-                self._device["bolt_moving"] = False
+                # Clear optimistic state when we get a real update
+                self._bolt_moving = False
             
             # Clear optimistic state when we get a real update
             if old_bolt_locked != self._device.get("bolt_locked", False):
                 # State actually changed, clear optimistic flags
-                self._device["bolt_moving"] = False
-                self._device["bolt_moving_to"] = None
+                self._bolt_moving = False
+                self._bolt_moving_to = None
                 _LOGGER.info("Lock state changed for %s: %s -> %s", self._attr_unique_id, 
                             "locked" if old_bolt_locked else "unlocked",
                             "locked" if self._device.get("bolt_locked", False) else "unlocked")
@@ -304,30 +320,32 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             _LOGGER.debug("Updated lock state for %s: old=%s, new=%s", self._attr_unique_id, old_state, self._device)
         else:
             _LOGGER.debug("No updated data for lock %s in coordinator", self._attr_unique_id)
-            self._device["bolt_moving"] = False
-            self._device["bolt_moving_to"] = None
+            self._bolt_moving = False
+            self._bolt_moving_to = None
             self.async_write_ha_state()
 
     async def _clear_bolt_moving(self):
+        """Clear bolt_moving state after delay."""
         await asyncio.sleep(5)
-        self._device["bolt_moving"] = False
-        self.async_schedule_update_ha_state()  # Replace force_refresh
+        self._bolt_moving = False
+        self.async_schedule_update_ha_state()
         _LOGGER.debug("Cleared bolt_moving for %s after delay", self._attr_unique_id)
 
     @property
-    def available(self):
+    def available(self) -> bool:
+        """Return if entity is available."""
         available = bool(self._device) and self._coordinator.last_update_success
         _LOGGER.debug("Availability check for %s: %s", self._attr_unique_id, available)
         return available
 
     @property
-    def device_info(self):
-        # Return dynamic device_info that includes trait data if available
-        # Always use the current _attr_device_info which is updated when trait data arrives
+    def device_info(self) -> dict:
+        """Return device information."""
         return self._attr_device_info.copy()
 
     @property
-    def state(self):
+    def state(self) -> LockState:
+        """Return the current lock state."""
         if self.is_locking:
             return LockState.LOCKING
         elif self.is_unlocking:
@@ -336,9 +354,12 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             return LockState.LOCKED
         return LockState.UNLOCKED
 
-    async def async_update(self):
+    async def async_update(self) -> None:
+        """Update entity state."""
         _LOGGER.debug("Forcing update for %s", self._attr_unique_id)
         await self._coordinator.async_request_refresh()
 
-    async def async_will_remove_from_hass(self):
+    async def async_will_remove_from_hass(self) -> None:
+        """Run when entity will be removed from Home Assistant."""
         _LOGGER.debug("Removing entity %s from HA", self._attr_unique_id)
+        await super().async_will_remove_from_hass()

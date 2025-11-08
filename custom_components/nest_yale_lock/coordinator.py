@@ -56,13 +56,12 @@ class NestCoordinator(DataUpdateCoordinator):
             for device_id, device in normalized_data.items():
                 # Ensure required fields exist even if absent in payload
                 device.setdefault("device_id", device_id)
-                device["bolt_moving"] = device.get("bolt_moving", False)
+                # Remove bolt_moving from device dict - it's now entity state
+                device.pop("bolt_moving", None)
             _LOGGER.debug("Normalized data from refresh_state: %s", normalized_data)
             return normalized_data
         except Exception as e:
             _LOGGER.error("Failed to update data: %s", e, exc_info=True)
-            for device in self.data.values():
-                device["bolt_moving"] = False
             return self.data
 
     async def _run_observer(self):
@@ -83,7 +82,8 @@ class NestCoordinator(DataUpdateCoordinator):
                             device.setdefault("device_id", device_id)
                             if "actuatorState" in device:
                                 device["actuator_state"] = device["actuatorState"]
-                            device["bolt_moving"] = device.get("bolt_moving", False)
+                            # Remove bolt_moving from device dict - it's now entity state
+                            device.pop("bolt_moving", None)
                             
                             # Extract trait data for this device from all_traits
                             device_traits = {}
@@ -105,13 +105,9 @@ class NestCoordinator(DataUpdateCoordinator):
                                       normalized_update, self.api_client.current_state["user_id"])
                     else:
                         _LOGGER.debug("Normalized observer update is empty: %s", normalized_update)
-                        for device in self.data.values():
-                            device["bolt_moving"] = False
                         self.async_set_updated_data(self.data)
                 else:
                     _LOGGER.debug("Observer update received but is empty.")
-                    for device in self.data.values():
-                        device["bolt_moving"] = False
                     self.async_set_updated_data(self.data)
         except Exception as e:
             _LOGGER.error("Observer failed: %s", e, exc_info=True)
