@@ -407,11 +407,15 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         traits = self._device.get("traits", {})
         device_identity = traits.get("DeviceIdentityTrait", {})
         if device_identity:
-            if device_identity.get("firmware_version") and device_info.get("sw_version") == "unknown":
+            if device_identity.get("firmware_version"):
                 device_info["sw_version"] = device_identity["firmware_version"]
             if device_identity.get("serial_number"):
                 serial = device_identity["serial_number"]
+                # Ensure serial number is the primary identifier (first in set)
+                # Home Assistant shows the first identifier as the serial number in Device Info
                 device_info["identifiers"] = {(DOMAIN, serial), (DOMAIN, self._device_id)}
+                _LOGGER.debug("device_info property for %s: identifiers=%s, sw_version=%s", 
+                             self._attr_unique_id, device_info["identifiers"], device_info.get("sw_version"))
             if device_identity.get("manufacturer"):
                 device_info["manufacturer"] = device_identity["manufacturer"]
             if device_identity.get("model"):
