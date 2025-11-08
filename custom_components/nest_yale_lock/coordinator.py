@@ -85,7 +85,7 @@ class NestCoordinator(DataUpdateCoordinator):
                                 device["actuator_state"] = device["actuatorState"]
                             device["bolt_moving"] = device.get("bolt_moving", False)
                             
-                            # Extract trait data for this device
+                            # Extract trait data for this device from all_traits
                             device_traits = {}
                             for trait_key, trait_info in all_traits.items():
                                 if trait_key.startswith(f"{device_id}:"):
@@ -94,7 +94,9 @@ class NestCoordinator(DataUpdateCoordinator):
                                         device_traits[trait_name] = trait_info["data"]
                             if device_traits:
                                 device["traits"] = device_traits
-                                _LOGGER.debug("Added trait data to device %s: %s", device_id, device_traits)
+                                _LOGGER.info("Added trait data to device %s: %s", device_id, list(device_traits.keys()))
+                            else:
+                                _LOGGER.debug("No trait data found for device %s in all_traits (keys: %s)", device_id, list(all_traits.keys())[:5])
                         
                         self.api_client.current_state["user_id"] = update.get("user_id")  # Persist user_id
                         self.api_client.current_state["all_traits"] = all_traits  # Persist trait data

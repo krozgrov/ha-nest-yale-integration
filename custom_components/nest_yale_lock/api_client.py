@@ -375,7 +375,8 @@ class NestAPIClient:
                                 if old_structure_id != self._structure_id:
                                     _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
                             self.transport_url = base_url
-                        yield locks_data.get("yale", {})
+                        # Yield full locks_data including all_traits so coordinator can extract trait data
+                        yield locks_data
                     _LOGGER.warning("Observe stream finished for %s; reconnecting", api_url)
                     self.connection.connected = False
                 except asyncio.TimeoutError:
