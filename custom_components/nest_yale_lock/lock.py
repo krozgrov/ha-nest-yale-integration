@@ -5,6 +5,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from .const import DOMAIN, COMMAND_ERROR_CODE_FAILED
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 
@@ -217,24 +218,47 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             device_identity = traits.get("DeviceIdentityTrait", {})
             if device_identity:
                 updated = False
-                if device_identity.get("serial_number"):
+                new_serial = device_identity.get("serial_number")
+                new_firmware = device_identity.get("firmware_version")
+                new_manufacturer = device_identity.get("manufacturer")
+                new_model = device_identity.get("model")
+                
+                if new_serial:
                     # Update identifiers with actual serial number
-                    self._attr_device_info["identifiers"] = {(DOMAIN, device_identity["serial_number"])}
+                    self._attr_device_info["identifiers"] = {(DOMAIN, new_serial)}
                     updated = True
-                if device_identity.get("firmware_version"):
-                    self._attr_device_info["sw_version"] = device_identity["firmware_version"]
+                if new_firmware:
+                    self._attr_device_info["sw_version"] = new_firmware
                     updated = True
-                if device_identity.get("manufacturer"):
-                    self._attr_device_info["manufacturer"] = device_identity["manufacturer"]
+                if new_manufacturer:
+                    self._attr_device_info["manufacturer"] = new_manufacturer
                     updated = True
-                if device_identity.get("model"):
-                    self._attr_device_info["model"] = device_identity["model"]
+                if new_model:
+                    self._attr_device_info["model"] = new_model
                     updated = True
+                
                 if updated:
                     _LOGGER.info("Updated device_info for %s with trait data: serial=%s, fw=%s", 
-                               self._attr_unique_id, 
-                               device_identity.get("serial_number"),
-                               device_identity.get("firmware_version"))
+                               self._attr_unique_id, new_serial, new_firmware)
+                    
+                    # Update device registry so HA UI reflects the changes
+                    device_registry = dr.async_get(self.hass)
+                    device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
+                    if device:
+                        updates = {}
+                        if new_serial:
+                            # Update identifiers - need to remove old and add new
+                            device_registry.async_update_device(
+                                device.id,
+                                new_identifiers={(DOMAIN, new_serial)}
+                            )
+                        if new_firmware:
+                            device_registry.async_update_device(device.id, sw_version=new_firmware)
+                        if new_manufacturer:
+                            device_registry.async_update_device(device.id, manufacturer=new_manufacturer)
+                        if new_model:
+                            device_registry.async_update_device(device.id, model=new_model)
+                        _LOGGER.info("Updated device registry for %s", self._attr_unique_id)
             
             # Update bolt_moving based on actuator state
             if "actuator_state" in new_data:
