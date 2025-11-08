@@ -212,6 +212,30 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             self._user_id = self._coordinator.api_client.user_id
             self._structure_id = self._coordinator.api_client.structure_id
             
+            # Update device_info if we have trait data with better metadata
+            traits = self._device.get("traits", {})
+            device_identity = traits.get("DeviceIdentityTrait", {})
+            if device_identity:
+                updated = False
+                if device_identity.get("serial_number"):
+                    # Update identifiers with actual serial number
+                    self._attr_device_info["identifiers"] = {(DOMAIN, device_identity["serial_number"])}
+                    updated = True
+                if device_identity.get("firmware_version"):
+                    self._attr_device_info["sw_version"] = device_identity["firmware_version"]
+                    updated = True
+                if device_identity.get("manufacturer"):
+                    self._attr_device_info["manufacturer"] = device_identity["manufacturer"]
+                    updated = True
+                if device_identity.get("model"):
+                    self._attr_device_info["model"] = device_identity["model"]
+                    updated = True
+                if updated:
+                    _LOGGER.info("Updated device_info for %s with trait data: serial=%s, fw=%s", 
+                               self._attr_unique_id, 
+                               device_identity.get("serial_number"),
+                               device_identity.get("firmware_version"))
+            
             # Update bolt_moving based on actuator state
             if "actuator_state" in new_data:
                 actuator_state = new_data["actuator_state"]
