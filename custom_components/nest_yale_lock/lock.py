@@ -436,7 +436,7 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             if device_identity.get("model"):
                 device_info["model"] = device_identity["model"]
         
-        return DeviceInfo(device_info)
+        return device_info
 
     @property
     def state(self) -> LockState:
