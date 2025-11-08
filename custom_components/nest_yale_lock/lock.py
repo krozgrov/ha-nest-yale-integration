@@ -6,6 +6,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.device_registry import DeviceInfo
 from .const import DOMAIN, COMMAND_ERROR_CODE_FAILED
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 
@@ -70,6 +71,8 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             identifiers = {(DOMAIN, primary_identifier), (DOMAIN, self._device_id)}  # Serial first (primary)
         else:
             identifiers = {(DOMAIN, self._device_id)}  # Only device_id if no serial yet
+        # Set serial_number if available (separate from identifiers - this is what shows in Device Info card)
+        serial_number = metadata.get("serial_number") if metadata.get("serial_number") != self._device_id else None
         self._attr_device_info = {
             "identifiers": identifiers,
             "manufacturer": "Nest",
@@ -77,6 +80,8 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             "name": self._attr_name,
             "sw_version": metadata["firmware_revision"],
         }
+        if serial_number:
+            self._attr_device_info["serial_number"] = serial_number
         _LOGGER.debug("Initial device_info for %s: identifiers=%s, sw_version=%s", 
                      self._attr_unique_id, identifiers, metadata["firmware_revision"])
         self._attr_has_entity_name = False
@@ -317,6 +322,7 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                             # Always update _attr_device_info to match latest trait data (for device_info property)
                             if new_serial:
                                 self._attr_device_info["identifiers"] = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
+                                self._attr_device_info["serial_number"] = new_serial  # This is what shows in Device Info card
                             if new_firmware:
                                 self._attr_device_info["sw_version"] = new_firmware
                             if new_manufacturer:
@@ -329,6 +335,7 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                             # Still update _attr_device_info even if device not found in registry
                             if new_serial:
                                 self._attr_device_info["identifiers"] = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
+                                self._attr_device_info["serial_number"] = new_serial  # This is what shows in Device Info card
                             if new_firmware:
                                 self._attr_device_info["sw_version"] = new_firmware
                             if new_manufacturer:
@@ -338,6 +345,8 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                     except Exception as e:
                         _LOGGER.error("Error updating device registry for %s: %s", self._attr_unique_id, e, exc_info=True)
                         # Still update _attr_device_info even if registry update fails
+                        if new_serial:
+                            self._attr_device_info["serial_number"] = new_serial  # This is what shows in Device Info card
                         if new_firmware:
                             self._attr_device_info["sw_version"] = new_firmware
                         if new_manufacturer:
@@ -397,7 +406,7 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         return available
 
     @property
-    def device_info(self) -> dict:
+    def device_info(self) -> DeviceInfo:
         """Return device information."""
         # Always return current device_info, which is updated when trait data arrives
         # This ensures Device Info card shows the latest information
@@ -411,17 +420,18 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                 device_info["sw_version"] = device_identity["firmware_version"]
             if device_identity.get("serial_number"):
                 serial = device_identity["serial_number"]
-                # Ensure serial number is the primary identifier (first in set)
-                # Home Assistant shows the first identifier as the serial number in Device Info
+                # Set serial_number field (this is what shows in Device Info card per HA docs)
+                device_info["serial_number"] = serial
+                # Also update identifiers
                 device_info["identifiers"] = {(DOMAIN, serial), (DOMAIN, self._device_id)}
-                _LOGGER.debug("device_info property for %s: identifiers=%s, sw_version=%s", 
-                             self._attr_unique_id, device_info["identifiers"], device_info.get("sw_version"))
+                _LOGGER.debug("device_info property for %s: serial_number=%s, identifiers=%s, sw_version=%s", 
+                             self._attr_unique_id, serial, device_info["identifiers"], device_info.get("sw_version"))
             if device_identity.get("manufacturer"):
                 device_info["manufacturer"] = device_identity["manufacturer"]
             if device_identity.get("model"):
                 device_info["model"] = device_identity["model"]
         
-        return device_info
+        return DeviceInfo(device_info)
 
     @property
     def state(self) -> LockState:
