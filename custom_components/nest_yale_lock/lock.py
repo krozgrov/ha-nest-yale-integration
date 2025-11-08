@@ -1,13 +1,11 @@
 import logging
 import asyncio
 from homeassistant.components.lock import LockEntity, LockState
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.device_registry import DeviceInfo
 from .const import DOMAIN, COMMAND_ERROR_CODE_FAILED
+from .entity import NestYaleEntity
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,62 +44,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     # Ensure listener removal on unload
     entry.async_on_unload(cancel)
 
-class NestYaleLock(CoordinatorEntity, LockEntity):
+class NestYaleLock(NestYaleEntity, LockEntity):
     """Representation of a Nest Yale Lock."""
     
     def __init__(self, coordinator, device):
         """Initialize the lock entity."""
-        super().__init__(coordinator)
-        self._coordinator = coordinator
-        self._device = device.copy()
+        device_id = device.get("device_id")
+        super().__init__(coordinator, device_id, device)
         # Store internal state as entity attributes, not in device dict
         self._bolt_moving = False
         self._bolt_moving_to: bool | None = None
-        self._device_id = device.get("device_id")
-        metadata = self._coordinator.api_client.get_device_metadata(self._device_id)
-        self._attr_name = metadata["name"]
-        # Use serial number as primary identifier if available (from trait data), otherwise use device_id
-        # This ensures Device Info card shows the correct serial number
-        # Home Assistant uses the first identifier in the set as the "primary" one
-        primary_identifier = metadata.get("serial_number") if metadata.get("serial_number") != self._device_id else self._device_id
-        self._attr_unique_id = f"{DOMAIN}_{self._device_id}"  # Always use device_id for unique_id (stable)
-        # Device info uses serial number as primary identifier if available
-        # Put serial number first so it's the primary identifier shown in Device Info card
-        if primary_identifier != self._device_id:
-            identifiers = {(DOMAIN, primary_identifier), (DOMAIN, self._device_id)}  # Serial first (primary)
-        else:
-            identifiers = {(DOMAIN, self._device_id)}  # Only device_id if no serial yet
-        # Set serial_number if available (separate from identifiers - this is what shows in Device Info card)
-        serial_number = metadata.get("serial_number") if metadata.get("serial_number") != self._device_id else None
-        self._attr_device_info = {
-            "identifiers": identifiers,
-            "manufacturer": "Nest",
-            "model": "Nest x Yale Lock",
-            "name": self._attr_name,
-            "sw_version": metadata["firmware_revision"],
-        }
-        if serial_number:
-            self._attr_device_info["serial_number"] = serial_number
-        _LOGGER.debug("Initial device_info for %s: identifiers=%s, sw_version=%s", 
-                     self._attr_unique_id, identifiers, metadata["firmware_revision"])
         self._attr_has_entity_name = False
         self._attr_should_poll = False
         self._state: LockState | None = None
         self._user_id = self._coordinator.api_client.user_id
         self._structure_id = self._coordinator.api_client.structure_id
-        self._device_info_updated = False  # Track if we've updated device_info from traits
         _LOGGER.debug(
             "Initialized lock with user_id: %s, structure_id: %s, device_id=%s, unique_id=%s, device=%s",
             self._user_id,
             self._structure_id,
             self._device_id,
             self._attr_unique_id,
-            self._device,
+            self._device_data,
         )
 
     @property
     def is_locked(self):
-        state = self._device.get("bolt_locked", False)
+        state = self._device_data.get("bolt_locked", False)
         _LOGGER.debug("is_locked check for %s: %s", self._attr_unique_id, state)
         return state
 
@@ -138,7 +107,7 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         }
         
         # Extract trait data from device
-        traits = self._device.get("traits", {})
+        traits = self._device_data.get("traits", {})
         
         # DeviceIdentityTrait data
         device_identity = traits.get("DeviceIdentityTrait", {})
@@ -237,129 +206,16 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
     def _handle_coordinator_update(self) -> None:
         new_data = self._coordinator.data.get(self._device_id)
         if new_data:
-            old_state = self._device.copy()
-            old_bolt_locked = self._device.get("bolt_locked", False)
+            old_state = self._device_data.copy()
+            old_bolt_locked = self._device_data.get("bolt_locked", False)
             
             # Update device data
-            self._device.update(new_data)
+            self._device_data.update(new_data)
             self._user_id = self._coordinator.api_client.user_id
             self._structure_id = self._coordinator.api_client.structure_id
             
-            # Update device_info if we have trait data with better metadata (only once)
-            traits = self._device.get("traits", {})
-            device_identity = traits.get("DeviceIdentityTrait", {})
-            if device_identity and not self._device_info_updated:
-                new_serial = device_identity.get("serial_number")
-                new_firmware = device_identity.get("firmware_version")
-                new_manufacturer = device_identity.get("manufacturer")
-                new_model = device_identity.get("model")
-                
-                _LOGGER.debug("Processing trait data for %s: serial=%s, fw=%s, manufacturer=%s, model=%s, device_info_updated=%s",
-                             self._attr_unique_id, new_serial, new_firmware, new_manufacturer, new_model, self._device_info_updated)
-                
-                if new_serial or new_firmware:
-                    # Update _attr_device_info (but keep device_id as identifier to prevent duplicates)
-                    if new_firmware:
-                        self._attr_device_info["sw_version"] = new_firmware
-                    if new_manufacturer:
-                        self._attr_device_info["manufacturer"] = new_manufacturer
-                    if new_model:
-                        self._attr_device_info["model"] = new_model
-                    
-                    _LOGGER.info("Updated device_info for %s with trait data: serial=%s, fw=%s", 
-                               self._attr_unique_id, new_serial, new_firmware)
-                        
-                    # Update device registry so HA UI reflects the changes
-                    # Use serial number as primary identifier if available, device_id as secondary
-                    try:
-                        device_registry = dr.async_get(self.hass)
-                        _LOGGER.debug("Looking up device in registry for %s: device_id=%s, serial=%s", 
-                                     self._attr_unique_id, self._device_id, new_serial)
-                        
-                        # Find device by checking both device_id and serial number
-                        device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
-                        if not device and new_serial:
-                            _LOGGER.debug("Device not found by device_id, trying serial number")
-                            device = device_registry.async_get_device(identifiers={(DOMAIN, new_serial)})
-                        
-                        if device:
-                            _LOGGER.debug("Found device in registry: id=%s, identifiers=%s, sw_version=%s", 
-                                         device.id, device.identifiers, device.sw_version)
-                            update_kwargs = {}
-                            # Update identifiers: use serial as primary, device_id as secondary
-                            # Home Assistant uses the first identifier as the "primary" one shown in Device Info
-                            if new_serial:
-                                # Create identifiers set with serial first (primary), then device_id (secondary)
-                                new_identifiers = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
-                                current_identifiers = set(device.identifiers)
-                                if current_identifiers != new_identifiers:
-                                    update_kwargs["new_identifiers"] = new_identifiers
-                                    _LOGGER.info("Updating device identifiers: %s -> %s", current_identifiers, new_identifiers)
-                            
-                            # Always update firmware if we have it from trait data
-                            if new_firmware:
-                                if device.sw_version != new_firmware:
-                                    update_kwargs["sw_version"] = new_firmware
-                                    _LOGGER.info("Updating device firmware: %s -> %s", device.sw_version, new_firmware)
-                                elif device.sw_version is None or device.sw_version == "unknown":
-                                    update_kwargs["sw_version"] = new_firmware
-                                    _LOGGER.info("Setting device firmware: %s (was unknown)", new_firmware)
-                            
-                            if new_manufacturer and device.manufacturer != new_manufacturer:
-                                update_kwargs["manufacturer"] = new_manufacturer
-                                _LOGGER.info("Updating device manufacturer: %s -> %s", device.manufacturer, new_manufacturer)
-                            
-                            if new_model and device.model != new_model:
-                                update_kwargs["model"] = new_model
-                                _LOGGER.info("Updating device model: %s -> %s", device.model, new_model)
-                            
-                            # Update serial_number field (this is what shows in Device Info card per HA docs)
-                            if new_serial and device.serial_number != new_serial:
-                                update_kwargs["serial_number"] = new_serial
-                                _LOGGER.info("Updating device serial_number: %s -> %s", device.serial_number, new_serial)
-                            
-                            if update_kwargs:
-                                device_registry.async_update_device(device.id, **update_kwargs)
-                                _LOGGER.info("✅ Successfully updated device registry for %s: %s", self._attr_unique_id, update_kwargs)
-                            else:
-                                _LOGGER.debug("No device registry updates needed for %s (already up to date)", self._attr_unique_id)
-                            
-                            # Always update _attr_device_info to match latest trait data (for device_info property)
-                            if new_serial:
-                                self._attr_device_info["identifiers"] = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
-                                self._attr_device_info["serial_number"] = new_serial  # This is what shows in Device Info card
-                            if new_firmware:
-                                self._attr_device_info["sw_version"] = new_firmware
-                            if new_manufacturer:
-                                self._attr_device_info["manufacturer"] = new_manufacturer
-                            if new_model:
-                                self._attr_device_info["model"] = new_model
-                        else:
-                            _LOGGER.warning("Could not find device in registry for %s (device_id=%s, serial=%s). Device may not be registered yet.", 
-                                          self._attr_unique_id, self._device_id, new_serial)
-                            # Still update _attr_device_info even if device not found in registry
-                            if new_serial:
-                                self._attr_device_info["identifiers"] = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
-                                self._attr_device_info["serial_number"] = new_serial  # This is what shows in Device Info card
-                            if new_firmware:
-                                self._attr_device_info["sw_version"] = new_firmware
-                            if new_manufacturer:
-                                self._attr_device_info["manufacturer"] = new_manufacturer
-                            if new_model:
-                                self._attr_device_info["model"] = new_model
-                    except Exception as e:
-                        _LOGGER.error("Error updating device registry for %s: %s", self._attr_unique_id, e, exc_info=True)
-                        # Still update _attr_device_info even if registry update fails
-                        if new_serial:
-                            self._attr_device_info["serial_number"] = new_serial  # This is what shows in Device Info card
-                        if new_firmware:
-                            self._attr_device_info["sw_version"] = new_firmware
-                        if new_manufacturer:
-                            self._attr_device_info["manufacturer"] = new_manufacturer
-                        if new_model:
-                            self._attr_device_info["model"] = new_model
-                    
-                    self._device_info_updated = True
+            # Update device_info from traits (handled by base class)
+            self._update_device_info_from_traits()
             
             # Update bolt_moving based on actuator state
             if "actuator_state" in new_data:
@@ -370,13 +226,13 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                 self._bolt_moving = False
             
             # Clear optimistic state when we get a real update
-            if old_bolt_locked != self._device.get("bolt_locked", False):
+            if old_bolt_locked != self._device_data.get("bolt_locked", False):
                 # State actually changed, clear optimistic flags
                 self._bolt_moving = False
                 self._bolt_moving_to = None
                 _LOGGER.info("Lock state changed for %s: %s -> %s", self._attr_unique_id, 
                             "locked" if old_bolt_locked else "unlocked",
-                            "locked" if self._device.get("bolt_locked", False) else "unlocked")
+                            "locked" if self._device_data.get("bolt_locked", False) else "unlocked")
             
             # Set HA state based on actual lock state
             if self.is_locked:
@@ -389,7 +245,7 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                 self._state = LockState.UNLOCKED
             
             self.async_write_ha_state()
-            _LOGGER.debug("Updated lock state for %s: old=%s, new=%s", self._attr_unique_id, old_state, self._device)
+            _LOGGER.debug("Updated lock state for %s: old=%s, new=%s", self._attr_unique_id, old_state, self._device_data)
         else:
             _LOGGER.debug("No updated data for lock %s in coordinator", self._attr_unique_id)
             self._bolt_moving = False
@@ -406,37 +262,9 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        available = bool(self._device) and self._coordinator.last_update_success
+        available = bool(self._device_data) and self._coordinator.last_update_success
         _LOGGER.debug("Availability check for %s: %s", self._attr_unique_id, available)
         return available
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information."""
-        # Always return current device_info, which is updated when trait data arrives
-        # This ensures Device Info card shows the latest information
-        device_info = self._attr_device_info.copy()
-        
-        # Also check for latest trait data in case it wasn't processed yet
-        traits = self._device.get("traits", {})
-        device_identity = traits.get("DeviceIdentityTrait", {})
-        if device_identity:
-            if device_identity.get("firmware_version"):
-                device_info["sw_version"] = device_identity["firmware_version"]
-            if device_identity.get("serial_number"):
-                serial = device_identity["serial_number"]
-                # Set serial_number field (this is what shows in Device Info card per HA docs)
-                device_info["serial_number"] = serial
-                # Also update identifiers
-                device_info["identifiers"] = {(DOMAIN, serial), (DOMAIN, self._device_id)}
-                _LOGGER.debug("device_info property for %s: serial_number=%s, identifiers=%s, sw_version=%s", 
-                             self._attr_unique_id, serial, device_info["identifiers"], device_info.get("sw_version"))
-            if device_identity.get("manufacturer"):
-                device_info["manufacturer"] = device_identity["manufacturer"]
-            if device_identity.get("model"):
-                device_info["model"] = device_identity["model"]
-        
-        return device_info
 
     @property
     def state(self) -> LockState:
