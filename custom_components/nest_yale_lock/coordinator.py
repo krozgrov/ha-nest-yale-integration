@@ -76,6 +76,7 @@ class NestCoordinator(DataUpdateCoordinator):
                 if update:
                     _LOGGER.debug("Received observer update: %s", update)
                     normalized_update = update.get("yale", update) if update else {}
+                    all_traits = update.get("all_traits", {})
                     if normalized_update:
                         for device_id, device in normalized_update.items():
                             # Ensure required fields exist even if absent in payload
@@ -83,7 +84,20 @@ class NestCoordinator(DataUpdateCoordinator):
                             if "actuatorState" in device:
                                 device["actuator_state"] = device["actuatorState"]
                             device["bolt_moving"] = device.get("bolt_moving", False)
+                            
+                            # Extract trait data for this device
+                            device_traits = {}
+                            for trait_key, trait_info in all_traits.items():
+                                if trait_key.startswith(f"{device_id}:"):
+                                    trait_name = trait_info.get("type_url", "").split(".")[-1]
+                                    if trait_info.get("decoded") and trait_info.get("data"):
+                                        device_traits[trait_name] = trait_info["data"]
+                            if device_traits:
+                                device["traits"] = device_traits
+                                _LOGGER.debug("Added trait data to device %s: %s", device_id, device_traits)
+                        
                         self.api_client.current_state["user_id"] = update.get("user_id")  # Persist user_id
+                        self.api_client.current_state["all_traits"] = all_traits  # Persist trait data
                         self.async_set_updated_data(normalized_update)
                         _LOGGER.debug("Applied normalized observer update: %s, current_state user_id: %s",
                                       normalized_update, self.api_client.current_state["user_id"])

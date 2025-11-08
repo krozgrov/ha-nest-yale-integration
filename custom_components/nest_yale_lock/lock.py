@@ -107,6 +107,41 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             "user_id": self._user_id,
             "structure_id": self._structure_id,
         }
+        
+        # Extract trait data from device
+        traits = self._device.get("traits", {})
+        
+        # DeviceIdentityTrait data
+        device_identity = traits.get("DeviceIdentityTrait", {})
+        if device_identity:
+            if device_identity.get("serial_number"):
+                attrs["serial_number"] = device_identity["serial_number"]
+            if device_identity.get("firmware_version"):
+                attrs["firmware_revision"] = device_identity["firmware_version"]
+            if device_identity.get("manufacturer"):
+                attrs["manufacturer"] = device_identity["manufacturer"]
+            if device_identity.get("model"):
+                attrs["model"] = device_identity["model"]
+        
+        # BatteryPowerSourceTrait data
+        battery_trait = traits.get("BatteryPowerSourceTrait", {})
+        if battery_trait:
+            if battery_trait.get("battery_level") is not None:
+                # Convert to percentage (0.0-1.0 -> 0-100)
+                battery_level = battery_trait["battery_level"]
+                if isinstance(battery_level, float):
+                    attrs["battery_level"] = round(battery_level * 100, 1)
+                else:
+                    attrs["battery_level"] = battery_level
+            if battery_trait.get("voltage") is not None:
+                attrs["battery_voltage"] = battery_trait["voltage"]
+            if battery_trait.get("condition") is not None:
+                attrs["battery_condition"] = battery_trait["condition"]
+            if battery_trait.get("status") is not None:
+                attrs["battery_status"] = battery_trait["status"]
+            if battery_trait.get("replacement_indicator") is not None:
+                attrs["battery_replacement_indicator"] = battery_trait["replacement_indicator"]
+        
         _LOGGER.debug("Extra state attributes for %s: %s", self._attr_unique_id, attrs)
         return attrs
 

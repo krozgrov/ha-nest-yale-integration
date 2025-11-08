@@ -10,6 +10,7 @@ from .proto.weave.trait import security_pb2 as weave_security_pb2
 from .proto.nest.trait import structure_pb2 as nest_structure_pb2
 from .proto.nest import rpc_pb2 as rpc_pb2
 from .protobuf_manager import read_protobuf_file
+
 from .const import (
     USER_AGENT_STRING,
     URL_PROTOBUF,
@@ -18,6 +19,15 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Import HomeKit trait decoders
+try:
+    from .proto.weave.trait import description_pb2
+    from .proto.weave.trait import power_pb2
+    PROTO_AVAILABLE = True
+except ImportError:
+    PROTO_AVAILABLE = False
+    _LOGGER.warning("HomeKit trait proto files not available - DeviceIdentityTrait and BatteryPowerSourceTrait decoding disabled")
 
 MAX_BUFFER_SIZE = 4194304  # 4MB
 CATALOG_THRESHOLD = 20000  # 20KB
@@ -135,7 +145,8 @@ class NestProtobufHandler:
             _LOGGER.error("Empty protobuf message received.")
             return {"yale": {}, "user_id": None, "structure_id": None}
 
-        locks_data = {"yale": {}, "user_id": None, "structure_id": None}
+        locks_data = {"yale": {}, "user_id": None, "structure_id": None, "all_traits": {}}
+        all_traits = {}
 
         try:
             self.stream_body.Clear()
@@ -160,6 +171,48 @@ class NestProtobufHandler:
                         type_url = "weave.trait.security.BoltLockTrait"
 
                     _LOGGER.debug("Extracting `%s` for `%s` with key `%s`", type_url, obj_id, obj_key)
+
+                    # Extract trait data for ALL traits (including HomeKit traits)
+                    if property_any and type_url:
+                        trait_key = f"{obj_id}:{type_url}" if obj_id and type_url else None
+                        trait_info = {"object_id": obj_id, "type_url": type_url, "decoded": False}
+                        
+                        try:
+                            # DeviceIdentityTrait
+                            if "DeviceIdentityTrait" in type_url and PROTO_AVAILABLE:
+                                trait = description_pb2.DeviceIdentityTrait()
+                                property_any.Unpack(trait)
+                                trait_info["decoded"] = True
+                                trait_info["data"] = {
+                                    "serial_number": trait.serial_number if trait.serial_number else None,
+                                    "firmware_version": trait.fw_version if trait.fw_version else None,
+                                    "manufacturer": trait.manufacturer.value if trait.HasField("manufacturer") else None,
+                                    "model": trait.model_name.value if trait.HasField("model_name") else None,
+                                }
+                                _LOGGER.info("✅ Decoded DeviceIdentityTrait for %s: serial=%s, fw=%s", 
+                                           obj_id, trait_info["data"].get("serial_number"), trait_info["data"].get("firmware_version"))
+                            
+                            # BatteryPowerSourceTrait
+                            elif "BatteryPowerSourceTrait" in type_url and PROTO_AVAILABLE:
+                                trait = power_pb2.BatteryPowerSourceTrait()
+                                property_any.Unpack(trait)
+                                trait_info["decoded"] = True
+                                trait_info["data"] = {
+                                    "battery_level": trait.remaining.remainingPercent.value if trait.HasField("remaining") and trait.remaining.HasField("remainingPercent") else None,
+                                    "voltage": trait.assessedVoltage.value if trait.HasField("assessedVoltage") else None,
+                                    "condition": trait.condition,
+                                    "status": trait.status,
+                                    "replacement_indicator": trait.replacementIndicator,
+                                }
+                                _LOGGER.info("✅ Decoded BatteryPowerSourceTrait for %s: level=%s, voltage=%s", 
+                                           obj_id, trait_info["data"].get("battery_level"), trait_info["data"].get("voltage"))
+                        except Exception as e:
+                            trait_info["error"] = str(e)
+                            _LOGGER.debug("Error decoding trait %s: %s", type_url, e)
+                        
+                        # Store trait info
+                        if trait_key:
+                            all_traits[trait_key] = trait_info
 
                     if "BoltLockTrait" in (type_url or "") and obj_id:
                         bolt_lock = weave_security_pb2.BoltLockTrait()
@@ -214,6 +267,7 @@ class NestProtobufHandler:
                         except Exception as err:
                             _LOGGER.error("Failed to parse UserInfoTrait: %s", err, exc_info=True)
 
+            locks_data["all_traits"] = all_traits
             _LOGGER.debug(f"Final lock data: {locks_data}")
             return locks_data
 

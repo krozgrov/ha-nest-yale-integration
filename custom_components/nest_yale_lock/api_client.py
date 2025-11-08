@@ -140,6 +140,9 @@ class NestAPIClient:
             "weave.trait.security.BoltLockCapabilitiesTrait",
             "weave.trait.security.PincodeInputTrait",
             "weave.trait.security.TamperTrait",
+            # HomeKit-relevant traits
+            "weave.trait.description.DeviceIdentityTrait",  # Serial, firmware, model
+            "weave.trait.power.BatteryPowerSourceTrait",    # Battery level, status
         ]
         for trait in trait_names:
             observe_filter = request.filter.add()
@@ -507,14 +510,28 @@ class NestAPIClient:
             "name": lock_data.get("name", "Front Door Lock"),
             "structure_id": self._structure_id if self._structure_id else "unknown",
         }
+        
+        # Try to get metadata from trait data first (most accurate)
+        all_traits = self.current_state.get("all_traits", {})
+        device_identity_key = f"{device_id}:weave.trait.description.DeviceIdentityTrait"
+        if device_identity_key in all_traits:
+            trait_info = all_traits[device_identity_key]
+            if trait_info.get("decoded") and trait_info.get("data"):
+                trait_data = trait_info["data"]
+                if trait_data.get("serial_number"):
+                    metadata["serial_number"] = trait_data["serial_number"]
+                if trait_data.get("firmware_version"):
+                    metadata["firmware_revision"] = trait_data["firmware_version"]
+        
+        # Fallback to auth_data if trait data not available
         if "devices" in self.auth_data:
             for dev in self.auth_data.get("devices", []):
                 if dev.get("device_id") == device_id:
-                    metadata.update({
-                        "serial_number": dev.get("serial_number", device_id),
-                        "firmware_revision": dev.get("firmware_revision", "unknown"),
-                        "name": dev.get("name", "Front Door Lock"),
-                    })
+                    if metadata["serial_number"] == device_id:  # Only update if not set from traits
+                        metadata["serial_number"] = dev.get("serial_number", device_id)
+                    if metadata["firmware_revision"] == "unknown":  # Only update if not set from traits
+                        metadata["firmware_revision"] = dev.get("firmware_revision", "unknown")
+                    metadata["name"] = dev.get("name", "Front Door Lock")
                     break
         return metadata
 
