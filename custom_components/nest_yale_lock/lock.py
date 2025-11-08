@@ -99,6 +99,7 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                 serial_number = identifier  # Use non-device_id identifier (should be serial number)
                 break
         attrs = {
+            "device_id": self._device_id,
             "bolt_moving": self._bolt_moving,
             "serial_number": serial_number,
             "firmware_revision": self._attr_device_info.get("sw_version", "unknown"),

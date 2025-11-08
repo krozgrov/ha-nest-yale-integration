@@ -64,7 +64,7 @@ CLIENT_ID_FT = "384529615266-57v6vaptkmhm64n9hn5dcmkr4at14p8j.apps.googleusercon
 
 # Home Assistant Integration Constants
 DOMAIN = "nest_yale_lock"
-PLATFORMS = ["lock"]
+PLATFORMS = ["lock", "sensor"]
 CONF_ISSUE_TOKEN = "issue_token"
 CONF_COOKIES = "cookies"
 # Update interval for coordinator fallback polling (observe stream is primary)
