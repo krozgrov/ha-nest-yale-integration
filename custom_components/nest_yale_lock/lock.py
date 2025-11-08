@@ -57,13 +57,18 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         self._bolt_moving = False
         self._bolt_moving_to: bool | None = None
         self._device_id = device.get("device_id")
-        self._attr_unique_id = f"{DOMAIN}_{self._device_id}"
         metadata = self._coordinator.api_client.get_device_metadata(self._device_id)
         self._attr_name = metadata["name"]
-        # Use device_id as stable identifier (never change it)
-        # Serial number will be added as secondary identifier when trait data arrives
+        # Use serial number as primary identifier if available (from trait data), otherwise use device_id
+        # This ensures Device Info card shows the correct serial number
+        primary_identifier = metadata.get("serial_number") if metadata.get("serial_number") != self._device_id else self._device_id
+        self._attr_unique_id = f"{DOMAIN}_{self._device_id}"  # Always use device_id for unique_id (stable)
+        # Device info uses serial number as primary identifier if available
+        identifiers = {(DOMAIN, primary_identifier)}
+        if primary_identifier != self._device_id:
+            identifiers.add((DOMAIN, self._device_id))  # Add device_id as secondary
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, self._device_id)},
+            "identifiers": identifiers,
             "manufacturer": "Nest",
             "model": "Nest x Yale Lock",
             "name": self._attr_name,
@@ -107,8 +112,13 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
     @property
     def extra_state_attributes(self):
         """Return extra state attributes."""
-        # Get serial number from identifiers (may be device_id initially, serial_number when trait data arrives)
-        serial_number = next(iter(self._attr_device_info["identifiers"]))[1]
+        # Get serial number from identifiers (prefer serial number over device_id)
+        identifiers = self._attr_device_info["identifiers"]
+        serial_number = self._device_id  # Default to device_id
+        for domain, identifier in identifiers:
+            if domain == DOMAIN and identifier != self._device_id:
+                serial_number = identifier  # Use non-device_id identifier (should be serial number)
+                break
         attrs = {
             "bolt_moving": self._bolt_moving,
             "serial_number": serial_number,
@@ -248,19 +258,22 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                                    self._attr_unique_id, new_serial, new_firmware)
                         
                         # Update device registry so HA UI reflects the changes
-                        # Best practice: Keep device_id as primary identifier, add serial as secondary
+                        # Use serial number as primary identifier if available, device_id as secondary
                         try:
                             device_registry = dr.async_get(self.hass)
-                            # Find device by device_id (our stable identifier)
+                            # Find device by device_id first (our stable identifier for entity tracking)
                             device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
+                            
+                            # If we have serial number, check if there's already a device with that identifier
+                            if new_serial and not device:
+                                device = device_registry.async_get_device(identifiers={(DOMAIN, new_serial)})
                             
                             if device:
                                 update_kwargs = {}
-                                # Add serial number as secondary identifier (Home Assistant supports multiple identifiers)
+                                # Update identifiers: use serial as primary, device_id as secondary
                                 if new_serial:
-                                    current_identifiers = set(device.identifiers)
-                                    new_identifiers = current_identifiers | {(DOMAIN, new_serial)}
-                                    if new_identifiers != current_identifiers:
+                                    new_identifiers = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
+                                    if set(device.identifiers) != new_identifiers:
                                         update_kwargs["new_identifiers"] = new_identifiers
                                 if new_firmware and device.sw_version != new_firmware:
                                     update_kwargs["sw_version"] = new_firmware
@@ -274,7 +287,7 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                                     _LOGGER.info("Updated device registry for %s: %s", self._attr_unique_id, update_kwargs)
                                     # Update _attr_device_info to match registry (for device_info property)
                                     if new_serial:
-                                        self._attr_device_info["identifiers"] = {(DOMAIN, self._device_id), (DOMAIN, new_serial)}
+                                        self._attr_device_info["identifiers"] = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
                                     if new_firmware:
                                         self._attr_device_info["sw_version"] = new_firmware
                                     if new_manufacturer:
