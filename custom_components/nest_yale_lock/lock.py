@@ -99,9 +99,6 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         serial_number = next(iter(self._attr_device_info["identifiers"]))[1]
         attrs = {
             "bolt_moving": self._device.get("bolt_moving", False),
-            "bolt_moving_to": self._device.get("bolt_moving_to"),
-            "battery_status": self._device.get("battery_status"),
-            "battery_voltage": self._device.get("battery_voltage"),
             "serial_number": serial_number,
             "firmware_revision": self._attr_device_info["sw_version"],
             "user_id": self._user_id,
@@ -123,7 +120,7 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             if device_identity.get("model"):
                 attrs["model"] = device_identity["model"]
         
-        # BatteryPowerSourceTrait data
+        # BatteryPowerSourceTrait data - only include if we have actual values
         battery_trait = traits.get("BatteryPowerSourceTrait", {})
         if battery_trait:
             if battery_trait.get("battery_level") is not None:
