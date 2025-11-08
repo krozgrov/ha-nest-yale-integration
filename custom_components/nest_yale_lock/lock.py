@@ -56,11 +56,10 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         self._attr_unique_id = f"{DOMAIN}_{self._device_id}"
         metadata = self._coordinator.api_client.get_device_metadata(self._device_id)
         self._attr_name = metadata["name"]
-        # Use metadata serial_number (may be device_id initially, will be updated when trait data arrives)
-        # Store device_id separately for registry lookup
-        self._initial_identifier = metadata["serial_number"]
+        # Always use device_id as the identifier to prevent duplicate devices
+        # Serial number will be added via device registry update when trait data arrives
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, self._initial_identifier)},
+            "identifiers": {(DOMAIN, self._device_id)},
             "manufacturer": "Nest",
             "model": "Nest x Yale Lock",
             "name": self._attr_name,
@@ -101,11 +100,12 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
 
     @property
     def extra_state_attributes(self):
+        # Get serial number from identifiers (may be device_id initially, serial_number when trait data arrives)
         serial_number = next(iter(self._attr_device_info["identifiers"]))[1]
         attrs = {
             "bolt_moving": self._device.get("bolt_moving", False),
             "serial_number": serial_number,
-            "firmware_revision": self._attr_device_info["sw_version"],
+            "firmware_revision": self._attr_device_info.get("sw_version", "unknown"),
             "user_id": self._user_id,
             "structure_id": self._structure_id,
         }
@@ -228,9 +228,7 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                     new_model = device_identity.get("model")
                     
                     if new_serial or new_firmware:
-                        # Update _attr_device_info
-                        if new_serial:
-                            self._attr_device_info["identifiers"] = {(DOMAIN, new_serial)}
+                        # Update _attr_device_info (but keep device_id as identifier to prevent duplicates)
                         if new_firmware:
                             self._attr_device_info["sw_version"] = new_firmware
                         if new_manufacturer:
@@ -242,18 +240,15 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                                    self._attr_unique_id, new_serial, new_firmware)
                         
                         # Update device registry so HA UI reflects the changes
-                        # Device registry methods are thread-safe and can be called from callbacks
+                        # Use device_id to find device, then update with serial number as new identifier
                         try:
                             device_registry = dr.async_get(self.hass)
-                            # Try to find device by current identifier first, then by device_id, then by new serial
-                            device = device_registry.async_get_device(identifiers={(DOMAIN, self._initial_identifier)})
-                            if not device:
-                                device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
-                            if not device and new_serial:
-                                device = device_registry.async_get_device(identifiers={(DOMAIN, new_serial)})
+                            # Find device by device_id (our consistent identifier)
+                            device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
                             
                             if device:
                                 update_kwargs = {}
+                                # Update identifier to serial number if we have it (this is what shows in Device Info)
                                 if new_serial and device.identifiers != {(DOMAIN, new_serial)}:
                                     update_kwargs["new_identifiers"] = {(DOMAIN, new_serial)}
                                 if new_firmware and device.sw_version != new_firmware:
@@ -266,9 +261,12 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                                 if update_kwargs:
                                     device_registry.async_update_device(device.id, **update_kwargs)
                                     _LOGGER.info("Updated device registry for %s: %s", self._attr_unique_id, update_kwargs)
+                                    # Also update _attr_device_info identifiers to match registry
+                                    if new_serial:
+                                        self._attr_device_info["identifiers"] = {(DOMAIN, new_serial)}
                             else:
-                                _LOGGER.warning("Could not find device in registry for %s (initial_id=%s, device_id=%s, serial=%s)", 
-                                              self._attr_unique_id, self._initial_identifier, self._device_id, new_serial)
+                                _LOGGER.warning("Could not find device in registry for %s (device_id=%s, serial=%s)", 
+                                              self._attr_unique_id, self._device_id, new_serial)
                         except Exception as e:
                             _LOGGER.error("Error updating device registry for %s: %s", self._attr_unique_id, e, exc_info=True)
                         
@@ -325,22 +323,8 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
     @property
     def device_info(self):
         # Return dynamic device_info that includes trait data if available
-        device_info = self._attr_device_info.copy()
-        
-        # Update with trait data if available
-        traits = self._device.get("traits", {})
-        device_identity = traits.get("DeviceIdentityTrait", {})
-        if device_identity:
-            if device_identity.get("serial_number"):
-                device_info["identifiers"] = {(DOMAIN, device_identity["serial_number"])}
-            if device_identity.get("firmware_version"):
-                device_info["sw_version"] = device_identity["firmware_version"]
-            if device_identity.get("manufacturer"):
-                device_info["manufacturer"] = device_identity["manufacturer"]
-            if device_identity.get("model"):
-                device_info["model"] = device_identity["model"]
-        
-        return device_info
+        # Always use the current _attr_device_info which is updated when trait data arrives
+        return self._attr_device_info.copy()
 
     @property
     def state(self):
