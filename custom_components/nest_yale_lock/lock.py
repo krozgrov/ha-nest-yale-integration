@@ -61,12 +61,15 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
         self._attr_name = metadata["name"]
         # Use serial number as primary identifier if available (from trait data), otherwise use device_id
         # This ensures Device Info card shows the correct serial number
+        # Home Assistant uses the first identifier in the set as the "primary" one
         primary_identifier = metadata.get("serial_number") if metadata.get("serial_number") != self._device_id else self._device_id
         self._attr_unique_id = f"{DOMAIN}_{self._device_id}"  # Always use device_id for unique_id (stable)
         # Device info uses serial number as primary identifier if available
-        identifiers = {(DOMAIN, primary_identifier)}
+        # Put serial number first so it's the primary identifier shown in Device Info card
         if primary_identifier != self._device_id:
-            identifiers.add((DOMAIN, self._device_id))  # Add device_id as secondary
+            identifiers = {(DOMAIN, primary_identifier), (DOMAIN, self._device_id)}  # Serial first (primary)
+        else:
+            identifiers = {(DOMAIN, self._device_id)}  # Only device_id if no serial yet
         self._attr_device_info = {
             "identifiers": identifiers,
             "manufacturer": "Nest",
@@ -74,6 +77,8 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
             "name": self._attr_name,
             "sw_version": metadata["firmware_revision"],
         }
+        _LOGGER.debug("Initial device_info for %s: identifiers=%s, sw_version=%s", 
+                     self._attr_unique_id, identifiers, metadata["firmware_revision"])
         self._attr_has_entity_name = False
         self._attr_should_poll = False
         self._state: LockState | None = None
@@ -269,25 +274,37 @@ class NestYaleLock(CoordinatorEntity, LockEntity):
                             if device:
                                 update_kwargs = {}
                                 # Update identifiers: use serial as primary, device_id as secondary
+                                # Home Assistant uses the first identifier as the "primary" one shown in Device Info
                                 if new_serial:
+                                    # Create identifiers set with serial first (primary), then device_id (secondary)
                                     new_identifiers = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
                                     current_identifiers = set(device.identifiers)
                                     if current_identifiers != new_identifiers:
                                         update_kwargs["new_identifiers"] = new_identifiers
+                                        _LOGGER.info("Updating device identifiers: %s -> %s", current_identifiers, new_identifiers)
+                                
+                                # Always update firmware if we have it from trait data
                                 if new_firmware:
-                                    # Always update firmware if we have it (even if it's the same, to ensure it's set)
                                     if device.sw_version != new_firmware:
                                         update_kwargs["sw_version"] = new_firmware
+                                        _LOGGER.info("Updating device firmware: %s -> %s", device.sw_version, new_firmware)
                                     elif device.sw_version is None or device.sw_version == "unknown":
                                         update_kwargs["sw_version"] = new_firmware
+                                        _LOGGER.info("Setting device firmware: %s (was unknown)", new_firmware)
+                                
                                 if new_manufacturer and device.manufacturer != new_manufacturer:
                                     update_kwargs["manufacturer"] = new_manufacturer
+                                    _LOGGER.info("Updating device manufacturer: %s -> %s", device.manufacturer, new_manufacturer)
+                                
                                 if new_model and device.model != new_model:
                                     update_kwargs["model"] = new_model
+                                    _LOGGER.info("Updating device model: %s -> %s", device.model, new_model)
                                 
                                 if update_kwargs:
                                     device_registry.async_update_device(device.id, **update_kwargs)
-                                    _LOGGER.info("Updated device registry for %s: %s", self._attr_unique_id, update_kwargs)
+                                    _LOGGER.info("✅ Successfully updated device registry for %s: %s", self._attr_unique_id, update_kwargs)
+                                else:
+                                    _LOGGER.debug("No device registry updates needed for %s (already up to date)", self._attr_unique_id)
                                 
                                 # Always update _attr_device_info to match latest trait data (for device_info property)
                                 if new_serial:
