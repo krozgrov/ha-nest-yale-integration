@@ -1,3 +1,7 @@
+[![GitHub release](https://img.shields.io/github/release/krozgrov/ha-nest-yale-integration.svg)](https://github.com/krozgrov/ha-nest-yale-integration/releases)
+[![GitHub stars](https://img.shields.io/github/stars/krozgrov/ha-nest-yale-integration.svg)](https://github.com/krozgrov/ha-nest-yale-integration/stargazers)
+![GitHub License](https://img.shields.io/github/license/krozgrov/ha-nest-yale-integration)
+
 # Google Nest x Yale Lock Integration for Home Assistant
 
 An integration for Home Assistant that connects your Google Nest x Yale Lock, enabling control directly from Home Assistant using reversed-enginered protobuf messaging protocol.
