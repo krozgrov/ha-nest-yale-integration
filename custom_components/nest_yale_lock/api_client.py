@@ -279,30 +279,35 @@ class NestAPIClient:
                             body = await response.text()
                             _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
                             continue
-                        # Use _ingest_chunk to properly handle gRPC-web framing and varint extraction
-                        # This is the same approach used by the observe stream
-                        async for chunk in response.content.iter_chunked(1024):
-                            if not chunk:
-                                continue
-                            # Process chunk through _ingest_chunk to handle gRPC-web framing
-                            results = await self.protobuf_handler._ingest_chunk(chunk)
-                            for locks_data in results:
-                                if "yale" in locks_data and locks_data["yale"]:
-                                    self.current_state["devices"]["locks"] = locks_data["yale"]
-                                    if locks_data.get("user_id"):
-                                        old_user_id = self._user_id
-                                        self._user_id = locks_data["user_id"]
-                                        self.current_state["user_id"] = self._user_id
-                                        if old_user_id != self._user_id:
-                                            _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                                    if locks_data.get("structure_id"):
-                                        old_structure_id = self._structure_id
-                                        self._structure_id = locks_data["structure_id"]
-                                        self.current_state["structure_id"] = self._structure_id
-                                        if old_structure_id != self._structure_id:
-                                            _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                                    self.transport_url = base_url
-                                    return locks_data["yale"]
+                        # Read entire response body first to avoid chunk boundary issues
+                        # Then process it through _ingest_chunk which handles gRPC-web framing
+                        full_body = await response.read()
+                        if not full_body:
+                            _LOGGER.debug("Empty response body from refresh_state")
+                            continue
+                        
+                        # Process the full body through _ingest_chunk
+                        # This handles gRPC-web framing and varint extraction properly
+                        all_results = await self.protobuf_handler._ingest_chunk(full_body)
+                        
+                        # Find the first result with yale data
+                        for locks_data in all_results:
+                            if "yale" in locks_data and locks_data["yale"]:
+                                self.current_state["devices"]["locks"] = locks_data["yale"]
+                                if locks_data.get("user_id"):
+                                    old_user_id = self._user_id
+                                    self._user_id = locks_data["user_id"]
+                                    self.current_state["user_id"] = self._user_id
+                                    if old_user_id != self._user_id:
+                                        _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                if locks_data.get("structure_id"):
+                                    old_structure_id = self._structure_id
+                                    self._structure_id = locks_data["structure_id"]
+                                    self.current_state["structure_id"] = self._structure_id
+                                    if old_structure_id != self._structure_id:
+                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                self.transport_url = base_url
+                                return locks_data["yale"]
                 except Exception as err:
                     last_error = err
                     _LOGGER.error("Refresh state failed via %s: %s", api_url, err, exc_info=True)
