@@ -336,7 +336,17 @@ class NestAPIClient:
             # Rebuild headers with current token for each connection attempt
             headers = self._build_observe_headers()
             
-            for base_url in self._candidate_bases():
+            # Prefer the known working transport_url first to avoid trying multiple URLs unnecessarily
+            candidate_bases = self._candidate_bases()
+            # If we have a known working transport_url, try it first (most likely to succeed)
+            if self.transport_url and len(candidate_bases) > 1:
+                normalized_transport = _normalize_base(self.transport_url)
+                if normalized_transport in candidate_bases:
+                    # Move the known working URL to the front
+                    candidate_bases.remove(normalized_transport)
+                    candidate_bases.insert(0, normalized_transport)
+            
+            for base_url in candidate_bases:
                 api_url = f"{base_url}{ENDPOINT_OBSERVE}"
                 _LOGGER.debug("Starting observe stream with URL: %s", api_url)
                 try:
@@ -379,6 +389,9 @@ class NestAPIClient:
                         yield locks_data
                     _LOGGER.warning("Observe stream finished for %s; reconnecting", api_url)
                     self.connection.connected = False
+                    # If this URL worked, remember it for next time
+                    self.transport_url = base_url
+                    break  # Exit candidate loop since this URL worked
                 except asyncio.TimeoutError:
                     elapsed = asyncio.get_event_loop().time() - last_data_time
                     _LOGGER.warning(
@@ -387,6 +400,10 @@ class NestAPIClient:
                         elapsed
                     )
                     self.connection.connected = False
+                    # If this URL worked before timing out, remember it for next time
+                    if self.transport_url != base_url:
+                        self.transport_url = base_url
+                    break  # Exit candidate loop to reconnect
                 except aiohttp.ClientResponseError as cre:
                     if cre.status in (401, 403):
                         _LOGGER.info("Observe received %s; reauthenticating and retrying", cre.status)
@@ -397,13 +414,17 @@ class NestAPIClient:
                         except Exception:
                             _LOGGER.warning("Reauthentication failed during observe; will backoff and retry")
                         self.connection.connected = False
-                        continue
+                        break  # Exit candidate loop to reconnect with new token
                     _LOGGER.error("Error in observe stream via %s: %s", api_url, cre, exc_info=True)
                     self.connection.connected = False
+                    # Try next candidate URL
+                    continue
                 except Exception as err:
                     _LOGGER.error("Error in observe stream via %s: %s", api_url, err, exc_info=True)
                     self.connection.connected = False
                     self._note_connect_failure(err)
+                    # Try next candidate URL
+                    continue
             # Exponential backoff with jitter, capped to 60s
             sleep_for = min(backoff, 60) + random.uniform(0, min(backoff, 60) / 2)
             await asyncio.sleep(sleep_for)
