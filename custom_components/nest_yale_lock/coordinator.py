@@ -29,14 +29,16 @@ class NestCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Starting async_setup for coordinator")
         await self.api_client.async_setup()
 
+        # Start observer task first so it can begin receiving data
+        self._observer_task = self.hass.loop.create_task(self._run_observer())
+        _LOGGER.debug("Observer task created: %s", self._observer_task)
+        
+        # Try initial refresh - this will use refresh_state() since observer isn't healthy yet
         await self.async_refresh()
         if not self.data:
             _LOGGER.warning("Coordinator data is empty after initial refresh, waiting for observer updates.")
         else:
             _LOGGER.debug("Initial data fetched: %s", self.data)
-
-        self._observer_task = self.hass.loop.create_task(self._run_observer())
-        _LOGGER.debug("Observer task created: %s", self._observer_task)
 
     async def _async_update_data(self):
         """Fetch data from API client (fallback when observe stream is unhealthy or has no data)."""
