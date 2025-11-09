@@ -286,13 +286,32 @@ class NestAPIClient:
                             _LOGGER.debug("Empty response body from refresh_state")
                             continue
                         
+                        # Clear buffer and pending_length to avoid interference from observer stream
+                        # This ensures refresh_state processes a clean state
+                        self.protobuf_handler.buffer.clear()
+                        self.protobuf_handler.pending_length = None
+                        
                         # Process the full body through _ingest_chunk
                         # This handles gRPC-web framing and varint extraction properly
                         all_results = await self.protobuf_handler._ingest_chunk(full_body)
                         
+                        _LOGGER.debug("refresh_state processed %d result(s) from response (body size: %d bytes)", 
+                                    len(all_results), len(full_body))
+                        
+                        # If _ingest_chunk didn't produce results, try processing any remaining buffer data
+                        # This handles cases where messages span multiple chunks
+                        if not all_results and self.protobuf_handler.buffer:
+                            _LOGGER.debug("No results from initial processing, checking buffer (size: %d bytes)", 
+                                        len(self.protobuf_handler.buffer))
+                            # Try processing remaining buffer with an empty chunk to trigger final processing
+                            additional_results = await self.protobuf_handler._ingest_chunk(b"")
+                            all_results.extend(additional_results)
+                            _LOGGER.debug("After buffer processing, total results: %d", len(all_results))
+                        
                         # Find the first result with yale data
                         for locks_data in all_results:
                             if "yale" in locks_data and locks_data["yale"]:
+                                _LOGGER.info("refresh_state found lock data: %s", list(locks_data["yale"].keys()))
                                 self.current_state["devices"]["locks"] = locks_data["yale"]
                                 if locks_data.get("user_id"):
                                     old_user_id = self._user_id
@@ -308,6 +327,14 @@ class NestAPIClient:
                                         _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
                                 self.transport_url = base_url
                                 return locks_data["yale"]
+                        
+                        # If no yale data found, log what we did get
+                        if all_results:
+                            _LOGGER.debug("refresh_state found %d result(s) but no yale data. Results: %s", 
+                                        len(all_results), [list(r.keys()) for r in all_results])
+                        else:
+                            _LOGGER.warning("refresh_state processed response (%d bytes) but got no results from _ingest_chunk. Buffer remaining: %d bytes", 
+                                          len(full_body), len(self.protobuf_handler.buffer))
                 except Exception as err:
                     last_error = err
                     _LOGGER.error("Refresh state failed via %s: %s", api_url, err, exc_info=True)
