@@ -184,7 +184,18 @@ class NestAPIClient:
                     list(self.auth_data.keys()) if isinstance(self.auth_data, dict) else type(self.auth_data),
                 )
             if not self.auth_data or "access_token" not in self.auth_data:
-                raise ValueError("Invalid authentication data received")
+                # Check if the error was due to cookie expiration
+                error_msg = "Invalid authentication data received"
+                if hasattr(self.authenticator, '_last_error') and self.authenticator._last_error:
+                    if "Cookie expired" in str(self.authenticator._last_error):
+                        error_msg = str(self.authenticator._last_error)
+                    elif "USER_LOGGED_OUT" in str(self.authenticator._last_error):
+                        error_msg = (
+                            "Cookie expired: Your Google session has expired. "
+                            "Please re-obtain your cookies from the browser. "
+                            "See the integration documentation for instructions."
+                        )
+                raise ValueError(error_msg)
             self.access_token = self.auth_data["access_token"]
             self.transport_url = self.auth_data.get("urls", {}).get("transport_url")
             id_token = self.auth_data.get("id_token")

@@ -41,6 +41,7 @@ class NestAuthenticator:
         self.access_token = None
         # also capture id_token from Google response
         self.id_token = None
+        self._last_error = None  # Store last error for better error messages
         _LOGGER.debug("NestAuthenticator initialized")
 
     @staticmethod
@@ -139,6 +140,16 @@ class NestAuthenticator:
                         if not google_token:
                             error_msg = google_data.get("error", "Unknown error")
                             error_detail = google_data.get("detail", "No details provided")
+                            
+                            # Check for cookie expiration / session expiration
+                            if "USER_LOGGED_OUT" in error_msg or "No active session" in error_detail:
+                                raise ValueError(
+                                    "Cookie expired: Your Google session has expired. "
+                                    "Please re-obtain your cookies from the browser. "
+                                    "See the integration documentation for instructions. "
+                                    f"Error: {error_msg} - {error_detail}"
+                                )
+                            
                             raise ValueError(f"No Google access token received: {error_msg} - {error_detail}")
 
                     # Step 2: Exchange for Nest JWT
@@ -201,9 +212,22 @@ class NestAuthenticator:
                     else:
                         return None
                 except ValueError as e:
+                    self._last_error = e  # Store error for better error messages upstream
                     _LOGGER.error(f"Value error on attempt {attempt + 1}: {e}")
-                    return None
+                    # If it's a cookie expiration error, don't retry - user needs to update cookies
+                    if "Cookie expired" in str(e) or "USER_LOGGED_OUT" in str(e):
+                        _LOGGER.error(
+                            "Authentication failed due to expired cookies. "
+                            "User must re-obtain cookies from browser. See documentation."
+                        )
+                        return None
+                    if attempt < 2:
+                        _LOGGER.warning(f"Retrying in {API_AUTH_FAIL_RETRY_DELAY_SECONDS} seconds...")
+                        await asyncio.sleep(API_AUTH_FAIL_RETRY_DELAY_SECONDS)
+                    else:
+                        return None
                 except Exception as e:
+                    self._last_error = e  # Store error for better error messages upstream
                     _LOGGER.error(f"Unexpected error on attempt {attempt + 1}: {type(e).__name__}: {e}")
                     return None
 
