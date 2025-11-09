@@ -279,25 +279,30 @@ class NestAPIClient:
                             body = await response.text()
                             _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
                             continue
+                        # Use _ingest_chunk to properly handle gRPC-web framing and varint extraction
+                        # This is the same approach used by the observe stream
                         async for chunk in response.content.iter_chunked(1024):
-                            locks_data = await self.protobuf_handler._process_message(chunk)
-                            if "yale" not in locks_data:
+                            if not chunk:
                                 continue
-                            self.current_state["devices"]["locks"] = locks_data["yale"]
-                            if locks_data.get("user_id"):
-                                old_user_id = self._user_id
-                                self._user_id = locks_data["user_id"]
-                                self.current_state["user_id"] = self._user_id
-                                if old_user_id != self._user_id:
-                                    _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                            if locks_data.get("structure_id"):
-                                old_structure_id = self._structure_id
-                                self._structure_id = locks_data["structure_id"]
-                                self.current_state["structure_id"] = self._structure_id
-                                if old_structure_id != self._structure_id:
-                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                            self.transport_url = base_url
-                            return locks_data["yale"]
+                            # Process chunk through _ingest_chunk to handle gRPC-web framing
+                            results = await self.protobuf_handler._ingest_chunk(chunk)
+                            for locks_data in results:
+                                if "yale" in locks_data and locks_data["yale"]:
+                                    self.current_state["devices"]["locks"] = locks_data["yale"]
+                                    if locks_data.get("user_id"):
+                                        old_user_id = self._user_id
+                                        self._user_id = locks_data["user_id"]
+                                        self.current_state["user_id"] = self._user_id
+                                        if old_user_id != self._user_id:
+                                            _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                    if locks_data.get("structure_id"):
+                                        old_structure_id = self._structure_id
+                                        self._structure_id = locks_data["structure_id"]
+                                        self.current_state["structure_id"] = self._structure_id
+                                        if old_structure_id != self._structure_id:
+                                            _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                    self.transport_url = base_url
+                                    return locks_data["yale"]
                 except Exception as err:
                     last_error = err
                     _LOGGER.error("Refresh state failed via %s: %s", api_url, err, exc_info=True)
