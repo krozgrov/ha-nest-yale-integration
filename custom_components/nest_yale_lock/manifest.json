@@ -1,9 +1,7 @@
 {
   "domain": "nest_yale_lock",
   "name": "Google Nest x Yale",
-  "codeowners": [
-    "@krozgrov"
-  ],
+  "codeowners": ["@krozgrov"],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/krozgrov/ha-nest-yale-integration/blob/main/README.md",
@@ -13,19 +11,16 @@
     "custom_components.nest_yale_lock",
     "custom_components.nest_yale_lock.api_client",
     "custom_components.nest_yale_lock.lock",
+    "custom_components.nest_yale_lock.sensor",
     "custom_components.nest_yale_lock.protobuf_handler",
     "custom_components.nest_yale_lock.coordinator",
-    "custom_components.nest_yale_lock.device_parser",
     "custom_components.nest_yale_lock.auth",
-    "custom_components.nest_yale_lock.auth_client",
     "custom_components.nest_yale_lock.config_flow",
-    "custom_components.nest_yale_lock.nest_lock",
-    "custom_components.nest_yale_lock.protobuf_manager",
-    "custom_components.nest_yale_lock.state_manager"
+    "custom_components.nest_yale_lock.protobuf_manager"
   ],
   "requirements": [
     "protobuf==6.32.0",
     "PyJWT>=2.8.0,<3.0"
   ],
-  "version": "2025.10.19.7b43"
+  "version": "2025.11.6.b6"
 }

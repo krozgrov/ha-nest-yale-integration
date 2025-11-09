@@ -6,15 +6,15 @@ An integration for Home Assistant that connects your Google Nest x Yale Lock, en
 
 - Real-time Yale lock state via Nest Observe stream
 - Manual lock / unlock commands
-- Serial number, firmware, and basic diagnostics attributes 
+- Battery level sensor entity with percentage display
+- Serial number, firmware, and device information in Device Info card
+- Comprehensive device attributes (battery status, device ID, structure ID, etc.) 
 
-## Beta Status
+## Status
 
-> ⚠️ **Heads-up: this integration is in beta and still under active development.**
+The integration is now stable and production-ready. Core lock and unlock commands work reliably, and real-time state updates are handled via a persistent observe stream with automatic reconnection and authentication renewal.
 
-The core lock and unlock commands are now working, and real-time state updates are generally reliable.
-
-However, the integration still depends on partially reversed protobuf messages taken from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest), so gaps remain and rough edges are expected.
+> **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
 
 ## Known Limitations
@@ -22,6 +22,14 @@ However, the integration still depends on partially reversed protobuf messages t
 - Logs may show `DecodeError in StreamBody: Error parsing message with type 'nest.rpc.StreamBody'` due to incomplete protobuf decoding. This is **harmless** and does not affect functionality.
 - Additional message types beyond the basic lock trait are unmapped, limiting advanced diagnostics and telemetry.
 - API response formats and authentication flows may change, potentially causing breaking updates.
+
+## Features
+
+- **Long-running observe stream**: Maintains a persistent connection to the Nest API for real-time updates
+- **Automatic reconnection**: Connection failures are automatically detected and the stream reconnects with exponential backoff
+- **Automatic authentication renewal**: JWT tokens are automatically refreshed when they expire, eliminating the need for manual reloads
+- **Push-based updates**: State changes are pushed in real-time via the observe stream instead of polling
+- **Robust error handling**: Comprehensive error recovery and connection health monitoring
 
 
 ## Installation
