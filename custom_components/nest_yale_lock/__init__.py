@@ -39,22 +39,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator = NestCoordinator(hass, conn)
         _LOGGER.debug("Setting up coordinator")
         await coordinator.async_setup()
-        # Wait a moment for observer to start and potentially receive initial data
-        await asyncio.sleep(1)
-        # Retry initial data fetch if empty - try more times with longer waits
-        max_retries = 5
-        for attempt in range(max_retries):
+        # Retry initial data fetch if empty
+        for _ in range(3):
             await coordinator.async_refresh()
             if coordinator.data:
-                _LOGGER.info("Initial data fetched successfully after %d attempt(s)", attempt + 1)
                 break
-            if attempt < max_retries - 1:
-                _LOGGER.warning("Coordinator data still empty, retrying... (attempt %d/%d)", attempt + 1, max_retries)
-                # Increase wait time with each retry to give observer more time
-                await asyncio.sleep(3 + attempt)
+            _LOGGER.warning("Coordinator data still empty, retrying...")
+            await asyncio.sleep(2)
         _LOGGER.debug("Coordinator setup complete, initial data: %s", coordinator.data)
         if not coordinator.data:
-            _LOGGER.warning("Initial data still empty after %d attempts; continuing setup and waiting for observer updates", max_retries)
+            _LOGGER.warning("Initial data still empty; continuing setup and waiting for observer updates")
     except Exception as e:
         _LOGGER.error("Failed to initialize API client or coordinator: %s", e, exc_info=True)
         raise ConfigEntryNotReady(f"Failed to initialize: {e}") from e
