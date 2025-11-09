@@ -280,48 +280,80 @@ class NestAPIClient:
                             _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
                             continue
                         
-                        # Use the b2 approach: process chunks directly with _process_message
-                        # This matches the working b2 implementation, but with a timeout to prevent hanging
+                        # Clear buffer to ensure clean state
+                        self.protobuf_handler.buffer.clear()
+                        self.protobuf_handler.pending_length = None
+                        
+                        # Use _ingest_chunk to handle gRPC-web framing and incomplete chunks
+                        # Process chunks as they arrive and stop once we have lock data
                         timeout_seconds = 10  # Wait up to 10 seconds for initial data
                         start_time = asyncio.get_event_loop().time()
+                        chunk_count = 0
                         
                         try:
                             async for chunk in response.content.iter_chunked(1024):
                                 # Check timeout first - if we've been waiting too long, break
                                 elapsed = asyncio.get_event_loop().time() - start_time
                                 if elapsed > timeout_seconds:
-                                    _LOGGER.debug("refresh_state timeout after %d seconds, stopping chunk reading", timeout_seconds)
+                                    _LOGGER.debug("refresh_state timeout after %d seconds (%d chunks processed), stopping", 
+                                                timeout_seconds, chunk_count)
                                     break
                                 
                                 if not chunk:
                                     continue
                                 
-                                # Process chunk directly (b2 approach)
-                                locks_data = await self.protobuf_handler._process_message(chunk)
-                                if "yale" not in locks_data or not locks_data["yale"]:
-                                    continue
+                                chunk_count += 1
+                                _LOGGER.debug("refresh_state processing chunk %d (size: %d bytes)", chunk_count, len(chunk))
                                 
-                                # Found lock data - return immediately
-                                _LOGGER.info("refresh_state found lock data: %s", list(locks_data["yale"].keys()))
-                                self.current_state["devices"]["locks"] = locks_data["yale"]
-                                if locks_data.get("user_id"):
-                                    old_user_id = self._user_id
-                                    self._user_id = locks_data["user_id"]
-                                    self.current_state["user_id"] = self._user_id
-                                    if old_user_id != self._user_id:
-                                        _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                                if locks_data.get("structure_id"):
-                                    old_structure_id = self._structure_id
-                                    self._structure_id = locks_data["structure_id"]
-                                    self.current_state["structure_id"] = self._structure_id
-                                    if old_structure_id != self._structure_id:
-                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                                self.transport_url = base_url
-                                return locks_data["yale"]
+                                # Process chunk through _ingest_chunk to handle framing
+                                results = await self.protobuf_handler._ingest_chunk(chunk)
+                                
+                                # Check if we have lock data in any result
+                                for locks_data in results:
+                                    if "yale" in locks_data and locks_data["yale"]:
+                                        _LOGGER.info("refresh_state found lock data after %d chunks: %s", 
+                                                   chunk_count, list(locks_data["yale"].keys()))
+                                        self.current_state["devices"]["locks"] = locks_data["yale"]
+                                        if locks_data.get("user_id"):
+                                            old_user_id = self._user_id
+                                            self._user_id = locks_data["user_id"]
+                                            self.current_state["user_id"] = self._user_id
+                                            if old_user_id != self._user_id:
+                                                _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                        if locks_data.get("structure_id"):
+                                            old_structure_id = self._structure_id
+                                            self._structure_id = locks_data["structure_id"]
+                                            self.current_state["structure_id"] = self._structure_id
+                                            if old_structure_id != self._structure_id:
+                                                _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                        self.transport_url = base_url
+                                        return locks_data["yale"]
                         except asyncio.TimeoutError:
                             _LOGGER.debug("refresh_state timeout while reading chunks")
                         except Exception as e:
-                            _LOGGER.debug("refresh_state error processing chunks: %s", e)
+                            _LOGGER.warning("refresh_state error processing chunks: %s", e, exc_info=True)
+                        
+                        # Process any remaining buffer data after timeout or end of stream
+                        if self.protobuf_handler.buffer:
+                            _LOGGER.debug("refresh_state processing remaining buffer (size: %d bytes)", 
+                                        len(self.protobuf_handler.buffer))
+                            final_results = await self.protobuf_handler._ingest_chunk(b"")
+                            for locks_data in final_results:
+                                if "yale" in locks_data and locks_data["yale"]:
+                                    _LOGGER.info("refresh_state found lock data in final buffer processing: %s", 
+                                               list(locks_data["yale"].keys()))
+                                    self.current_state["devices"]["locks"] = locks_data["yale"]
+                                    if locks_data.get("user_id"):
+                                        self._user_id = locks_data["user_id"]
+                                        self.current_state["user_id"] = self._user_id
+                                    if locks_data.get("structure_id"):
+                                        self._structure_id = locks_data["structure_id"]
+                                        self.current_state["structure_id"] = self._structure_id
+                                    self.transport_url = base_url
+                                    return locks_data["yale"]
+                        
+                        _LOGGER.warning("refresh_state processed %d chunks but found no lock data. Buffer remaining: %d bytes", 
+                                      chunk_count, len(self.protobuf_handler.buffer))
                 except Exception as err:
                     last_error = err
                     _LOGGER.error("Refresh state failed via %s: %s", api_url, err, exc_info=True)
