@@ -30,14 +30,14 @@ def _normalize_base(url):
 
 
 def _transport_candidates(session_base):
-    candidates = []
-    normalized_session = _normalize_base(session_base)
-    if normalized_session:
-        candidates.append(normalized_session)
+    """Return the correct gRPC endpoint URL.
+    
+    Note: The transport_url from auth is the REST API (home.nest.com), not the gRPC endpoint.
+    We always use the correct gRPC endpoint (grpc-web.production.nest.com) directly.
+    """
+    # Always use the correct gRPC endpoint - no need for fallback
     default = _normalize_base(URL_PROTOBUF.format(grpc_hostname=PRODUCTION_HOSTNAME["grpc_hostname"]))
-    if default and default not in candidates:
-        candidates.append(default)
-    return candidates
+    return [default] if default else []
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -336,16 +336,15 @@ class NestAPIClient:
             # Rebuild headers with current token for each connection attempt
             headers = self._build_observe_headers()
             
-            # Prefer the known working transport_url first to avoid trying multiple URLs unnecessarily
+            # Use single correct gRPC endpoint (no need to try multiple URLs)
             candidate_bases = self._candidate_bases()
-            # If we have a known working transport_url, try it first (most likely to succeed)
-            if self.transport_url and len(candidate_bases) > 1:
-                normalized_transport = _normalize_base(self.transport_url)
-                if normalized_transport in candidate_bases:
-                    # Move the known working URL to the front
-                    candidate_bases.remove(normalized_transport)
-                    candidate_bases.insert(0, normalized_transport)
+            if not candidate_bases:
+                _LOGGER.error("No valid gRPC endpoint available")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)
+                continue
             
+            # We only have one URL now, but keep loop structure for consistency
             for base_url in candidate_bases:
                 api_url = f"{base_url}{ENDPOINT_OBSERVE}"
                 _LOGGER.debug("Starting observe stream with URL: %s", api_url)
@@ -389,9 +388,9 @@ class NestAPIClient:
                         yield locks_data
                     _LOGGER.warning("Observe stream finished for %s; reconnecting", api_url)
                     self.connection.connected = False
-                    # If this URL worked, remember it for next time
+                    # Remember the working URL (though we only have one now)
                     self.transport_url = base_url
-                    break  # Exit candidate loop since this URL worked
+                    break  # Exit candidate loop
                 except asyncio.TimeoutError:
                     elapsed = asyncio.get_event_loop().time() - last_data_time
                     _LOGGER.warning(
@@ -400,9 +399,8 @@ class NestAPIClient:
                         elapsed
                     )
                     self.connection.connected = False
-                    # If this URL worked before timing out, remember it for next time
-                    if self.transport_url != base_url:
-                        self.transport_url = base_url
+                    # Remember the URL (though we only have one now)
+                    self.transport_url = base_url
                     break  # Exit candidate loop to reconnect
                 except aiohttp.ClientResponseError as cre:
                     if cre.status in (401, 403):
