@@ -2,6 +2,12 @@
 
 An integration for Home Assistant that connects your Google Nest x Yale Lock, enabling control directly from Home Assistant using reversed-enginered protobuf messaging protocol.
 
+## Sponsor
+
+A lot of effort is going into this integration. So if you can afford it and want to support me:
+
+<a href="https://www.buymeacoffee.com/krozgrov" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+
 ## Features
 
 - Real-time Yale lock state via Nest Observe stream
