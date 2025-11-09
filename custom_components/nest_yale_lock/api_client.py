@@ -279,39 +279,67 @@ class NestAPIClient:
                             body = await response.text()
                             _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
                             continue
-                        # Read entire response body first to avoid chunk boundary issues
-                        # Then process it through _ingest_chunk which handles gRPC-web framing
-                        full_body = await response.read()
-                        if not full_body:
-                            _LOGGER.debug("Empty response body from refresh_state")
-                            continue
                         
                         # Clear buffer and pending_length to avoid interference from observer stream
                         # This ensures refresh_state processes a clean state
                         self.protobuf_handler.buffer.clear()
                         self.protobuf_handler.pending_length = None
                         
-                        # Process the full body through _ingest_chunk
-                        # This handles gRPC-web framing and varint extraction properly
-                        all_results = await self.protobuf_handler._ingest_chunk(full_body)
+                        # The Observe endpoint is a streaming endpoint, so we need to read chunks with a timeout
+                        # Process chunks as they arrive and stop once we have lock data
+                        all_results = []
+                        timeout_seconds = 10  # Wait up to 10 seconds for initial data
+                        start_time = asyncio.get_event_loop().time()
                         
-                        _LOGGER.debug("refresh_state processed %d result(s) from response (body size: %d bytes)", 
-                                    len(all_results), len(full_body))
+                        try:
+                            async for chunk in response.content.iter_chunked(1024):
+                                if not chunk:
+                                    continue
+                                
+                                # Process chunk through _ingest_chunk
+                                results = await self.protobuf_handler._ingest_chunk(chunk)
+                                all_results.extend(results)
+                                
+                                # Check if we have lock data yet
+                                for locks_data in all_results:
+                                    if "yale" in locks_data and locks_data["yale"]:
+                                        _LOGGER.info("refresh_state found lock data: %s", list(locks_data["yale"].keys()))
+                                        self.current_state["devices"]["locks"] = locks_data["yale"]
+                                        if locks_data.get("user_id"):
+                                            old_user_id = self._user_id
+                                            self._user_id = locks_data["user_id"]
+                                            self.current_state["user_id"] = self._user_id
+                                            if old_user_id != self._user_id:
+                                                _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                        if locks_data.get("structure_id"):
+                                            old_structure_id = self._structure_id
+                                            self._structure_id = locks_data["structure_id"]
+                                            self.current_state["structure_id"] = self._structure_id
+                                            if old_structure_id != self._structure_id:
+                                                _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                        self.transport_url = base_url
+                                        return locks_data["yale"]
+                                
+                                # Check timeout - if we've been waiting too long, break
+                                elapsed = asyncio.get_event_loop().time() - start_time
+                                if elapsed > timeout_seconds:
+                                    _LOGGER.debug("refresh_state timeout after %d seconds, stopping chunk reading", timeout_seconds)
+                                    break
+                        except asyncio.TimeoutError:
+                            _LOGGER.debug("refresh_state timeout while reading chunks")
                         
-                        # If _ingest_chunk didn't produce results, try processing any remaining buffer data
-                        # This handles cases where messages span multiple chunks
-                        if not all_results and self.protobuf_handler.buffer:
-                            _LOGGER.debug("No results from initial processing, checking buffer (size: %d bytes)", 
-                                        len(self.protobuf_handler.buffer))
-                            # Try processing remaining buffer with an empty chunk to trigger final processing
+                        # Process any remaining buffer data
+                        if self.protobuf_handler.buffer:
+                            _LOGGER.debug("Processing remaining buffer data (size: %d bytes)", len(self.protobuf_handler.buffer))
                             additional_results = await self.protobuf_handler._ingest_chunk(b"")
                             all_results.extend(additional_results)
-                            _LOGGER.debug("After buffer processing, total results: %d", len(all_results))
                         
-                        # Find the first result with yale data
+                        _LOGGER.debug("refresh_state processed %d result(s) from response", len(all_results))
+                        
+                        # Check again for lock data after processing buffer
                         for locks_data in all_results:
                             if "yale" in locks_data and locks_data["yale"]:
-                                _LOGGER.info("refresh_state found lock data: %s", list(locks_data["yale"].keys()))
+                                _LOGGER.info("refresh_state found lock data after buffer processing: %s", list(locks_data["yale"].keys()))
                                 self.current_state["devices"]["locks"] = locks_data["yale"]
                                 if locks_data.get("user_id"):
                                     old_user_id = self._user_id
@@ -333,8 +361,8 @@ class NestAPIClient:
                             _LOGGER.debug("refresh_state found %d result(s) but no yale data. Results: %s", 
                                         len(all_results), [list(r.keys()) for r in all_results])
                         else:
-                            _LOGGER.warning("refresh_state processed response (%d bytes) but got no results from _ingest_chunk. Buffer remaining: %d bytes", 
-                                          len(full_body), len(self.protobuf_handler.buffer))
+                            _LOGGER.warning("refresh_state processed response but got no results from _ingest_chunk. Buffer remaining: %d bytes", 
+                                          len(self.protobuf_handler.buffer))
                 except Exception as err:
                     last_error = err
                     _LOGGER.error("Refresh state failed via %s: %s", api_url, err, exc_info=True)
