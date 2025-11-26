@@ -247,7 +247,9 @@ class NestAPIClient:
             if not structures:
                 _LOGGER.warning("No structures found in user response")
                 return None
-            return next(iter(structures.keys()))
+            structure_key = next(iter(structures.keys()))
+            _LOGGER.info("fetch_structure_id returned: %s (from %d structures)", structure_key, len(structures))
+            return structure_key
 
     async def refresh_state(self):
         if not self.access_token:
@@ -294,14 +296,13 @@ class NestAPIClient:
                                     self.current_state["user_id"] = self._user_id
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                                if locks_data.get("structure_id"):
-                                    old_structure_id = self._structure_id
-                                    self._structure_id = locks_data["structure_id"]
-                                    self.current_state["structure_id"] = self._structure_id
-                                    if old_structure_id != self._structure_id:
-                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                                self.transport_url = base_url
-                                return locks_data["yale"]
+                            if locks_data.get("structure_id") and not self._structure_id:
+                                # Only update structure_id if we don't have one from fetch_structure_id
+                                self._structure_id = locks_data["structure_id"]
+                                self.current_state["structure_id"] = self._structure_id
+                                _LOGGER.info("Set structure_id from stream: %s", self._structure_id)
+                            self.transport_url = base_url
+                            return locks_data["yale"]
                 except asyncio.TimeoutError:
                     _LOGGER.debug("refresh_state timeout after 10 seconds")
                     last_error = TimeoutError("refresh_state timed out after 10 seconds")
@@ -396,12 +397,11 @@ class NestAPIClient:
                                 self.current_state["user_id"] = self._user_id
                                 if old_user_id != self._user_id:
                                     _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                            if locks_data.get("structure_id"):
-                                old_structure_id = self._structure_id
+                            if locks_data.get("structure_id") and not self._structure_id:
+                                # Only update structure_id if we don't have one from fetch_structure_id
                                 self._structure_id = locks_data["structure_id"]
                                 self.current_state["structure_id"] = self._structure_id
-                                if old_structure_id != self._structure_id:
-                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                _LOGGER.info("Set structure_id from stream: %s", self._structure_id)
                             self.transport_url = base_url
                         # Yield full locks_data including all_traits so coordinator can extract trait data
                         yield locks_data
