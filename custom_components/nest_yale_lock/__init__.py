@@ -42,21 +42,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         
         # Wait for observer stream to deliver lock data (more reliable than refresh_state)
         # The observer is already running after async_setup()
-        _LOGGER.debug("Waiting for observer to deliver lock data...")
-        for attempt in range(10):  # Wait up to 10 seconds
+        # Trait data comes AFTER catalog messages - may take 15-30 seconds
+        _LOGGER.info("Waiting for observer to deliver lock data (this may take up to 30 seconds)...")
+        for attempt in range(30):  # Wait up to 30 seconds
             if coordinator.data:
-                _LOGGER.info("Lock data received from observer after %d seconds", attempt)
+                _LOGGER.info("Lock data received from observer after %d seconds", attempt + 1)
                 break
+            if attempt > 0 and attempt % 10 == 0:
+                _LOGGER.debug("Still waiting for lock data... (%d seconds)", attempt)
             await asyncio.sleep(1)
-        
-        # If still no data, try refresh_state as fallback
-        if not coordinator.data:
-            _LOGGER.warning("No data from observer after 10s, trying refresh_state fallback...")
-            for _ in range(3):
-                await coordinator.async_refresh()
-                if coordinator.data:
-                    break
-                await asyncio.sleep(2)
         
         _LOGGER.debug("Coordinator setup complete, initial data: %s", coordinator.data)
         if not coordinator.data:
