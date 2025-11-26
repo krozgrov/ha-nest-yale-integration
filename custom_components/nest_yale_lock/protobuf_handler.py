@@ -110,7 +110,8 @@ class NestProtobufHandler:
             del self.buffer[:self.pending_length]
             self.pending_length = None
             locks_data = await self._process_message(message)
-            if locks_data.get("yale"):
+            # Include results with yale data OR auth_failed flag
+            if locks_data.get("yale") or locks_data.get("auth_failed"):
                 results.append(locks_data)
 
         if (
@@ -122,7 +123,8 @@ class NestProtobufHandler:
             del self.buffer[:self.pending_length]
             self.pending_length = None
             locks_data = await self._process_message(message)
-            if locks_data.get("yale"):
+            # Include results with yale data OR auth_failed flag
+            if locks_data.get("yale") or locks_data.get("auth_failed"):
                 results.append(locks_data)
 
         return results
