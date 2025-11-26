@@ -470,8 +470,13 @@ class NestAPIClient:
         # Include structure id when available (matches working test client behavior)
         effective_structure_id = structure_id or self._structure_id
         if effective_structure_id:
-            headers["X-Nest-Structure-Id"] = effective_structure_id
-            _LOGGER.debug("Using structure_id: %s", effective_structure_id)
+            # Try full format: structure.UUID
+            if not effective_structure_id.startswith("structure."):
+                full_structure_id = f"structure.{effective_structure_id}"
+            else:
+                full_structure_id = effective_structure_id
+            headers["X-Nest-Structure-Id"] = full_structure_id
+            _LOGGER.debug("Using structure_id: %s (header: %s)", effective_structure_id, full_structure_id)
         if self._user_id:
             headers["X-nl-user-id"] = str(self._user_id)
 
@@ -515,7 +520,7 @@ class NestAPIClient:
                         # Rebuild headers with new token
                         headers["Authorization"] = f"Basic {self.access_token}"
                         if effective_structure_id:
-                            headers["X-Nest-Structure-Id"] = effective_structure_id
+                            headers["X-Nest-Structure-Id"] = full_structure_id
                         if self._user_id:
                             headers["X-nl-user-id"] = str(self._user_id)
                         reauthed = True
