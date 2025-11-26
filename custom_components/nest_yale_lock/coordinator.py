@@ -39,10 +39,10 @@ class NestCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Observer task created: %s", self._observer_task)
 
     async def _async_update_data(self):
-        """Fetch data from API client (fallback only when observe stream is unhealthy or has no data)."""
-        # Skip polling if observe stream is healthy AND we have data
-        if self._observer_healthy and self.data:
-            _LOGGER.debug("Skipping fallback poll - observe stream is healthy and has data")
+        """Fetch data from API client (fallback only when observe stream is unhealthy)."""
+        # Skip polling if observe stream is healthy - it provides real-time updates
+        if self._observer_healthy:
+            _LOGGER.debug("Skipping fallback poll - observe stream is healthy")
             return self.data
         
         _LOGGER.debug("Starting fallback _async_update_data (observe stream unhealthy)")
@@ -69,6 +69,9 @@ class NestCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Starting _run_observer")
         try:
             async for update in self.api_client.observe():
+                # Mark observer as healthy when we receive updates
+                self._observer_healthy = True
+                
                 if update:
                     _LOGGER.debug("Received observer update: %s", update)
                     normalized_update = update.get("yale", update) if update else {}
@@ -95,8 +98,6 @@ class NestCoordinator(DataUpdateCoordinator):
                             else:
                                 _LOGGER.debug("No trait data found for device %s in all_traits (keys: %s)", device_id, list(all_traits.keys())[:5])
                         
-                        # Only mark observer as healthy when we have actual lock data
-                        self._observer_healthy = True
                         self.api_client.current_state["user_id"] = update.get("user_id")  # Persist user_id
                         self.api_client.current_state["all_traits"] = all_traits  # Persist trait data
                         self.async_set_updated_data(normalized_update)
