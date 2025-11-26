@@ -273,11 +273,24 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         Reconnecting the observe stream often restores connectivity.
         """
         try:
-            api_client = self._coordinator.api_client
-            # Mark connection as disconnected to trigger reconnection
+            coordinator = self._coordinator
+            api_client = coordinator.api_client
+            
+            # Mark connection as disconnected
             if api_client.connection:
                 api_client.connection.connected = False
-                _LOGGER.debug("Marked connection as disconnected to trigger observe stream reconnection")
+            
+            # Cancel the current observer task to force immediate reconnection
+            if hasattr(coordinator, '_observer_task') and coordinator._observer_task:
+                _LOGGER.info("Cancelling observer task to force reconnection")
+                coordinator._observer_task.cancel()
+                try:
+                    await coordinator._observer_task
+                except asyncio.CancelledError:
+                    pass
+                # Restart the observer
+                coordinator._observer_task = coordinator.hass.loop.create_task(coordinator._run_observer())
+                _LOGGER.info("Observer task restarted")
         except Exception as e:
             _LOGGER.warning("Failed to trigger observe reconnection: %s", e)
 
