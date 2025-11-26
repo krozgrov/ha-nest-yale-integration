@@ -8,11 +8,15 @@ from .const import DOMAIN, GRPC_CODE_INTERNAL
 from .entity import NestYaleEntity
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 from .proto.nest import rpc_pb2
+from .proto.nestlabs.gateway import v1_pb2
 
 _LOGGER = logging.getLogger(__name__)
 
 # Errors that indicate the connection to the lock is stale and needs reconnection
 RECONNECT_ERROR_CODES = {GRPC_CODE_INTERNAL}  # "Internal error encountered"
+
+# TraitOperation progress states
+PROGRESS_STATE_NAMES = {0: "UNSPECIFIED", 1: "QUEUED", 2: "PENDING", 3: "STARTED", 4: "COMPLETE"}
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     _LOGGER.debug("Starting async_setup_entry for lock platform, entry_id: %s", entry.entry_id)
@@ -181,12 +185,38 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         if not response:
             return True, None, None
         
+        # First try to parse as ResourceCommandResponseFromAPI (wrapper for command responses)
         try:
-            # Try to parse as StreamBody which contains Status
+            api_response = v1_pb2.ResourceCommandResponseFromAPI()
+            api_response.ParseFromString(response)
+            
+            # Check each ResourceCommandResponse
+            for cmd_response in api_response.resouceCommandResponse:
+                for trait_op in cmd_response.traitOperations:
+                    progress = trait_op.progress
+                    progress_name = PROGRESS_STATE_NAMES.get(progress, f"UNKNOWN({progress})")
+                    _LOGGER.info("Command progress: %s", progress_name)
+                    
+                    # Check for status error in the TraitOperation
+                    if trait_op.HasField("status") and trait_op.status.code != 0:
+                        error_code = trait_op.status.code
+                        error_message = trait_op.status.message or f"Error code {error_code}"
+                        _LOGGER.warning("TraitOperation error: %s (code=%s)", error_message, error_code)
+                        return False, error_code, error_message
+                    
+                    # If progress is QUEUED or PENDING, the command might not reach the lock
+                    if progress in (1, 2):  # QUEUED or PENDING
+                        _LOGGER.warning("Command is %s - lock may be unreachable", progress_name)
+            
+            return True, None, None
+        except Exception as e:
+            _LOGGER.debug("Could not parse as ResourceCommandResponseFromAPI: %s", e)
+        
+        # Try to parse as StreamBody which contains Status
+        try:
             stream_body = rpc_pb2.StreamBody()
             stream_body.ParseFromString(response)
             
-            # Check if status field indicates an error
             if stream_body.HasField("status") and stream_body.status.code != 0:
                 error_code = stream_body.status.code
                 error_message = stream_body.status.message or f"Error code {error_code}"
@@ -194,21 +224,21 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             
             return True, None, None
         except Exception as e:
-            # If we can't parse as StreamBody, try parsing just the Status
-            try:
-                status = rpc_pb2.Status()
-                status.ParseFromString(response)
-                if status.code != 0:
-                    error_code = status.code
-                    error_message = status.message or f"Error code {error_code}"
-                    return False, error_code, error_message
-                return True, None, None
-            except Exception:
-                pass
-            
-            # Log parse failure but don't treat as error - response format may vary
-            _LOGGER.debug("Could not parse command response as protobuf: %s", e)
+            _LOGGER.debug("Could not parse as StreamBody: %s", e)
+        
+        # Try parsing just the Status
+        try:
+            status = rpc_pb2.Status()
+            status.ParseFromString(response)
+            if status.code != 0:
+                error_code = status.code
+                error_message = status.message or f"Error code {error_code}"
+                return False, error_code, error_message
             return True, None, None
+        except Exception:
+            pass
+        
+        return True, None, None
 
     async def _send_command(self, lock: bool):
         # Refresh identifiers before issuing the command to keep payload accurate.
