@@ -39,13 +39,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator = NestCoordinator(hass, conn)
         _LOGGER.debug("Setting up coordinator")
         await coordinator.async_setup()
-        # Retry initial data fetch if empty
-        for _ in range(3):
-            await coordinator.async_refresh()
+        
+        # Wait for observer stream to deliver lock data (more reliable than refresh_state)
+        # The observer is already running after async_setup()
+        _LOGGER.debug("Waiting for observer to deliver lock data...")
+        for attempt in range(10):  # Wait up to 10 seconds
             if coordinator.data:
+                _LOGGER.info("Lock data received from observer after %d seconds", attempt)
                 break
-            _LOGGER.warning("Coordinator data still empty, retrying...")
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
+        
+        # If still no data, try refresh_state as fallback
+        if not coordinator.data:
+            _LOGGER.warning("No data from observer after 10s, trying refresh_state fallback...")
+            for _ in range(3):
+                await coordinator.async_refresh()
+                if coordinator.data:
+                    break
+                await asyncio.sleep(2)
+        
         _LOGGER.debug("Coordinator setup complete, initial data: %s", coordinator.data)
         if not coordinator.data:
             _LOGGER.warning("Initial data still empty; continuing setup and waiting for observer updates")
