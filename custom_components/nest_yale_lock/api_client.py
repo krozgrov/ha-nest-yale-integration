@@ -63,9 +63,8 @@ class ConnectionShim:
                 )
             self.connected = True
             try:
-                # Use iter_chunked with large buffer to get complete messages
-                # Nest messages are typically 2-4KB, so 64KB should contain multiple complete messages
-                async for chunk in response.content.iter_chunked(65536):
+                while True:
+                    chunk = await asyncio.wait_for(response.content.readany(), timeout=read_timeout)
                     if not chunk:
                         break
                     if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -247,9 +246,7 @@ class NestAPIClient:
             if not structures:
                 _LOGGER.warning("No structures found in user response")
                 return None
-            structure_key = next(iter(structures.keys()))
-            _LOGGER.info("fetch_structure_id returned: %s (from %d structures)", structure_key, len(structures))
-            return structure_key
+            return next(iter(structures.keys()))
 
     async def refresh_state(self):
         if not self.access_token:
@@ -277,17 +274,17 @@ class NestAPIClient:
                 api_url = f"{base_url}{ENDPOINT_OBSERVE}"
                 _LOGGER.debug("Starting refresh_state with URL: %s", api_url)
                 try:
-                    # Accumulate chunks until we can parse a complete message
+                    # Use the exact b2 approach that worked: session.post with iter_chunked
+                    # Add timeout wrapper to prevent hanging
                     async with asyncio.timeout(10):  # 10 second timeout
                         async with self.session.post(api_url, headers=headers, data=observe_payload) as response:
                             if response.status != 200:
                                 body = await response.text()
                                 _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
                                 continue
-                            self.protobuf_handler.clear_accumulator()
-                            async for chunk in response.content.iter_chunked(65536):
-                                locks_data = await self.protobuf_handler.accumulate_and_parse(chunk)
-                                if not locks_data.get("yale"):
+                            async for chunk in response.content.iter_chunked(1024):
+                                locks_data = await self.protobuf_handler._process_message(chunk)
+                                if "yale" not in locks_data:
                                     continue
                                 self.current_state["devices"]["locks"] = locks_data["yale"]
                                 if locks_data.get("user_id"):
@@ -296,13 +293,14 @@ class NestAPIClient:
                                     self.current_state["user_id"] = self._user_id
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                            if locks_data.get("structure_id") and not self._structure_id:
-                                # Only update structure_id if we don't have one from fetch_structure_id
-                                self._structure_id = locks_data["structure_id"]
-                                self.current_state["structure_id"] = self._structure_id
-                                _LOGGER.info("Set structure_id from stream: %s", self._structure_id)
-                            self.transport_url = base_url
-                            return locks_data["yale"]
+                                if locks_data.get("structure_id"):
+                                    old_structure_id = self._structure_id
+                                    self._structure_id = locks_data["structure_id"]
+                                    self.current_state["structure_id"] = self._structure_id
+                                    if old_structure_id != self._structure_id:
+                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                self.transport_url = base_url
+                                return locks_data["yale"]
                 except asyncio.TimeoutError:
                     _LOGGER.debug("refresh_state timeout after 10 seconds")
                     last_error = TimeoutError("refresh_state timed out after 10 seconds")
@@ -369,13 +367,12 @@ class NestAPIClient:
                 _LOGGER.debug("Starting observe stream with URL: %s", api_url)
                 try:
                     _LOGGER.info("Observe stream connected to %s", api_url)
-                    self.protobuf_handler.clear_accumulator()
                     async for chunk in self.connection.stream(api_url, headers, observe_payload, read_timeout=OBSERVE_IDLE_RESET_SECONDS):
                         # Reset backoff on any successful data
                         backoff = API_RETRY_DELAY_SECONDS
                         self._connect_failures = 0
                         current_time = asyncio.get_event_loop().time()
-                        locks_data = await self.protobuf_handler.accumulate_and_parse(chunk)
+                        locks_data = await self.protobuf_handler._process_message(chunk)
                         
                         # Check for authentication failure
                         if locks_data.get("auth_failed"):
@@ -388,7 +385,7 @@ class NestAPIClient:
                             _LOGGER.info("Re-authenticated, reconnecting observe stream with new token")
                             break  # Break inner loop to reconnect with new token
                         
-                        if locks_data.get("yale"):
+                        if "yale" in locks_data:
                             last_data_time = current_time
                             _LOGGER.debug("Observe stream received yale data")
                             if locks_data.get("user_id"):
@@ -397,11 +394,12 @@ class NestAPIClient:
                                 self.current_state["user_id"] = self._user_id
                                 if old_user_id != self._user_id:
                                     _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                            if locks_data.get("structure_id") and not self._structure_id:
-                                # Only update structure_id if we don't have one from fetch_structure_id
+                            if locks_data.get("structure_id"):
+                                old_structure_id = self._structure_id
                                 self._structure_id = locks_data["structure_id"]
                                 self.current_state["structure_id"] = self._structure_id
-                                _LOGGER.info("Set structure_id from stream: %s", self._structure_id)
+                                if old_structure_id != self._structure_id:
+                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
                             self.transport_url = base_url
                         # Yield full locks_data including all_traits so coordinator can extract trait data
                         yield locks_data
