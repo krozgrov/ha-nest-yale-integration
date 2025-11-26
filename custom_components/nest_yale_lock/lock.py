@@ -172,7 +172,7 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                       self._attr_unique_id, kwargs, self.state)
         await self._send_command(False)
 
-    def _parse_command_response(self, response: bytes) -> tuple[bool, int | None, str | None]:
+    def _parse_command_response(self, response: bytes):
         """Parse command response to check for errors.
         
         Returns:
