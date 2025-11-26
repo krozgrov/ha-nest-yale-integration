@@ -36,7 +36,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.debug("Creating NestAPIClient")
         conn = await NestAPIClient.create(hass, issue_token, None, cookies)
         _LOGGER.debug("Creating NestCoordinator")
-        coordinator = NestCoordinator(hass, conn)
+        coordinator = NestCoordinator(hass, conn, entry)
         _LOGGER.debug("Setting up coordinator")
         await coordinator.async_setup()
         # Retry initial data fetch if empty

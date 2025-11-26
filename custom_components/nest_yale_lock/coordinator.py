@@ -10,7 +10,7 @@ _LOGGER = logging.getLogger(__name__)
 class NestCoordinator(DataUpdateCoordinator):
     """Coordinator to manage Nest Yale Lock data."""
 
-    def __init__(self, hass: HomeAssistant, api_client):
+    def __init__(self, hass: HomeAssistant, api_client, config_entry=None):
         """Initialize the coordinator."""
         super().__init__(
             hass,
@@ -19,6 +19,7 @@ class NestCoordinator(DataUpdateCoordinator):
             update_interval=UPDATE_INTERVAL_SECONDS,
         )
         self.api_client = api_client
+        self.config_entry = config_entry  # Store for reload functionality
         self._observer_task = None
         self._observer_healthy = False  # Track if observe stream is working
         self.data = {}

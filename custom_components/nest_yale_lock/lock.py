@@ -296,33 +296,26 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             raise
 
     async def _trigger_observe_reconnect(self):
-        """Trigger a reconnection of the observe stream.
+        """Trigger a full reconnection by reloading the integration.
         
         This is called when a command fails with an error indicating the
         connection to the lock is stale (e.g., "Internal error encountered").
-        Reconnecting the observe stream often restores connectivity.
+        A full reload re-authenticates and creates a fresh connection.
         """
         try:
-            coordinator = self._coordinator
-            api_client = coordinator.api_client
+            _LOGGER.info("Triggering integration reload to restore connection")
             
-            # Mark connection as disconnected
-            if api_client.connection:
-                api_client.connection.connected = False
+            # Get the config entry for this integration
+            entry = self._coordinator.config_entry
             
-            # Cancel the current observer task to force immediate reconnection
-            if hasattr(coordinator, '_observer_task') and coordinator._observer_task:
-                _LOGGER.info("Cancelling observer task to force reconnection")
-                coordinator._observer_task.cancel()
-                try:
-                    await coordinator._observer_task
-                except asyncio.CancelledError:
-                    pass
-                # Restart the observer
-                coordinator._observer_task = coordinator.hass.loop.create_task(coordinator._run_observer())
-                _LOGGER.info("Observer task restarted")
+            # Schedule the reload - this will unload and reload the entire integration
+            # which re-authenticates and creates fresh connections
+            self.hass.async_create_task(
+                self.hass.config_entries.async_reload(entry.entry_id)
+            )
+            _LOGGER.info("Integration reload scheduled")
         except Exception as e:
-            _LOGGER.warning("Failed to trigger observe reconnection: %s", e)
+            _LOGGER.warning("Failed to trigger integration reload: %s", e)
 
     async def async_added_to_hass(self):
         _LOGGER.debug("Entity %s added to HA", self._attr_unique_id)
