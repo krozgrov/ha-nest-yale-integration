@@ -269,7 +269,7 @@ class NestAPIClient:
 
         observe_payload = self._get_observe_payload()
         retries = 0
-        max_retries = 3
+        max_retries = 1  # Quick fail - observer stream will provide data
         last_error = None
 
         while retries < max_retries:
