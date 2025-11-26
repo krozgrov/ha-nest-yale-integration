@@ -227,7 +227,8 @@ class NestProtobufHandler:
                 trait = weave_security_pb2.BoltLockTrait()
                 property_any.Unpack(trait)
                 state_val = trait.state
-                actuator_state = trait.actuator_state if trait.HasField("actuator_state") else None
+                # actuatorState is an enum field, use direct access (0 = UNSPECIFIED)
+                actuator_state = trait.actuatorState if trait.actuatorState != 0 else None
                 _LOGGER.info("✅ Decoded BoltLockTrait for %s: state=%s actuator_state=%s", obj_id, state_val, actuator_state)
                 if obj_id and obj_id.startswith("DEVICE_"):
                     if obj_id not in locks_data["yale"]:
