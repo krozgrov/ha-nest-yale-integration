@@ -275,15 +275,16 @@ class NestAPIClient:
                 api_url = f"{base_url}{ENDPOINT_OBSERVE}"
                 _LOGGER.debug("Starting refresh_state with URL: %s", api_url)
                 try:
-                    # Use large chunk size to get complete messages
+                    # Accumulate chunks until we can parse a complete message
                     async with asyncio.timeout(10):  # 10 second timeout
                         async with self.session.post(api_url, headers=headers, data=observe_payload) as response:
                             if response.status != 200:
                                 body = await response.text()
                                 _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
                                 continue
+                            self.protobuf_handler.clear_accumulator()
                             async for chunk in response.content.iter_chunked(65536):
-                                locks_data = await self.protobuf_handler._process_message(chunk)
+                                locks_data = await self.protobuf_handler.accumulate_and_parse(chunk)
                                 if not locks_data.get("yale"):
                                     continue
                                 self.current_state["devices"]["locks"] = locks_data["yale"]
@@ -367,12 +368,13 @@ class NestAPIClient:
                 _LOGGER.debug("Starting observe stream with URL: %s", api_url)
                 try:
                     _LOGGER.info("Observe stream connected to %s", api_url)
+                    self.protobuf_handler.clear_accumulator()
                     async for chunk in self.connection.stream(api_url, headers, observe_payload, read_timeout=OBSERVE_IDLE_RESET_SECONDS):
                         # Reset backoff on any successful data
                         backoff = API_RETRY_DELAY_SECONDS
                         self._connect_failures = 0
                         current_time = asyncio.get_event_loop().time()
-                        locks_data = await self.protobuf_handler._process_message(chunk)
+                        locks_data = await self.protobuf_handler.accumulate_and_parse(chunk)
                         
                         # Check for authentication failure
                         if locks_data.get("auth_failed"):
@@ -385,7 +387,7 @@ class NestAPIClient:
                             _LOGGER.info("Re-authenticated, reconnecting observe stream with new token")
                             break  # Break inner loop to reconnect with new token
                         
-                        if "yale" in locks_data:
+                        if locks_data.get("yale"):
                             last_data_time = current_time
                             _LOGGER.debug("Observe stream received yale data")
                             if locks_data.get("user_id"):
