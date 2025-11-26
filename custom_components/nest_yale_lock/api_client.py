@@ -274,38 +274,36 @@ class NestAPIClient:
                 api_url = f"{base_url}{ENDPOINT_OBSERVE}"
                 _LOGGER.debug("Starting refresh_state with URL: %s", api_url)
                 try:
-                    # Use the exact b2 approach that worked: session.post with iter_chunked
-                    # Add timeout wrapper to prevent hanging
+                    # Read full response with timeout - simpler and more reliable
                     async with asyncio.timeout(10):  # 10 second timeout
                         async with self.session.post(api_url, headers=headers, data=observe_payload) as response:
                             if response.status != 200:
                                 body = await response.text()
                                 _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
                                 continue
-                            # Reset buffer for fresh connection
-                            self.protobuf_handler.buffer.clear()
-                            self.protobuf_handler.pending_length = None
-                            async for chunk in response.content.iter_chunked(1024):
-                                # Use _ingest_chunk for proper message buffering
-                                results = await self.protobuf_handler._ingest_chunk(chunk)
-                                for locks_data in results:
-                                    if "yale" not in locks_data or not locks_data["yale"]:
-                                        continue
-                                    self.current_state["devices"]["locks"] = locks_data["yale"]
-                                    if locks_data.get("user_id"):
-                                        old_user_id = self._user_id
-                                        self._user_id = locks_data["user_id"]
-                                        self.current_state["user_id"] = self._user_id
-                                        if old_user_id != self._user_id:
-                                            _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                                    if locks_data.get("structure_id"):
-                                        old_structure_id = self._structure_id
-                                        self._structure_id = locks_data["structure_id"]
-                                        self.current_state["structure_id"] = self._structure_id
-                                        if old_structure_id != self._structure_id:
-                                            _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                                    self.transport_url = base_url
-                                    return locks_data["yale"]
+                            # Read full response body
+                            full_response = await response.read()
+                            if not full_response:
+                                continue
+                            _LOGGER.debug("refresh_state received %d bytes", len(full_response))
+                            locks_data = await self.protobuf_handler._process_message(full_response)
+                            if "yale" not in locks_data or not locks_data["yale"]:
+                                continue
+                            self.current_state["devices"]["locks"] = locks_data["yale"]
+                            if locks_data.get("user_id"):
+                                old_user_id = self._user_id
+                                self._user_id = locks_data["user_id"]
+                                self.current_state["user_id"] = self._user_id
+                                if old_user_id != self._user_id:
+                                    _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                            if locks_data.get("structure_id"):
+                                old_structure_id = self._structure_id
+                                self._structure_id = locks_data["structure_id"]
+                                self.current_state["structure_id"] = self._structure_id
+                                if old_structure_id != self._structure_id:
+                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                            self.transport_url = base_url
+                            return locks_data["yale"]
                 except asyncio.TimeoutError:
                     _LOGGER.debug("refresh_state timeout after 10 seconds")
                     last_error = TimeoutError("refresh_state timed out after 10 seconds")
@@ -372,58 +370,43 @@ class NestAPIClient:
                 _LOGGER.debug("Starting observe stream with URL: %s", api_url)
                 try:
                     _LOGGER.info("Observe stream connected to %s", api_url)
-                    # Reset buffer for fresh connection
-                    self.protobuf_handler.buffer.clear()
-                    self.protobuf_handler.pending_length = None
-                    auth_failed = False
                     async for chunk in self.connection.stream(api_url, headers, observe_payload, read_timeout=OBSERVE_IDLE_RESET_SECONDS):
                         # Reset backoff on any successful data
                         backoff = API_RETRY_DELAY_SECONDS
                         self._connect_failures = 0
                         current_time = asyncio.get_event_loop().time()
+                        # connection.stream uses readany() which gives natural message boundaries
+                        locks_data = await self.protobuf_handler._process_message(chunk)
                         
-                        # Use _ingest_chunk for proper message buffering
-                        results = await self.protobuf_handler._ingest_chunk(chunk)
+                        # Check for authentication failure
+                        if locks_data.get("auth_failed"):
+                            _LOGGER.warning("Observe stream reported authentication failure, triggering re-auth")
+                            self.connection.connected = False
+                            self.access_token = None
+                            await self.authenticate()
+                            # Rebuild headers with new token before reconnecting
+                            headers = self._build_observe_headers()
+                            _LOGGER.info("Re-authenticated, reconnecting observe stream with new token")
+                            break  # Break inner loop to reconnect with new token
                         
-                        # If no complete messages yet, yield empty update to keep coordinator alive
-                        if not results:
-                            yield {"yale": {}, "user_id": None, "structure_id": None, "all_traits": {}}
-                            continue
-                        
-                        for locks_data in results:
-                            # Check for authentication failure
-                            if locks_data.get("auth_failed"):
-                                _LOGGER.warning("Observe stream reported authentication failure, triggering re-auth")
-                                self.connection.connected = False
-                                self.access_token = None
-                                await self.authenticate()
-                                # Rebuild headers with new token before reconnecting
-                                headers = self._build_observe_headers()
-                                _LOGGER.info("Re-authenticated, reconnecting observe stream with new token")
-                                auth_failed = True
-                                break  # Break from for loop
-                            
-                            if "yale" in locks_data:
-                                last_data_time = current_time
-                                _LOGGER.debug("Observe stream received yale data")
-                                if locks_data.get("user_id"):
-                                    old_user_id = self._user_id
-                                    self._user_id = locks_data["user_id"]
-                                    self.current_state["user_id"] = self._user_id
-                                    if old_user_id != self._user_id:
-                                        _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                                if locks_data.get("structure_id"):
-                                    old_structure_id = self._structure_id
-                                    self._structure_id = locks_data["structure_id"]
-                                    self.current_state["structure_id"] = self._structure_id
-                                    if old_structure_id != self._structure_id:
-                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                                self.transport_url = base_url
-                            # Yield full locks_data including all_traits so coordinator can extract trait data
-                            yield locks_data
-                        
-                        if auth_failed:
-                            break  # Break from async for loop
+                        if "yale" in locks_data:
+                            last_data_time = current_time
+                            _LOGGER.debug("Observe stream received yale data")
+                            if locks_data.get("user_id"):
+                                old_user_id = self._user_id
+                                self._user_id = locks_data["user_id"]
+                                self.current_state["user_id"] = self._user_id
+                                if old_user_id != self._user_id:
+                                    _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                            if locks_data.get("structure_id"):
+                                old_structure_id = self._structure_id
+                                self._structure_id = locks_data["structure_id"]
+                                self.current_state["structure_id"] = self._structure_id
+                                if old_structure_id != self._structure_id:
+                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                            self.transport_url = base_url
+                        # Yield full locks_data including all_traits so coordinator can extract trait data
+                        yield locks_data
                     _LOGGER.warning("Observe stream finished for %s; reconnecting", api_url)
                     self.connection.connected = False
                     # Remember the working URL (though we only have one now)
