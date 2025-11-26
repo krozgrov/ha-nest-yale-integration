@@ -296,11 +296,12 @@ class NestAPIClient:
                                     self.current_state["user_id"] = self._user_id
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                            if locks_data.get("structure_id") and not self._structure_id:
-                                # Only update structure_id if we don't have one from fetch_structure_id
+                            if locks_data.get("structure_id"):
+                                old_structure_id = self._structure_id
                                 self._structure_id = locks_data["structure_id"]
                                 self.current_state["structure_id"] = self._structure_id
-                                _LOGGER.info("Set structure_id from stream: %s", self._structure_id)
+                                if old_structure_id != self._structure_id:
+                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
                             self.transport_url = base_url
                             return locks_data["yale"]
                 except asyncio.TimeoutError:
@@ -397,11 +398,12 @@ class NestAPIClient:
                                 self.current_state["user_id"] = self._user_id
                                 if old_user_id != self._user_id:
                                     _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                            if locks_data.get("structure_id") and not self._structure_id:
-                                # Only update structure_id if we don't have one from fetch_structure_id
+                            if locks_data.get("structure_id"):
+                                old_structure_id = self._structure_id
                                 self._structure_id = locks_data["structure_id"]
                                 self.current_state["structure_id"] = self._structure_id
-                                _LOGGER.info("Set structure_id from stream: %s", self._structure_id)
+                                if old_structure_id != self._structure_id:
+                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
                             self.transport_url = base_url
                         # Yield full locks_data including all_traits so coordinator can extract trait data
                         yield locks_data
