@@ -264,10 +264,17 @@ class NestProtobufHandler:
                 trait = nest_structure_pb2.StructureInfoTrait()
                 property_any.Unpack(trait)
                 trait_info["decoded"] = True
-                trait_info["data"] = {"structure_name": trait.name if trait.name else None}
-                if obj_id and obj_id.startswith("STRUCTURE_"):
-                    locks_data["structure_id"] = obj_id
-                    _LOGGER.info("✅ Decoded StructureInfoTrait: structure_id=%s", obj_id)
+                # StructureInfoTrait has legacy_id, ssid, resource_status - no name field
+                structure_id = None
+                if trait.legacy_id:
+                    # legacy_id format is often "structure.XXXX" - extract the ID part
+                    structure_id = trait.legacy_id.split(".")[-1] if "." in trait.legacy_id else trait.legacy_id
+                elif obj_id and obj_id.startswith("STRUCTURE_"):
+                    structure_id = obj_id
+                trait_info["data"] = {"legacy_id": trait.legacy_id, "structure_id": structure_id}
+                if structure_id:
+                    locks_data["structure_id"] = structure_id
+                    _LOGGER.info("✅ Decoded StructureInfoTrait: structure_id=%s (legacy_id=%s)", structure_id, trait.legacy_id)
             
             # UserInfoTrait
             elif "UserInfoTrait" in type_url:
