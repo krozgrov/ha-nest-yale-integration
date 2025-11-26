@@ -71,8 +71,10 @@ CONF_COOKIES = "cookies"
 # Set to 10 minutes since we rely on push-based observe stream for real-time updates
 UPDATE_INTERVAL_SECONDS = timedelta(minutes=10)  # Use timedelta for DataUpdateCoordinator
 
-# Command Response Error Codes
-COMMAND_ERROR_CODE_FAILED = "12020802"  # Protobuf error code indicating command failure
+# gRPC Error Codes (from google.rpc.Code)
+# See: https://grpc.io/docs/guides/status-codes/
+GRPC_CODE_OK = 0
+GRPC_CODE_INTERNAL = 13  # "Internal error encountered" - often means lock is unreachable
 
 def parse_cookies(cookie_string):
     """Parses a cookie string into a dictionary."""

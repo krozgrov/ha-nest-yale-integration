@@ -4,11 +4,15 @@ from homeassistant.components.lock import LockEntity, LockState
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from .const import DOMAIN, COMMAND_ERROR_CODE_FAILED
+from .const import DOMAIN, GRPC_CODE_INTERNAL
 from .entity import NestYaleEntity
 from .proto.weave.trait import security_pb2 as weave_security_pb2
+from .proto.nest import rpc_pb2
 
 _LOGGER = logging.getLogger(__name__)
+
+# Errors that indicate the connection to the lock is stale and needs reconnection
+RECONNECT_ERROR_CODES = {GRPC_CODE_INTERNAL}  # "Internal error encountered"
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     _LOGGER.debug("Starting async_setup_entry for lock platform, entry_id: %s", entry.entry_id)
@@ -168,6 +172,44 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                       self._attr_unique_id, kwargs, self.state)
         await self._send_command(False)
 
+    def _parse_command_response(self, response: bytes) -> tuple[bool, int | None, str | None]:
+        """Parse command response to check for errors.
+        
+        Returns:
+            tuple: (success: bool, error_code: int | None, error_message: str | None)
+        """
+        if not response:
+            return True, None, None
+        
+        try:
+            # Try to parse as StreamBody which contains Status
+            stream_body = rpc_pb2.StreamBody()
+            stream_body.ParseFromString(response)
+            
+            # Check if status field indicates an error
+            if stream_body.HasField("status") and stream_body.status.code != 0:
+                error_code = stream_body.status.code
+                error_message = stream_body.status.message or f"Error code {error_code}"
+                return False, error_code, error_message
+            
+            return True, None, None
+        except Exception as e:
+            # If we can't parse as StreamBody, try parsing just the Status
+            try:
+                status = rpc_pb2.Status()
+                status.ParseFromString(response)
+                if status.code != 0:
+                    error_code = status.code
+                    error_message = status.message or f"Error code {error_code}"
+                    return False, error_code, error_message
+                return True, None, None
+            except Exception:
+                pass
+            
+            # Log parse failure but don't treat as error - response format may vary
+            _LOGGER.debug("Could not parse command response as protobuf: %s", e)
+            return True, None, None
+
     async def _send_command(self, lock: bool):
         # Refresh identifiers before issuing the command to keep payload accurate.
         self._user_id = self._coordinator.api_client.user_id
@@ -196,8 +238,17 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                 _LOGGER.debug("Lock command response: %s", response_hex)
             else:
                 _LOGGER.debug("Lock command response (non-bytes): %s", response)
-            if response_hex == COMMAND_ERROR_CODE_FAILED:
-                _LOGGER.warning("Command failed with error code %s, not updating local state", COMMAND_ERROR_CODE_FAILED)
+            
+            # Parse the response to check for errors
+            success, error_code, error_message = self._parse_command_response(response)
+            if not success:
+                _LOGGER.warning("Command %s failed for %s: %s (code=%s)", 
+                               "lock" if lock else "unlock", self._attr_unique_id, error_message, error_code)
+                
+                # Check if this error indicates a stale connection that needs reconnection
+                if error_code in RECONNECT_ERROR_CODES:
+                    _LOGGER.info("Triggering observe stream reconnection due to connection error")
+                    await self._trigger_observe_reconnect()
                 return
 
             # Set optimistic state - the observe stream will confirm the actual state
@@ -213,6 +264,22 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             self._bolt_moving_to = None
             self.async_schedule_update_ha_state()
             raise
+
+    async def _trigger_observe_reconnect(self):
+        """Trigger a reconnection of the observe stream.
+        
+        This is called when a command fails with an error indicating the
+        connection to the lock is stale (e.g., "Internal error encountered").
+        Reconnecting the observe stream often restores connectivity.
+        """
+        try:
+            api_client = self._coordinator.api_client
+            # Mark connection as disconnected to trigger reconnection
+            if api_client.connection:
+                api_client.connection.connected = False
+                _LOGGER.debug("Marked connection as disconnected to trigger observe stream reconnection")
+        except Exception as e:
+            _LOGGER.warning("Failed to trigger observe reconnection: %s", e)
 
     async def async_added_to_hass(self):
         _LOGGER.debug("Entity %s added to HA", self._attr_unique_id)
