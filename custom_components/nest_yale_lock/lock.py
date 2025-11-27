@@ -185,59 +185,73 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         if not response:
             return True, None, None
         
-        # First try to parse as ResourceCommandResponseFromAPI (wrapper for command responses)
+        # Log response for debugging
+        _LOGGER.debug("Parsing command response (%d bytes): %s", len(response), response[:50].hex() if len(response) > 50 else response.hex())
+        
+        # Try to parse as StreamBody which wraps Status (field 2)
+        # The error response format is: 12 1f 08 0d 12 1b ... (StreamBody with status)
+        try:
+            stream_body = rpc_pb2.StreamBody()
+            stream_body.ParseFromString(response)
+            _LOGGER.debug("StreamBody parse: has_status=%s, status.code=%s, status.message=%s",
+                         stream_body.HasField("status") if hasattr(stream_body, 'HasField') else 'N/A',
+                         stream_body.status.code if stream_body.status else 'N/A',
+                         stream_body.status.message if stream_body.status else 'N/A')
+            
+            # Check status - don't use HasField, just check the code directly
+            if stream_body.status.code != 0:
+                error_code = stream_body.status.code
+                error_message = stream_body.status.message or f"Error code {error_code}"
+                _LOGGER.warning("StreamBody error detected: %s (code=%s)", error_message, error_code)
+                return False, error_code, error_message
+        except Exception as e:
+            _LOGGER.debug("Could not parse as StreamBody: %s", e)
+        
+        # Try parsing as Status directly (in case it's not wrapped)
+        try:
+            status = rpc_pb2.Status()
+            status.ParseFromString(response)
+            _LOGGER.debug("Status parse: code=%s, message=%s", status.code, status.message)
+            if status.code != 0:
+                error_code = status.code
+                error_message = status.message or f"Error code {error_code}"
+                _LOGGER.warning("Status error detected: %s (code=%s)", error_message, error_code)
+                return False, error_code, error_message
+        except Exception as e:
+            _LOGGER.debug("Could not parse as Status: %s", e)
+        
+        # Try ResourceCommandResponseFromAPI for successful command responses
         try:
             api_response = v1_pb2.ResourceCommandResponseFromAPI()
             api_response.ParseFromString(response)
             
-            # Check each ResourceCommandResponse
-            for cmd_response in api_response.resouceCommandResponse:
-                for trait_op in cmd_response.traitOperations:
-                    progress = trait_op.progress
-                    progress_name = PROGRESS_STATE_NAMES.get(progress, f"UNKNOWN({progress})")
-                    _LOGGER.info("Command progress: %s", progress_name)
-                    
-                    # Check for status error in the TraitOperation
-                    if trait_op.HasField("status") and trait_op.status.code != 0:
-                        error_code = trait_op.status.code
-                        error_message = trait_op.status.message or f"Error code {error_code}"
-                        _LOGGER.warning("TraitOperation error: %s (code=%s)", error_message, error_code)
-                        return False, error_code, error_message
-                    
-                    # If progress is QUEUED or PENDING, the command might not reach the lock
-                    if progress in (1, 2):  # QUEUED or PENDING
-                        _LOGGER.warning("Command is %s - lock may be unreachable", progress_name)
-            
-            return True, None, None
+            # Only process if we actually have response data
+            if api_response.resouceCommandResponse:
+                for cmd_response in api_response.resouceCommandResponse:
+                    for trait_op in cmd_response.traitOperations:
+                        progress = trait_op.progress
+                        progress_name = PROGRESS_STATE_NAMES.get(progress, f"UNKNOWN({progress})")
+                        _LOGGER.info("Command progress: %s", progress_name)
+                        
+                        # Check for status error in the TraitOperation
+                        if trait_op.HasField("status") and trait_op.status.code != 0:
+                            error_code = trait_op.status.code
+                            error_message = trait_op.status.message or f"Error code {error_code}"
+                            _LOGGER.warning("TraitOperation error: %s (code=%s)", error_message, error_code)
+                            return False, error_code, error_message
+                        
+                        # If progress is QUEUED or PENDING, the command might not reach the lock
+                        if progress in (1, 2):  # QUEUED or PENDING
+                            _LOGGER.warning("Command is %s - lock may be unreachable", progress_name)
+                
+                # If we got here with actual response data, command succeeded
+                return True, None, None
         except Exception as e:
             _LOGGER.debug("Could not parse as ResourceCommandResponseFromAPI: %s", e)
         
-        # Try to parse as StreamBody which contains Status
-        try:
-            stream_body = rpc_pb2.StreamBody()
-            stream_body.ParseFromString(response)
-            
-            if stream_body.HasField("status") and stream_body.status.code != 0:
-                error_code = stream_body.status.code
-                error_message = stream_body.status.message or f"Error code {error_code}"
-                return False, error_code, error_message
-            
-            return True, None, None
-        except Exception as e:
-            _LOGGER.debug("Could not parse as StreamBody: %s", e)
-        
-        # Try parsing just the Status
-        try:
-            status = rpc_pb2.Status()
-            status.ParseFromString(response)
-            if status.code != 0:
-                error_code = status.code
-                error_message = status.message or f"Error code {error_code}"
-                return False, error_code, error_message
-            return True, None, None
-        except Exception:
-            pass
-        
+        # If we couldn't parse anything meaningful, assume success
+        # (better to fail on the timeout than block commands)
+        _LOGGER.debug("Could not parse command response, assuming success")
         return True, None, None
 
     async def _send_command(self, lock: bool):
