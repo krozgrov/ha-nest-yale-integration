@@ -10,7 +10,7 @@ _LOGGER = logging.getLogger(__name__)
 class NestCoordinator(DataUpdateCoordinator):
     """Coordinator to manage Nest Yale Lock data."""
 
-    def __init__(self, hass: HomeAssistant, api_client, config_entry=None):
+    def __init__(self, hass: HomeAssistant, api_client):
         """Initialize the coordinator."""
         super().__init__(
             hass,
@@ -19,7 +19,6 @@ class NestCoordinator(DataUpdateCoordinator):
             update_interval=UPDATE_INTERVAL_SECONDS,
         )
         self.api_client = api_client
-        self.config_entry = config_entry  # Store for reload functionality
         self._observer_task = None
         self._observer_healthy = False  # Track if observe stream is working
         self.data = {}
@@ -40,15 +39,11 @@ class NestCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Observer task created: %s", self._observer_task)
 
     async def _async_update_data(self):
-        """Fetch data from API client (fallback when observe stream is unhealthy or has no data)."""
-        # Skip polling if observe stream is healthy AND we have data - it provides real-time updates
-        if self._observer_healthy and self.data:
-            _LOGGER.debug("Skipping fallback poll - observe stream is healthy and has data")
+        """Fetch data from API client (fallback only when observe stream is unhealthy)."""
+        # Skip polling if observe stream is healthy - it provides real-time updates
+        if self._observer_healthy:
+            _LOGGER.debug("Skipping fallback poll - observe stream is healthy")
             return self.data
-        
-        # If observer is healthy but we have no data, try refresh_state as fallback
-        if self._observer_healthy and not self.data:
-            _LOGGER.debug("Observer is healthy but no data yet, trying refresh_state as fallback")
         
         _LOGGER.debug("Starting fallback _async_update_data (observe stream unhealthy)")
         try:
@@ -74,13 +69,14 @@ class NestCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Starting _run_observer")
         try:
             async for update in self.api_client.observe():
+                # Mark observer as healthy when we receive updates
+                self._observer_healthy = True
+                
                 if update:
                     _LOGGER.debug("Received observer update: %s", update)
                     normalized_update = update.get("yale", update) if update else {}
                     all_traits = update.get("all_traits", {})
                     if normalized_update:
-                        # Only mark observer as healthy when we actually receive lock data
-                        self._observer_healthy = True
                         for device_id, device in normalized_update.items():
                             # Ensure required fields exist even if absent in payload
                             device.setdefault("device_id", device_id)

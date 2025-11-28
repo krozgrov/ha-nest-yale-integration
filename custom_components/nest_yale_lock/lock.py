@@ -310,26 +310,25 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             raise
 
     async def _trigger_observe_reconnect(self):
-        """Trigger a full reconnection by reloading the integration.
+        """Trigger a reconnection of the observe stream.
         
         This is called when a command fails with an error indicating the
         connection to the lock is stale (e.g., "Internal error encountered").
-        A full reload re-authenticates and creates a fresh connection.
         """
         try:
-            _LOGGER.info("Triggering integration reload to restore connection")
+            _LOGGER.info("Triggering observe stream reconnection")
             
-            # Get the config entry for this integration
-            entry = self._coordinator.config_entry
+            # Mark the connection as disconnected - the observe loop will reconnect
+            api_client = self._coordinator.api_client
+            api_client.connection.connected = False
             
-            # Schedule the reload - this will unload and reload the entire integration
-            # which re-authenticates and creates fresh connections
-            self.hass.async_create_task(
-                self.hass.config_entries.async_reload(entry.entry_id)
-            )
-            _LOGGER.info("Integration reload scheduled")
+            # Cancel the current observer task to force immediate reconnection
+            coordinator = self._coordinator
+            if hasattr(coordinator, '_observer_task') and coordinator._observer_task:
+                coordinator._observer_task.cancel()
+                _LOGGER.info("Observer task cancelled, will reconnect automatically")
         except Exception as e:
-            _LOGGER.warning("Failed to trigger integration reload: %s", e)
+            _LOGGER.warning("Failed to trigger observe reconnect: %s", e)
 
     async def async_added_to_hass(self):
         _LOGGER.debug("Entity %s added to HA", self._attr_unique_id)
