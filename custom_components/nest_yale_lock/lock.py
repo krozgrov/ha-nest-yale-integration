@@ -310,25 +310,33 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             raise
 
     async def _trigger_observe_reconnect(self):
-        """Trigger a reconnection of the observe stream.
+        """Trigger a full reconnection with re-authentication.
         
         This is called when a command fails with an error indicating the
         connection to the lock is stale (e.g., "Internal error encountered").
+        Since the Nest app still works, our session is stale and needs refresh.
         """
         try:
-            _LOGGER.info("Triggering observe stream reconnection")
+            _LOGGER.info("Triggering full reconnection with re-authentication")
             
-            # Mark the connection as disconnected - the observe loop will reconnect
             api_client = self._coordinator.api_client
+            
+            # Clear the access token to force a full re-authentication
+            api_client.access_token = None
             api_client.connection.connected = False
             
-            # Cancel the current observer task to force immediate reconnection
+            # Force re-authentication now (don't wait for observe loop)
+            _LOGGER.info("Forcing re-authentication...")
+            await api_client.authenticate()
+            _LOGGER.info("Re-authentication complete, new token obtained")
+            
+            # Cancel the current observer task to force reconnection with new token
             coordinator = self._coordinator
             if hasattr(coordinator, '_observer_task') and coordinator._observer_task:
                 coordinator._observer_task.cancel()
-                _LOGGER.info("Observer task cancelled, will reconnect automatically")
+                _LOGGER.info("Observer task cancelled, will reconnect with fresh credentials")
         except Exception as e:
-            _LOGGER.warning("Failed to trigger observe reconnect: %s", e)
+            _LOGGER.warning("Failed to trigger reconnect: %s", e)
 
     async def async_added_to_hass(self):
         _LOGGER.debug("Entity %s added to HA", self._attr_unique_id)
