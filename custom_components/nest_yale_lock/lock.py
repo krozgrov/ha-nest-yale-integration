@@ -310,31 +310,38 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             raise
 
     async def _trigger_observe_reconnect(self):
-        """Trigger a full reconnection with re-authentication.
+        """Trigger a full reconnection by closing HTTP session and re-authenticating.
         
         This is called when a command fails with an error indicating the
         connection to the lock is stale (e.g., "Internal error encountered").
         Since the Nest app still works, our session is stale and needs refresh.
         """
         try:
-            _LOGGER.info("Triggering full reconnection with re-authentication")
+            _LOGGER.info("Triggering full session reset and re-authentication")
             
             api_client = self._coordinator.api_client
             
-            # Clear the access token to force a full re-authentication
+            # Close the existing HTTP session to force fresh TCP connections
+            if api_client.session and not api_client.session.closed:
+                _LOGGER.info("Closing existing HTTP session...")
+                await api_client.session.close()
+            
+            # Create a fresh HTTP session
+            import aiohttp
+            api_client.session = aiohttp.ClientSession()
+            _LOGGER.info("Created fresh HTTP session")
+            
+            # Clear credentials to force full re-authentication
             api_client.access_token = None
             api_client.connection.connected = False
             
-            # Force re-authentication now (don't wait for observe loop)
-            _LOGGER.info("Forcing re-authentication...")
-            await api_client.authenticate()
-            _LOGGER.info("Re-authentication complete, new token obtained")
-            
-            # Cancel the current observer task to force reconnection with new token
+            # Cancel the current observer task - it will reconnect with fresh session
             coordinator = self._coordinator
             if hasattr(coordinator, '_observer_task') and coordinator._observer_task:
                 coordinator._observer_task.cancel()
-                _LOGGER.info("Observer task cancelled, will reconnect with fresh credentials")
+                _LOGGER.info("Observer task cancelled, will reconnect with fresh session")
+            
+            _LOGGER.info("Session reset complete - retry your command")
         except Exception as e:
             _LOGGER.warning("Failed to trigger reconnect: %s", e)
 
