@@ -26,13 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b8 (beta)
+## Pre-release 2025.11.30b9 (beta)
 
-- Improves observe stream resilience by resetting protobuf parsing state on reconnects to avoid empty updates after timeouts.
-- Adds automatic recovery for gRPC INTERNAL (code 13) command responses by refreshing the session/token instead of requiring a manual reload.
-- Keeps command/observe headers in sync with refreshed auth when retrying.
+- Restores initial device discovery by parsing observe chunks directly and allowing more time (20s) on the first refresh.
+- Keeps the observe/command resilience improvements (protobuf reset on reconnects; auto-recover commands on INTERNAL code 13; refreshed headers on retries).
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b8`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b9`.
 
 
 ## Known Limitations
