@@ -300,9 +300,15 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                     _LOGGER.info("Triggering session reset and auto-retry due to connection error")
                     await self._trigger_observe_reconnect()
                     
-                    # Auto-retry after session reset (only once)
-                    _LOGGER.info("Waiting 2 seconds for session to stabilize...")
-                    await asyncio.sleep(2)
+                    # Wait for observe stream to reconnect and get fresh structure_id
+                    _LOGGER.info("Waiting 5 seconds for observe stream to reconnect...")
+                    await asyncio.sleep(5)
+                    
+                    # Refresh identifiers from the reconnected stream
+                    self._user_id = self._coordinator.api_client.user_id
+                    self._structure_id = self._coordinator.api_client.structure_id
+                    _LOGGER.info("After reconnect: user_id=%s, structure_id=%s", self._user_id, self._structure_id)
+                    
                     _LOGGER.info("Auto-retrying %s command...", "lock" if lock else "unlock")
                     await self._send_command_internal(lock, is_retry=True)
                 elif is_retry:

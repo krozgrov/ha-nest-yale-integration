@@ -274,19 +274,20 @@ class NestAPIClient:
                 api_url = f"{base_url}{ENDPOINT_OBSERVE}"
                 _LOGGER.debug("Starting refresh_state with URL: %s", api_url)
                 try:
-                    # Use the exact b2 approach that worked: session.post with iter_chunked
-                    # Add timeout wrapper to prevent hanging
+                    # Accumulate all chunks before parsing (protobuf messages can span chunks)
                     async with asyncio.timeout(10):  # 10 second timeout
                         async with self.session.post(api_url, headers=headers, data=observe_payload) as response:
                             if response.status != 200:
                                 body = await response.text()
                                 _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
                                 continue
-                            async for chunk in response.content.iter_chunked(1024):
-                                locks_data = await self.protobuf_handler._process_message(chunk)
-                                if "yale" not in locks_data:
-                                    continue
-                                self.current_state["devices"]["locks"] = locks_data["yale"]
+                            # Read entire response first, then parse
+                            full_response = await response.read()
+                            _LOGGER.debug("refresh_state received %d total bytes", len(full_response))
+                            if full_response:
+                                locks_data = await self.protobuf_handler._process_message(full_response)
+                                if locks_data.get("yale"):
+                                    self.current_state["devices"]["locks"] = locks_data["yale"]
                                 if locks_data.get("user_id"):
                                     old_user_id = self._user_id
                                     self._user_id = locks_data["user_id"]
@@ -300,7 +301,8 @@ class NestAPIClient:
                                     if old_structure_id != self._structure_id:
                                         _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
                                 self.transport_url = base_url
-                                return locks_data["yale"]
+                                if locks_data.get("yale"):
+                                    return locks_data["yale"]
                 except asyncio.TimeoutError:
                     _LOGGER.debug("refresh_state timeout after 10 seconds")
                     last_error = TimeoutError("refresh_state timed out after 10 seconds")
