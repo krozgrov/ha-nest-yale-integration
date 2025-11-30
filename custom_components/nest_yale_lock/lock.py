@@ -301,13 +301,22 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                     await self._trigger_observe_reconnect()
                     
                     # Wait for observe stream to reconnect and get fresh structure_id
-                    _LOGGER.info("Waiting 5 seconds for observe stream to reconnect...")
-                    await asyncio.sleep(5)
+                    # Poll for up to 15 seconds until structure_id is populated
+                    _LOGGER.info("Waiting for observe stream to reconnect and provide structure_id...")
+                    for i in range(15):
+                        await asyncio.sleep(1)
+                        self._structure_id = self._coordinator.api_client.structure_id
+                        if self._structure_id:
+                            _LOGGER.info("Got structure_id after %d seconds: %s", i + 1, self._structure_id)
+                            break
                     
-                    # Refresh identifiers from the reconnected stream
+                    # Refresh identifiers
                     self._user_id = self._coordinator.api_client.user_id
                     self._structure_id = self._coordinator.api_client.structure_id
                     _LOGGER.info("After reconnect: user_id=%s, structure_id=%s", self._user_id, self._structure_id)
+                    
+                    if not self._structure_id:
+                        _LOGGER.warning("structure_id still None after waiting - retry may fail")
                     
                     _LOGGER.info("Auto-retrying %s command...", "lock" if lock else "unlock")
                     await self._send_command_internal(lock, is_retry=True)
