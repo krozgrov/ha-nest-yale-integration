@@ -108,6 +108,11 @@ class NestCoordinator(DataUpdateCoordinator):
                 else:
                     _LOGGER.debug("Observer update received but is empty.")
                     self.async_set_updated_data(self.data)
+        except asyncio.CancelledError:
+            _LOGGER.info("Observer task was cancelled, restarting in 1 second...")
+            self._observer_healthy = False
+            await asyncio.sleep(1)
+            self._observer_task = self.hass.loop.create_task(self._run_observer())
         except Exception as e:
             _LOGGER.error("Observer failed: %s", e, exc_info=True)
             self._observer_healthy = False  # Mark as unhealthy on failure
