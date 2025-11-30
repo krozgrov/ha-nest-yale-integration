@@ -385,16 +385,24 @@ class NestAPIClient:
                             _LOGGER.info("Re-authenticated, reconnecting observe stream with new token")
                             break  # Break inner loop to reconnect with new token
                         
+                        # Always try to extract structure_id, even if no lock data
+                        if locks_data.get("structure_id"):
+                            old_structure_id = self._structure_id
+                            self._structure_id = locks_data["structure_id"]
+                            self.current_state["structure_id"] = self._structure_id
+                            if old_structure_id != self._structure_id:
+                                _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                        
                         if "yale" in locks_data:
                             last_data_time = current_time
-                            _LOGGER.debug("Observe stream received yale data")
+                            _LOGGER.debug("Observe stream received yale data (structure_id=%s)", locks_data.get("structure_id"))
                             if locks_data.get("user_id"):
                                 old_user_id = self._user_id
                                 self._user_id = locks_data["user_id"]
                                 self.current_state["user_id"] = self._user_id
                                 if old_user_id != self._user_id:
                                     _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                            if locks_data.get("structure_id"):
+                            if locks_data.get("structure_id") and not self._structure_id:
                                 old_structure_id = self._structure_id
                                 self._structure_id = locks_data["structure_id"]
                                 self.current_state["structure_id"] = self._structure_id
