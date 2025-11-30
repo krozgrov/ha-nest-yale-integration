@@ -206,20 +206,11 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                     if stream_body.status.code != 0:
                         error_code = stream_body.status.code
                         error_message = stream_body.status.message or "Unknown error"
-                        _LOGGER.warning("Command failed: %s (code=%s)", error_message, error_code)
-                        
-                        # Code 13 = "Internal error encountered" - connection is stale
-                        # Trigger integration reload to restore functionality
-                        if error_code == 13:
-                            _LOGGER.warning("Detected stale connection - scheduling integration reload")
-                            # Get config entry from hass.data and schedule reload
-                            for entry_id, coordinator in self.hass.data.get(DOMAIN, {}).items():
-                                if coordinator == self._coordinator:
-                                    self.hass.async_create_task(
-                                        self.hass.config_entries.async_reload(entry_id)
-                                    )
-                                    _LOGGER.info("Integration reload scheduled - please retry command after reload completes")
-                                    break
+                        _LOGGER.warning(
+                            "Command failed according to response: %s (code=%s)",
+                            error_message,
+                            error_code,
+                        )
                         return
                 except Exception as e:
                     _LOGGER.debug("Could not parse command response: %s", e)

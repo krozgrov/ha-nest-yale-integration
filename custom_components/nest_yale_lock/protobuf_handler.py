@@ -43,6 +43,14 @@ class NestProtobufHandler:
         self.stream_body = rpc_pb2.StreamBody()
         self._decode_warned = False
 
+    def reset_stream_state(self):
+        """Clear stream parsing buffers between connections."""
+        self.buffer.clear()
+        self.pending_length = None
+        self.stream_body.Clear()
+        # Allow DecodeError warnings again after a fresh connection
+        self._decode_warned = False
+
     def _decode_varint(self, buffer, pos):
         value = 0
         shift = 0

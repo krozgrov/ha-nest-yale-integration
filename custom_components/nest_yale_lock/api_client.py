@@ -17,9 +17,11 @@ from .const import (
     API_GOOGLE_REAUTH_MINUTES,
     OBSERVE_IDLE_RESET_SECONDS,
     CONNECT_FAILURE_RESET_THRESHOLD,
+    GRPC_CODE_INTERNAL,
 )
 from .proto.nestlabs.gateway import v1_pb2
 from .proto.nestlabs.gateway import v2_pb2
+from .proto.nest import rpc_pb2
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 
@@ -277,30 +279,32 @@ class NestAPIClient:
                     # Use the exact b2 approach that worked: session.post with iter_chunked
                     # Add timeout wrapper to prevent hanging
                     async with asyncio.timeout(10):  # 10 second timeout
+                        self.protobuf_handler.reset_stream_state()
                         async with self.session.post(api_url, headers=headers, data=observe_payload) as response:
                             if response.status != 200:
                                 body = await response.text()
                                 _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
                                 continue
                             async for chunk in response.content.iter_chunked(1024):
-                                locks_data = await self.protobuf_handler._process_message(chunk)
-                                if "yale" not in locks_data:
-                                    continue
-                                self.current_state["devices"]["locks"] = locks_data["yale"]
-                                if locks_data.get("user_id"):
-                                    old_user_id = self._user_id
-                                    self._user_id = locks_data["user_id"]
-                                    self.current_state["user_id"] = self._user_id
-                                    if old_user_id != self._user_id:
-                                        _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                                if locks_data.get("structure_id"):
-                                    old_structure_id = self._structure_id
-                                    self._structure_id = locks_data["structure_id"]
-                                    self.current_state["structure_id"] = self._structure_id
-                                    if old_structure_id != self._structure_id:
-                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                                self.transport_url = base_url
-                                return locks_data["yale"]
+                                parsed_messages = await self.protobuf_handler._ingest_chunk(chunk)
+                                for locks_data in parsed_messages:
+                                    if "yale" not in locks_data:
+                                        continue
+                                    self.current_state["devices"]["locks"] = locks_data["yale"]
+                                    if locks_data.get("user_id"):
+                                        old_user_id = self._user_id
+                                        self._user_id = locks_data["user_id"]
+                                        self.current_state["user_id"] = self._user_id
+                                        if old_user_id != self._user_id:
+                                            _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                    if locks_data.get("structure_id"):
+                                        old_structure_id = self._structure_id
+                                        self._structure_id = locks_data["structure_id"]
+                                        self.current_state["structure_id"] = self._structure_id
+                                        if old_structure_id != self._structure_id:
+                                            _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                    self.transport_url = base_url
+                                    return locks_data["yale"]
                 except asyncio.TimeoutError:
                     _LOGGER.debug("refresh_state timeout after 10 seconds")
                     last_error = TimeoutError("refresh_state timed out after 10 seconds")
@@ -366,45 +370,57 @@ class NestAPIClient:
                 api_url = f"{base_url}{ENDPOINT_OBSERVE}"
                 _LOGGER.debug("Starting observe stream with URL: %s", api_url)
                 try:
+                    self.protobuf_handler.reset_stream_state()
                     _LOGGER.info("Observe stream connected to %s", api_url)
                     async for chunk in self.connection.stream(api_url, headers, observe_payload, read_timeout=OBSERVE_IDLE_RESET_SECONDS):
+                        parsed_messages = await self.protobuf_handler._ingest_chunk(chunk)
+                        if not parsed_messages:
+                            continue
+
                         # Reset backoff on any successful data
                         backoff = API_RETRY_DELAY_SECONDS
                         self._connect_failures = 0
                         current_time = asyncio.get_event_loop().time()
-                        locks_data = await self.protobuf_handler._process_message(chunk)
-                        
-                        # Check for authentication failure
-                        if locks_data.get("auth_failed"):
-                            _LOGGER.warning("Observe stream reported authentication failure, triggering re-auth")
-                            self.connection.connected = False
-                            self.access_token = None
-                            await self.authenticate()
-                            # Rebuild headers with new token before reconnecting
-                            headers = self._build_observe_headers()
-                            _LOGGER.info("Re-authenticated, reconnecting observe stream with new token")
-                            break  # Break inner loop to reconnect with new token
-                        
-                        if "yale" in locks_data:
-                            last_data_time = current_time
-                            _LOGGER.debug("Observe stream received yale data")
-                            if locks_data.get("user_id"):
-                                old_user_id = self._user_id
-                                self._user_id = locks_data["user_id"]
-                                self.current_state["user_id"] = self._user_id
-                                if old_user_id != self._user_id:
-                                    _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                            if locks_data.get("structure_id"):
-                                old_structure_id = self._structure_id
-                                self._structure_id = locks_data["structure_id"]
-                                self.current_state["structure_id"] = self._structure_id
-                                if old_structure_id != self._structure_id:
-                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                            self.transport_url = base_url
-                        # Yield full locks_data including all_traits so coordinator can extract trait data
-                        yield locks_data
+                        auth_failure = False
+
+                        for locks_data in parsed_messages:
+                            # Check for authentication failure
+                            if locks_data.get("auth_failed"):
+                                _LOGGER.warning("Observe stream reported authentication failure, triggering re-auth")
+                                self.connection.connected = False
+                                self.access_token = None
+                                await self.authenticate()
+                                # Rebuild headers with new token before reconnecting
+                                headers = self._build_observe_headers()
+                                _LOGGER.info("Re-authenticated, reconnecting observe stream with new token")
+                                auth_failure = True
+                                break
+
+                            if "yale" in locks_data:
+                                last_data_time = current_time
+                                _LOGGER.debug("Observe stream received yale data")
+                                if locks_data.get("user_id"):
+                                    old_user_id = self._user_id
+                                    self._user_id = locks_data["user_id"]
+                                    self.current_state["user_id"] = self._user_id
+                                    if old_user_id != self._user_id:
+                                        _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                if locks_data.get("structure_id"):
+                                    old_structure_id = self._structure_id
+                                    self._structure_id = locks_data["structure_id"]
+                                    self.current_state["structure_id"] = self._structure_id
+                                    if old_structure_id != self._structure_id:
+                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                self.transport_url = base_url
+                            # Yield full locks_data including all_traits so coordinator can extract trait data
+                            yield locks_data
+
+                        if auth_failure:
+                            # Reconnect with the new token
+                            break
                     _LOGGER.warning("Observe stream finished for %s; reconnecting", api_url)
                     self.connection.connected = False
+                    self.protobuf_handler.reset_stream_state()
                     # Remember the working URL (though we only have one now)
                     self.transport_url = base_url
                     break  # Exit candidate loop
@@ -416,6 +432,7 @@ class NestAPIClient:
                         elapsed
                     )
                     self.connection.connected = False
+                    self.protobuf_handler.reset_stream_state()
                     # Remember the URL (though we only have one now)
                     self.transport_url = base_url
                     break  # Exit candidate loop to reconnect
@@ -429,14 +446,17 @@ class NestAPIClient:
                         except Exception:
                             _LOGGER.warning("Reauthentication failed during observe; will backoff and retry")
                         self.connection.connected = False
+                        self.protobuf_handler.reset_stream_state()
                         break  # Exit candidate loop to reconnect with new token
                     _LOGGER.error("Error in observe stream via %s: %s", api_url, cre, exc_info=True)
                     self.connection.connected = False
+                    self.protobuf_handler.reset_stream_state()
                     # Try next candidate URL
                     continue
                 except Exception as err:
                     _LOGGER.error("Error in observe stream via %s: %s", api_url, err, exc_info=True)
                     self.connection.connected = False
+                    self.protobuf_handler.reset_stream_state()
                     self._note_connect_failure(err)
                     # Try next candidate URL
                     continue
@@ -496,26 +516,59 @@ class NestAPIClient:
         )
 
         last_error = None
+
+        def _refresh_command_headers():
+            headers["Authorization"] = f"Basic {self.access_token}"
+            active_structure_id = structure_id or self._structure_id
+            if active_structure_id:
+                headers["X-Nest-Structure-Id"] = active_structure_id
+            else:
+                headers.pop("X-Nest-Structure-Id", None)
+            if self._user_id:
+                headers["X-nl-user-id"] = str(self._user_id)
+            else:
+                headers.pop("X-nl-user-id", None)
+
+        _refresh_command_headers()
+
         for base_url in self._candidate_bases():
             api_url = f"{base_url}{ENDPOINT_SENDCOMMAND}"
             reauthed = False
-            for _ in range(2):
+            recovered = False
+            for _ in range(3):
                 try:
                     raw_data = await self.connection.post(api_url, headers, encoded_data)
                     self.transport_url = base_url
-                    _LOGGER.info("Command succeeded for %s at %s, response ops=%d, payload_len=%d",
-                                 device_id, api_url, len(raw_data) if raw_data else 0, len(raw_data) if raw_data else 0)
+                    status_code, status_msg = self._parse_command_status(raw_data)
+                    if status_code not in (None, 0):
+                        _LOGGER.warning(
+                            "Command response reported failure for %s: code=%s, msg=%s",
+                            device_id,
+                            status_code,
+                            status_msg,
+                        )
+                        if status_code == GRPC_CODE_INTERNAL and not recovered:
+                            _LOGGER.warning("Internal error indicates stale connection; resetting session and retrying command")
+                            await self._recover_after_internal_error()
+                            _refresh_command_headers()
+                            recovered = True
+                            continue
+                        last_error = RuntimeError(f"Command failed (code {status_code}): {status_msg or 'Unknown error'}")
+                        break
+
+                    _LOGGER.info(
+                        "Command succeeded for %s at %s, payload_len=%d",
+                        device_id,
+                        api_url,
+                        len(raw_data) if raw_data else 0,
+                    )
                     return raw_data
                 except aiohttp.ClientResponseError as cre:
                     if cre.status in (401, 403) and not reauthed:
                         _LOGGER.info("Command got %s; reauthenticating and retrying", cre.status)
                         await self.authenticate()
                         # Rebuild headers with new token
-                        headers["Authorization"] = f"Basic {self.access_token}"
-                        if effective_structure_id:
-                            headers["X-Nest-Structure-Id"] = effective_structure_id
-                        if self._user_id:
-                            headers["X-nl-user-id"] = str(self._user_id)
+                        _refresh_command_headers()
                         reauthed = True
                         continue
                     last_error = cre
@@ -613,3 +666,28 @@ class NestAPIClient:
         self.session = async_get_clientsession(self.hass)
         self.connection = ConnectionShim(self.session)
         self._connect_failures = 0
+        self.protobuf_handler.reset_stream_state()
+
+    def _parse_command_status(self, response_data):
+        """Extract status code/message from a command response payload."""
+        if not response_data:
+            return 0, None
+        try:
+            stream_body = rpc_pb2.StreamBody()
+            stream_body.ParseFromString(response_data)
+            return stream_body.status.code, stream_body.status.message
+        except Exception as err:
+            _LOGGER.debug("Could not parse command response: %s", err)
+            return 0, None
+
+    async def _recover_after_internal_error(self):
+        """Reset session and reauthenticate after an INTERNAL gRPC error."""
+        self.connection.connected = False
+        self.protobuf_handler.reset_stream_state()
+        try:
+            await self._reset_session()
+        except Exception as err:
+            _LOGGER.debug("Session reset after INTERNAL error failed: %s", err, exc_info=True)
+        # Force token renewal
+        self.access_token = None
+        await self.authenticate()
