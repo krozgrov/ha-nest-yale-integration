@@ -69,9 +69,6 @@ class NestCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Starting _run_observer")
         try:
             async for update in self.api_client.observe():
-                # Mark observer as healthy when we receive updates
-                self._observer_healthy = True
-                
                 if update:
                     _LOGGER.debug("Received observer update: %s", update)
                     normalized_update = update.get("yale", update) if update else {}
@@ -101,6 +98,8 @@ class NestCoordinator(DataUpdateCoordinator):
                         self.api_client.current_state["user_id"] = update.get("user_id")  # Persist user_id
                         self.api_client.current_state["all_traits"] = all_traits  # Persist trait data
                         self.async_set_updated_data(normalized_update)
+                        # Only mark observer as healthy when we have actual lock data
+                        self._observer_healthy = True
                         _LOGGER.debug("Applied normalized observer update: %s, current_state user_id: %s",
                                       normalized_update, self.api_client.current_state["user_id"])
                     else:
