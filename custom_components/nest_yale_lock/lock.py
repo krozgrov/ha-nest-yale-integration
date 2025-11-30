@@ -4,19 +4,12 @@ from homeassistant.components.lock import LockEntity, LockState
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from .const import DOMAIN, GRPC_CODE_INTERNAL
+from .const import DOMAIN
 from .entity import NestYaleEntity
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 from .proto.nest import rpc_pb2
-from .proto.nestlabs.gateway import v1_pb2
 
 _LOGGER = logging.getLogger(__name__)
-
-# Errors that indicate the connection to the lock is stale and needs reconnection
-RECONNECT_ERROR_CODES = {GRPC_CODE_INTERNAL}  # "Internal error encountered"
-
-# TraitOperation progress states
-PROGRESS_STATE_NAMES = {0: "UNSPECIFIED", 1: "QUEUED", 2: "PENDING", 3: "STARTED", 4: "COMPLETE"}
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     _LOGGER.debug("Starting async_setup_entry for lock platform, entry_id: %s", entry.entry_id)
@@ -176,90 +169,7 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                       self._attr_unique_id, kwargs, self.state)
         await self._send_command(False)
 
-    def _parse_command_response(self, response: bytes):
-        """Parse command response to check for errors.
-        
-        Returns:
-            tuple: (success: bool, error_code: int | None, error_message: str | None)
-        """
-        if not response:
-            return True, None, None
-        
-        # Log response for debugging
-        _LOGGER.debug("Parsing command response (%d bytes): %s", len(response), response[:50].hex() if len(response) > 50 else response.hex())
-        
-        # Try to parse as StreamBody which wraps Status (field 2)
-        # The error response format is: 12 1f 08 0d 12 1b ... (StreamBody with status)
-        try:
-            stream_body = rpc_pb2.StreamBody()
-            stream_body.ParseFromString(response)
-            _LOGGER.debug("StreamBody parse: has_status=%s, status.code=%s, status.message=%s",
-                         stream_body.HasField("status") if hasattr(stream_body, 'HasField') else 'N/A',
-                         stream_body.status.code if stream_body.status else 'N/A',
-                         stream_body.status.message if stream_body.status else 'N/A')
-            
-            # Check status - don't use HasField, just check the code directly
-            if stream_body.status.code != 0:
-                error_code = stream_body.status.code
-                error_message = stream_body.status.message or f"Error code {error_code}"
-                _LOGGER.warning("StreamBody error detected: %s (code=%s)", error_message, error_code)
-                return False, error_code, error_message
-        except Exception as e:
-            _LOGGER.debug("Could not parse as StreamBody: %s", e)
-        
-        # Try parsing as Status directly (in case it's not wrapped)
-        try:
-            status = rpc_pb2.Status()
-            status.ParseFromString(response)
-            _LOGGER.debug("Status parse: code=%s, message=%s", status.code, status.message)
-            if status.code != 0:
-                error_code = status.code
-                error_message = status.message or f"Error code {error_code}"
-                _LOGGER.warning("Status error detected: %s (code=%s)", error_message, error_code)
-                return False, error_code, error_message
-        except Exception as e:
-            _LOGGER.debug("Could not parse as Status: %s", e)
-        
-        # Try ResourceCommandResponseFromAPI for successful command responses
-        try:
-            api_response = v1_pb2.ResourceCommandResponseFromAPI()
-            api_response.ParseFromString(response)
-            
-            # Only process if we actually have response data
-            if api_response.resouceCommandResponse:
-                for cmd_response in api_response.resouceCommandResponse:
-                    for trait_op in cmd_response.traitOperations:
-                        progress = trait_op.progress
-                        progress_name = PROGRESS_STATE_NAMES.get(progress, f"UNKNOWN({progress})")
-                        _LOGGER.info("Command progress: %s", progress_name)
-                        
-                        # Check for status error in the TraitOperation
-                        if trait_op.HasField("status") and trait_op.status.code != 0:
-                            error_code = trait_op.status.code
-                            error_message = trait_op.status.message or f"Error code {error_code}"
-                            _LOGGER.warning("TraitOperation error: %s (code=%s)", error_message, error_code)
-                            return False, error_code, error_message
-                        
-                        # If progress is QUEUED or PENDING, the command might not reach the lock
-                        if progress in (1, 2):  # QUEUED or PENDING
-                            _LOGGER.warning("Command is %s - lock may be unreachable", progress_name)
-                
-                # If we got here with actual response data, command succeeded
-                return True, None, None
-        except Exception as e:
-            _LOGGER.debug("Could not parse as ResourceCommandResponseFromAPI: %s", e)
-        
-        # If we couldn't parse anything meaningful, assume success
-        # (better to fail on the timeout than block commands)
-        _LOGGER.debug("Could not parse command response, assuming success")
-        return True, None, None
-
     async def _send_command(self, lock: bool):
-        """Send lock/unlock command with auto-retry on stale session."""
-        await self._send_command_internal(lock, is_retry=False)
-
-    async def _send_command_internal(self, lock: bool, is_retry: bool = False):
-        """Internal command sender that handles retry logic."""
         # Refresh identifiers before issuing the command to keep payload accurate.
         self._user_id = self._coordinator.api_client.user_id
         self._structure_id = self._coordinator.api_client.structure_id
@@ -279,9 +189,8 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         }
 
         try:
-            retry_prefix = "[RETRY] " if is_retry else ""
-            _LOGGER.info("%sSending %s command to %s (user_id=%s, structure_id=%s, device_id=%s)",
-                          retry_prefix, "lock" if lock else "unlock", self._attr_unique_id, self._user_id, self._structure_id, self._device_id)
+            _LOGGER.info("Sending %s command to %s (user_id=%s, structure_id=%s, device_id=%s)",
+                          "lock" if lock else "unlock", self._attr_unique_id, self._user_id, self._structure_id, self._device_id)
             response = await self._coordinator.api_client.send_command(cmd_any, self._device_id, structure_id=self._structure_id)
             response_hex = response.hex() if isinstance(response, bytes) else None
             if response_hex is not None:
@@ -289,47 +198,25 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             else:
                 _LOGGER.debug("Lock command response (non-bytes): %s", response)
             
-            # Parse the response to check for errors
-            success, error_code, error_message = self._parse_command_response(response)
-            if not success:
-                _LOGGER.warning("%sCommand %s failed for %s: %s (code=%s)", 
-                               retry_prefix, "lock" if lock else "unlock", self._attr_unique_id, error_message, error_code)
-                
-                # Check if this error indicates a stale connection that needs reconnection
-                if error_code in RECONNECT_ERROR_CODES and not is_retry:
-                    _LOGGER.info("Triggering session reset and auto-retry due to connection error")
-                    await self._trigger_observe_reconnect()
-                    
-                    # Wait for observe stream to reconnect and get fresh structure_id
-                    # Poll for up to 15 seconds until structure_id is populated
-                    _LOGGER.info("Waiting for observe stream to reconnect and provide structure_id...")
-                    for i in range(15):
-                        await asyncio.sleep(1)
-                        self._structure_id = self._coordinator.api_client.structure_id
-                        if self._structure_id:
-                            _LOGGER.info("Got structure_id after %d seconds: %s", i + 1, self._structure_id)
-                            break
-                    
-                    # Refresh identifiers
-                    self._user_id = self._coordinator.api_client.user_id
-                    self._structure_id = self._coordinator.api_client.structure_id
-                    _LOGGER.info("After reconnect: user_id=%s, structure_id=%s", self._user_id, self._structure_id)
-                    
-                    if not self._structure_id:
-                        _LOGGER.warning("structure_id still None after waiting - retry may fail")
-                    
-                    _LOGGER.info("Auto-retrying %s command...", "lock" if lock else "unlock")
-                    await self._send_command_internal(lock, is_retry=True)
-                elif is_retry:
-                    _LOGGER.error("Retry also failed - the lock may be offline or there's a persistent issue")
-                return
+            # Parse response to check for errors
+            if isinstance(response, bytes) and response:
+                try:
+                    stream_body = rpc_pb2.StreamBody()
+                    stream_body.ParseFromString(response)
+                    if stream_body.status.code != 0:
+                        _LOGGER.warning("Command failed: %s (code=%s)", 
+                                       stream_body.status.message or "Unknown error", 
+                                       stream_body.status.code)
+                        return
+                except Exception as e:
+                    _LOGGER.debug("Could not parse command response: %s", e)
 
             # Set optimistic state - the observe stream will confirm the actual state
             self._bolt_moving = True
             self._bolt_moving_to = lock
             self.async_write_ha_state()
-            _LOGGER.info("%sCommand %s sent successfully for %s, waiting for observe stream to confirm state change",
-                         retry_prefix, "lock" if lock else "unlock", self._attr_unique_id)
+            _LOGGER.info("Command %s sent successfully for %s, waiting for observe stream to confirm state change",
+                         "lock" if lock else "unlock", self._attr_unique_id)
 
         except Exception as e:
             _LOGGER.error("Command failed for %s: %s", self._attr_unique_id, e, exc_info=True)
@@ -337,42 +224,6 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             self._bolt_moving_to = None
             self.async_schedule_update_ha_state()
             raise
-
-    async def _trigger_observe_reconnect(self):
-        """Trigger a full reconnection by closing HTTP session and re-authenticating.
-        
-        This is called when a command fails with an error indicating the
-        connection to the lock is stale (e.g., "Internal error encountered").
-        Since the Nest app still works, our session is stale and needs refresh.
-        """
-        try:
-            _LOGGER.info("Triggering full session reset and re-authentication")
-            
-            api_client = self._coordinator.api_client
-            
-            # Close the existing HTTP session to force fresh TCP connections
-            if api_client.session and not api_client.session.closed:
-                _LOGGER.info("Closing existing HTTP session...")
-                await api_client.session.close()
-            
-            # Create a fresh HTTP session
-            import aiohttp
-            api_client.session = aiohttp.ClientSession()
-            _LOGGER.info("Created fresh HTTP session")
-            
-            # Clear credentials to force full re-authentication
-            api_client.access_token = None
-            api_client.connection.connected = False
-            
-            # Cancel the current observer task - it will reconnect with fresh session
-            coordinator = self._coordinator
-            if hasattr(coordinator, '_observer_task') and coordinator._observer_task:
-                coordinator._observer_task.cancel()
-                _LOGGER.info("Observer task cancelled, will reconnect with fresh session")
-            
-            _LOGGER.info("Session reset complete - retry your command")
-        except Exception as e:
-            _LOGGER.warning("Failed to trigger reconnect: %s", e)
 
     async def async_added_to_hass(self):
         _LOGGER.debug("Entity %s added to HA", self._attr_unique_id)
