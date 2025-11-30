@@ -274,35 +274,39 @@ class NestAPIClient:
                 api_url = f"{base_url}{ENDPOINT_OBSERVE}"
                 _LOGGER.debug("Starting refresh_state with URL: %s", api_url)
                 try:
-                    # Accumulate all chunks before parsing (protobuf messages can span chunks)
+                    # Read chunks and accumulate until we have enough data
+                    # The observe stream is long-lived, so we can't use response.read()
                     async with asyncio.timeout(10):  # 10 second timeout
                         async with self.session.post(api_url, headers=headers, data=observe_payload) as response:
                             if response.status != 200:
                                 body = await response.text()
                                 _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
                                 continue
-                            # Read entire response first, then parse
-                            full_response = await response.read()
-                            _LOGGER.debug("refresh_state received %d total bytes", len(full_response))
-                            if full_response:
-                                locks_data = await self.protobuf_handler._process_message(full_response)
-                                if locks_data.get("yale"):
-                                    self.current_state["devices"]["locks"] = locks_data["yale"]
-                                if locks_data.get("user_id"):
-                                    old_user_id = self._user_id
-                                    self._user_id = locks_data["user_id"]
-                                    self.current_state["user_id"] = self._user_id
-                                    if old_user_id != self._user_id:
-                                        _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                                if locks_data.get("structure_id"):
-                                    old_structure_id = self._structure_id
-                                    self._structure_id = locks_data["structure_id"]
-                                    self.current_state["structure_id"] = self._structure_id
-                                    if old_structure_id != self._structure_id:
-                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                                self.transport_url = base_url
-                                if locks_data.get("yale"):
-                                    return locks_data["yale"]
+                            # Accumulate chunks until we have enough for a complete message
+                            full_response = bytearray()
+                            async for chunk in response.content.iter_chunked(65536):
+                                full_response.extend(chunk)
+                                # Try parsing once we have enough data (at least 3KB typically needed)
+                                if len(full_response) >= 3000:
+                                    _LOGGER.debug("refresh_state accumulated %d bytes, attempting parse", len(full_response))
+                                    locks_data = await self.protobuf_handler._process_message(bytes(full_response))
+                                    if locks_data.get("yale") or locks_data.get("structure_id"):
+                                        if locks_data.get("yale"):
+                                            self.current_state["devices"]["locks"] = locks_data["yale"]
+                                        if locks_data.get("user_id"):
+                                            old_user_id = self._user_id
+                                            self._user_id = locks_data["user_id"]
+                                            self.current_state["user_id"] = self._user_id
+                                            if old_user_id != self._user_id:
+                                                _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                        if locks_data.get("structure_id"):
+                                            old_structure_id = self._structure_id
+                                            self._structure_id = locks_data["structure_id"]
+                                            self.current_state["structure_id"] = self._structure_id
+                                            if old_structure_id != self._structure_id:
+                                                _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                        self.transport_url = base_url
+                                        return locks_data.get("yale", {})
                 except asyncio.TimeoutError:
                     _LOGGER.debug("refresh_state timeout after 10 seconds")
                     last_error = TimeoutError("refresh_state timed out after 10 seconds")
