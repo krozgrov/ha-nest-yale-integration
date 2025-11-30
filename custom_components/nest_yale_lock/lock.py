@@ -255,6 +255,11 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         return True, None, None
 
     async def _send_command(self, lock: bool):
+        """Send lock/unlock command with auto-retry on stale session."""
+        await self._send_command_internal(lock, is_retry=False)
+
+    async def _send_command_internal(self, lock: bool, is_retry: bool = False):
+        """Internal command sender that handles retry logic."""
         # Refresh identifiers before issuing the command to keep payload accurate.
         self._user_id = self._coordinator.api_client.user_id
         self._structure_id = self._coordinator.api_client.structure_id
@@ -274,8 +279,9 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         }
 
         try:
-            _LOGGER.info("Sending %s command to %s (user_id=%s, structure_id=%s, device_id=%s)",
-                          "lock" if lock else "unlock", self._attr_unique_id, self._user_id, self._structure_id, self._device_id)
+            retry_prefix = "[RETRY] " if is_retry else ""
+            _LOGGER.info("%sSending %s command to %s (user_id=%s, structure_id=%s, device_id=%s)",
+                          retry_prefix, "lock" if lock else "unlock", self._attr_unique_id, self._user_id, self._structure_id, self._device_id)
             response = await self._coordinator.api_client.send_command(cmd_any, self._device_id, structure_id=self._structure_id)
             response_hex = response.hex() if isinstance(response, bytes) else None
             if response_hex is not None:
@@ -286,21 +292,29 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             # Parse the response to check for errors
             success, error_code, error_message = self._parse_command_response(response)
             if not success:
-                _LOGGER.warning("Command %s failed for %s: %s (code=%s)", 
-                               "lock" if lock else "unlock", self._attr_unique_id, error_message, error_code)
+                _LOGGER.warning("%sCommand %s failed for %s: %s (code=%s)", 
+                               retry_prefix, "lock" if lock else "unlock", self._attr_unique_id, error_message, error_code)
                 
                 # Check if this error indicates a stale connection that needs reconnection
-                if error_code in RECONNECT_ERROR_CODES:
-                    _LOGGER.info("Triggering observe stream reconnection due to connection error")
+                if error_code in RECONNECT_ERROR_CODES and not is_retry:
+                    _LOGGER.info("Triggering session reset and auto-retry due to connection error")
                     await self._trigger_observe_reconnect()
+                    
+                    # Auto-retry after session reset (only once)
+                    _LOGGER.info("Waiting 2 seconds for session to stabilize...")
+                    await asyncio.sleep(2)
+                    _LOGGER.info("Auto-retrying %s command...", "lock" if lock else "unlock")
+                    await self._send_command_internal(lock, is_retry=True)
+                elif is_retry:
+                    _LOGGER.error("Retry also failed - the lock may be offline or there's a persistent issue")
                 return
 
             # Set optimistic state - the observe stream will confirm the actual state
             self._bolt_moving = True
             self._bolt_moving_to = lock
             self.async_write_ha_state()
-            _LOGGER.info("Command %s sent successfully for %s, waiting for observe stream to confirm state change",
-                         "lock" if lock else "unlock", self._attr_unique_id)
+            _LOGGER.info("%sCommand %s sent successfully for %s, waiting for observe stream to confirm state change",
+                         retry_prefix, "lock" if lock else "unlock", self._attr_unique_id)
 
         except Exception as e:
             _LOGGER.error("Command failed for %s: %s", self._attr_unique_id, e, exc_info=True)
