@@ -118,6 +118,16 @@ class NestProtobufHandler:
             del self.buffer[:self.pending_length]
             self.pending_length = None
             locks_data = await self._process_message(message)
+            if locks_data.get("parse_failed"):
+                # Put data back and wait for more bytes (likely partial frame)
+                self.buffer = message + self.buffer
+                # Avoid runaway growth
+                if len(self.buffer) > MAX_BUFFER_SIZE:
+                    _LOGGER.warning("Buffer exceeded MAX_BUFFER_SIZE while waiting for complete frame; resetting buffer")
+                    self.buffer.clear()
+                    self.pending_length = None
+                    break
+                break
             if locks_data.get("yale"):
                 results.append(locks_data)
 
@@ -130,7 +140,9 @@ class NestProtobufHandler:
             del self.buffer[:self.pending_length]
             self.pending_length = None
             locks_data = await self._process_message(message)
-            if locks_data.get("yale"):
+            if locks_data.get("parse_failed"):
+                self.buffer = message + self.buffer
+            elif locks_data.get("yale"):
                 results.append(locks_data)
 
         return results
@@ -303,7 +315,9 @@ class NestProtobufHandler:
             return locks_data
 
         except DecodeError as e:
-            # These occur for currently-unmapped message types and are expected.
+            # These occur for currently-unmapped message types and are expected, but
+            # during startup we may see partial frames; signal caller to retry with more data.
+            locks_data["parse_failed"] = True
             if not self._decode_warned:
                 _LOGGER.warning(
                     "Some protobuf messages could not be decoded; this is expected and harmless. "
