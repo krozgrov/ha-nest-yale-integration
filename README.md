@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b13 (beta)
+## Pre-release 2025.11.30b14 (beta)
 
-- Restore the 2025.11.9 parsing path for initial refresh: each chunk is parsed directly first, then also through the framed parser to catch either format.
-- Keep the partial-frame preservation and resilience improvements (reset parser on reconnects, auto-recover commands on INTERNAL code 13, refreshed headers on retries) with a 30s first-refresh window.
+- Revert initial refresh to the 2025.11.9 path: parse each chunk directly (no framing) to ensure early lock payloads aren’t discarded; keep 30s first-refresh window.
+- Retains partial-frame preservation and resilience improvements (reset parser on reconnects, auto-recover commands on INTERNAL code 13, refreshed headers on retries).
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b13`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b14`.
 
 
 ## Known Limitations

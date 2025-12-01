@@ -286,33 +286,25 @@ class NestAPIClient:
                                 _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
                                 continue
                             async for chunk in response.content.iter_chunked(1024):
-                                # First try the legacy direct parse (2025.11.9 behavior)
-                                legacy_data = await self.protobuf_handler._process_message(chunk)
-                                parsed_messages = [legacy_data] if legacy_data else []
-
-                                # Then also feed through framed ingest to catch full frames
-                                framed_messages = await self.protobuf_handler._ingest_chunk(chunk)
-                                if framed_messages:
-                                    parsed_messages.extend(framed_messages)
-
-                                for locks_data in parsed_messages:
-                                    if "yale" not in locks_data:
-                                        continue
-                                    self.current_state["devices"]["locks"] = locks_data["yale"]
-                                    if locks_data.get("user_id"):
-                                        old_user_id = self._user_id
-                                        self._user_id = locks_data["user_id"]
-                                        self.current_state["user_id"] = self._user_id
-                                        if old_user_id != self._user_id:
-                                            _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                                    if locks_data.get("structure_id"):
-                                        old_structure_id = self._structure_id
-                                        self._structure_id = locks_data["structure_id"]
-                                        self.current_state["structure_id"] = self._structure_id
-                                        if old_structure_id != self._structure_id:
-                                            _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                                    self.transport_url = base_url
-                                    return locks_data["yale"]
+                                # Mirror 2025.11.9 startup behavior: direct parse of each chunk
+                                locks_data = await self.protobuf_handler._process_message(chunk)
+                                if "yale" not in locks_data:
+                                    continue
+                                self.current_state["devices"]["locks"] = locks_data["yale"]
+                                if locks_data.get("user_id"):
+                                    old_user_id = self._user_id
+                                    self._user_id = locks_data["user_id"]
+                                    self.current_state["user_id"] = self._user_id
+                                    if old_user_id != self._user_id:
+                                        _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                if locks_data.get("structure_id"):
+                                    old_structure_id = self._structure_id
+                                    self._structure_id = locks_data["structure_id"]
+                                    self.current_state["structure_id"] = self._structure_id
+                                    if old_structure_id != self._structure_id:
+                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                self.transport_url = base_url
+                                return locks_data["yale"]
                 except asyncio.TimeoutError:
                     _LOGGER.debug("refresh_state timeout after 30 seconds")
                     last_error = TimeoutError("refresh_state timed out after 30 seconds")
