@@ -286,12 +286,15 @@ class NestAPIClient:
                                 _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
                                 continue
                             async for chunk in response.content.iter_chunked(1024):
-                                # Prefer framed ingest; fall back to direct parse (2025.11.9 behavior) if nothing yielded
-                                parsed_messages = await self.protobuf_handler._ingest_chunk(chunk)
-                                if not parsed_messages:
-                                    fallback_data = await self.protobuf_handler._process_message(chunk)
-                                    if fallback_data:
-                                        parsed_messages = [fallback_data]
+                                # First try the legacy direct parse (2025.11.9 behavior)
+                                legacy_data = await self.protobuf_handler._process_message(chunk)
+                                parsed_messages = [legacy_data] if legacy_data else []
+
+                                # Then also feed through framed ingest to catch full frames
+                                framed_messages = await self.protobuf_handler._ingest_chunk(chunk)
+                                if framed_messages:
+                                    parsed_messages.extend(framed_messages)
+
                                 for locks_data in parsed_messages:
                                     if "yale" not in locks_data:
                                         continue
