@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b10 (beta)
+## Pre-release 2025.11.30b11 (beta)
 
-- Restore initial device discovery by reusing the stream framing parser (`_ingest_chunk`) with a longer 20s first-refresh window so lock payloads aren’t dropped as decode errors.
-- Keeps the observe/command resilience improvements (protobuf reset on reconnects; auto-recover commands on INTERNAL code 13; refreshed headers on retries).
+- Preserve partial frames during startup: if decoding fails, the parser now requeues bytes instead of discarding them, allowing the next chunks to complete the frame.
+- Still uses the framed parser with a 20s first-refresh window and retains the prior resilience (protobuf reset on reconnects; auto-recover commands on INTERNAL code 13; refreshed headers on retries).
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b10`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b11`.
 
 
 ## Known Limitations
