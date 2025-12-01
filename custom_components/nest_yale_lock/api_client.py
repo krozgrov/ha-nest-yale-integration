@@ -278,7 +278,7 @@ class NestAPIClient:
                 try:
                     # Use the exact b2 approach that worked: session.post with iter_chunked
                     # Add timeout wrapper to prevent hanging
-                    async with asyncio.timeout(20):  # allow more time for first device payload
+                    async with asyncio.timeout(30):  # allow more time for first device payload
                         self.protobuf_handler.reset_stream_state()
                         async with self.session.post(api_url, headers=headers, data=observe_payload) as response:
                             if response.status != 200:
@@ -286,7 +286,12 @@ class NestAPIClient:
                                 _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
                                 continue
                             async for chunk in response.content.iter_chunked(1024):
+                                # Prefer framed ingest; fall back to direct parse (2025.11.9 behavior) if nothing yielded
                                 parsed_messages = await self.protobuf_handler._ingest_chunk(chunk)
+                                if not parsed_messages:
+                                    fallback_data = await self.protobuf_handler._process_message(chunk)
+                                    if fallback_data:
+                                        parsed_messages = [fallback_data]
                                 for locks_data in parsed_messages:
                                     if "yale" not in locks_data:
                                         continue
@@ -306,8 +311,8 @@ class NestAPIClient:
                                     self.transport_url = base_url
                                     return locks_data["yale"]
                 except asyncio.TimeoutError:
-                    _LOGGER.debug("refresh_state timeout after 20 seconds")
-                    last_error = TimeoutError("refresh_state timed out after 20 seconds")
+                    _LOGGER.debug("refresh_state timeout after 30 seconds")
+                    last_error = TimeoutError("refresh_state timed out after 30 seconds")
                 except Exception as err:
                     last_error = err
                     _LOGGER.error("Refresh state failed via %s: %s", api_url, err, exc_info=True)
