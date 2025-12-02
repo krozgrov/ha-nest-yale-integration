@@ -116,6 +116,7 @@ class NestAPIClient:
         self._user_id = None  # Discover dynamically
         self._structure_id = None  # Discover dynamically
         self.current_state = {"devices": {"locks": {}}, "user_id": self._user_id, "structure_id": self._structure_id}
+        self._last_observe_data_ts = None
         # Use Home Assistant managed session
         self.session = async_get_clientsession(hass)
         self.connection = ConnectionShim(self.session)
@@ -297,12 +298,13 @@ class NestAPIClient:
                                     self.current_state["user_id"] = self._user_id
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                                if locks_data.get("structure_id"):
-                                    old_structure_id = self._structure_id
-                                    self._structure_id = locks_data["structure_id"]
-                                    self.current_state["structure_id"] = self._structure_id
-                                    if old_structure_id != self._structure_id:
-                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                    if locks_data.get("structure_id"):
+                                        old_structure_id = self._structure_id
+                                        self._structure_id = locks_data["structure_id"]
+                                        self.current_state["structure_id"] = self._structure_id
+                                        if old_structure_id != self._structure_id:
+                                            _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                    self._last_observe_data_ts = asyncio.get_event_loop().time()
                                 self.transport_url = base_url
                                 return locks_data["yale"]
                 except asyncio.TimeoutError:
@@ -411,15 +413,16 @@ class NestAPIClient:
                                     self.current_state["user_id"] = self._user_id
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                                if locks_data.get("structure_id"):
-                                    old_structure_id = self._structure_id
-                                    self._structure_id = locks_data["structure_id"]
-                                    self.current_state["structure_id"] = self._structure_id
-                                    if old_structure_id != self._structure_id:
-                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                                self.transport_url = base_url
-                            # Yield full locks_data including all_traits so coordinator can extract trait data
-                            yield locks_data
+                            if locks_data.get("structure_id"):
+                                old_structure_id = self._structure_id
+                                self._structure_id = locks_data["structure_id"]
+                                self.current_state["structure_id"] = self._structure_id
+                                if old_structure_id != self._structure_id:
+                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                            self.transport_url = base_url
+                            self._last_observe_data_ts = current_time
+                        # Yield full locks_data including all_traits so coordinator can extract trait data
+                        yield locks_data
 
                         if auth_failure:
                             # Reconnect with the new token
@@ -476,6 +479,16 @@ class NestAPIClient:
         if not self.access_token:
             _LOGGER.warning("No access token before send_command, authenticating")
             await self.authenticate()
+
+        # If observe stream has been idle too long, proactively refresh state/session
+        if self._last_observe_data_ts:
+            idle = asyncio.get_event_loop().time() - self._last_observe_data_ts
+            if idle > OBSERVE_IDLE_RESET_SECONDS:
+                _LOGGER.info("Observe stream idle for %.1f seconds; refreshing state before sending command", idle)
+                try:
+                    await self.refresh_state()
+                except Exception as err:
+                    _LOGGER.debug("Pre-command refresh_state failed (continuing anyway): %s", err)
 
         request_id = str(uuid.uuid4())
         headers = {
@@ -557,6 +570,11 @@ class NestAPIClient:
                             _LOGGER.warning("Internal error indicates stale connection; resetting session and retrying command")
                             await self._recover_after_internal_error()
                             _refresh_command_headers()
+                            # Proactively refresh state to regain IDs before retry
+                            try:
+                                await self.refresh_state()
+                            except Exception as err:
+                                _LOGGER.debug("refresh_state after INTERNAL error failed: %s", err)
                             recovered = True
                             continue
                         last_error = RuntimeError(f"Command failed (code {status_code}): {status_msg or 'Unknown error'}")

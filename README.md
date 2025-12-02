@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b15 (beta)
+## Pre-release 2025.11.30b16 (beta)
 
-- Use the 2025.11.9 observe/initial-refresh parsing path: parse each chunk directly, with framed parsing only as a secondary path, to keep early lock payloads from being discarded; 30s first-refresh window remains.
-- Retains partial-frame preservation and resilience improvements (reset parser on reconnects, auto-recover commands on INTERNAL code 13, refreshed headers on retries).
+- Stay on the legacy observe/refresh parsing path; add idle detection so commands trigger a refresh if the stream has been idle longer than the observe timeout.
+- On gRPC INTERNAL (code 13), reset session, refresh headers, and proactively refresh state before the final retry to regain IDs.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b15`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b16`.
 
 
 ## Known Limitations
