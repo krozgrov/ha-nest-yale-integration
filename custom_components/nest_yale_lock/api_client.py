@@ -373,7 +373,13 @@ class NestAPIClient:
                     self.protobuf_handler.reset_stream_state()
                     _LOGGER.info("Observe stream connected to %s", api_url)
                     async for chunk in self.connection.stream(api_url, headers, observe_payload, read_timeout=OBSERVE_IDLE_RESET_SECONDS):
-                        parsed_messages = await self.protobuf_handler._ingest_chunk(chunk)
+                        # Legacy path: parse chunk directly first (2025.11.9 behavior)
+                        legacy_data = await self.protobuf_handler._process_message(chunk)
+                        parsed_messages = [legacy_data] if legacy_data else []
+                        # Also try framed ingest in case chunking differs
+                        framed_messages = await self.protobuf_handler._ingest_chunk(chunk)
+                        if framed_messages:
+                            parsed_messages.extend(framed_messages)
                         if not parsed_messages:
                             continue
 
