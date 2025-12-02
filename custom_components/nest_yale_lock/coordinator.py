@@ -40,8 +40,11 @@ class NestCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         """Fetch data from API client (fallback only when observe stream is unhealthy)."""
-        # Skip polling if observe stream is healthy - it provides real-time updates
-        if self._observer_healthy:
+        # If observer claims healthy but we still have no data, force a fallback once
+        if self._observer_healthy and not self.data:
+            _LOGGER.warning("Observer marked healthy but data is empty; forcing fallback refresh")
+            self._observer_healthy = False
+        elif self._observer_healthy:
             _LOGGER.debug("Skipping fallback poll - observe stream is healthy")
             return self.data
         
@@ -105,9 +108,11 @@ class NestCoordinator(DataUpdateCoordinator):
                                       normalized_update, self.api_client.current_state["user_id"])
                     else:
                         _LOGGER.debug("Normalized observer update is empty: %s", normalized_update)
+                        self._observer_healthy = False  # allow fallback polling if stream yields nothing
                         self.async_set_updated_data(self.data)
                 else:
                     _LOGGER.debug("Observer update received but is empty.")
+                    self._observer_healthy = False  # allow fallback polling if stream yields nothing
                     self.async_set_updated_data(self.data)
         except Exception as e:
             _LOGGER.error("Observer failed: %s", e, exc_info=True)
