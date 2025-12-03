@@ -22,6 +22,7 @@ class NestCoordinator(DataUpdateCoordinator):
         self._observer_task = None
         self._observer_healthy = False  # Track if observe stream is working
         self.data = {}
+        self._initial_data_event = asyncio.Event()
         _LOGGER.debug("Initialized NestCoordinator with initial data: %s", self.data)
 
     async def async_setup(self):
@@ -30,13 +31,21 @@ class NestCoordinator(DataUpdateCoordinator):
         await self.api_client.async_setup()
 
         await self.async_refresh()
-        if not self.data:
-            _LOGGER.warning("Coordinator data is empty after initial refresh, waiting for observer updates.")
-        else:
+        if self.data:
             _LOGGER.debug("Initial data fetched: %s", self.data)
+            self._initial_data_event.set()
+        else:
+            _LOGGER.warning("Coordinator data is empty after initial refresh, waiting for observer updates.")
 
         self._observer_task = self.hass.loop.create_task(self._run_observer())
         _LOGGER.debug("Observer task created: %s", self._observer_task)
+
+        if not self._initial_data_event.is_set():
+            try:
+                await asyncio.wait_for(self._initial_data_event.wait(), timeout=30)
+                _LOGGER.info("Initial observer update received")
+            except asyncio.TimeoutError:
+                _LOGGER.warning("Timed out waiting for initial observer data; entities may start unavailable")
 
     async def _async_update_data(self):
         """Fetch data from API client (fallback only when observe stream is unhealthy)."""
@@ -61,6 +70,8 @@ class NestCoordinator(DataUpdateCoordinator):
                 device.setdefault("device_id", device_id)
                 # Remove bolt_moving from device dict - it's now entity state
                 device.pop("bolt_moving", None)
+            if normalized_data:
+                self._initial_data_event.set()
             _LOGGER.debug("Normalized data from refresh_state: %s", normalized_data)
             return normalized_data
         except Exception as e:
@@ -104,6 +115,7 @@ class NestCoordinator(DataUpdateCoordinator):
                         self.api_client.current_state["user_id"] = update.get("user_id")  # Persist user_id
                         self.api_client.current_state["all_traits"] = all_traits  # Persist trait data
                         self.async_set_updated_data(normalized_update)
+                        self._initial_data_event.set()
                         _LOGGER.debug("Applied normalized observer update: %s, current_state user_id: %s",
                                       normalized_update, self.api_client.current_state["user_id"])
                     else:
