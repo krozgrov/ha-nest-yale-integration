@@ -4,6 +4,7 @@ import uuid
 import aiohttp
 import asyncio
 import jwt
+from contextlib import nullcontext
 from google.protobuf import any_pb2
 from .auth import NestAuthenticator
 from .protobuf_handler import NestProtobufHandler
@@ -81,24 +82,32 @@ class ConnectionShim:
                 self.connected = False
                 raise
 
-    async def post(self, api_url, headers, data):
+    async def post(self, api_url, headers, data, read_timeout=None):
         _LOGGER.debug(f"Sending POST to {api_url}, len(data)={len(data)}")
-        async with self.session.post(api_url, headers=headers, data=data) as response:
-            response_data = await response.read()
-            _LOGGER.debug(f"Post response status: {response.status}, len(response)={len(response_data)}")
-            if response.status != 200:
-                body = await response.text()
-                _LOGGER.error(f"HTTP {response.status}: {body}")
-                self.connected = False
-                raise aiohttp.ClientResponseError(
-                    request_info=response.request_info,
-                    history=(),
-                    status=response.status,
-                    message=body,
-                    headers=response.headers,
-                )
-            self.connected = True
-            return response_data
+        timeout_ctx = asyncio.timeout(read_timeout) if read_timeout else nullcontext()
+        try:
+            async with timeout_ctx:
+                async with self.session.post(api_url, headers=headers, data=data) as response:
+                    response_data = await response.read()
+                    _LOGGER.debug(f"Post response status: {response.status}, len(response)={len(response_data)}")
+                    if response.status != 200:
+                        body = response_data.decode(errors="ignore")
+                        _LOGGER.error(f"HTTP {response.status}: {body}")
+                        self.connected = False
+                        raise aiohttp.ClientResponseError(
+                            request_info=response.request_info,
+                            history=(),
+                            status=response.status,
+                            message=body,
+                            headers=response.headers,
+                        )
+        except asyncio.TimeoutError:
+            _LOGGER.warning("POST to %s timed out after %s seconds", api_url, read_timeout)
+            self.connected = False
+            raise
+
+        self.connected = True
+        return response_data
 
     async def close(self):
         # Do not close HA-managed session; just mark as disconnected
@@ -561,7 +570,7 @@ class NestAPIClient:
             recovered = False
             for _ in range(3):
                 try:
-                    raw_data = await self.connection.post(api_url, headers, encoded_data)
+                    raw_data = await self.connection.post(api_url, headers, encoded_data, read_timeout=API_TIMEOUT_SECONDS)
                     self.transport_url = base_url
                     status_code, status_msg = self._parse_command_status(raw_data)
                     if status_code not in (None, 0):

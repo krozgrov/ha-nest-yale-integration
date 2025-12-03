@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b18 (beta)
+## Pre-release 2025.11.30b19 (beta)
 
-- refresh_state now uses framed parsing first and falls back to legacy direct parsing per chunk to avoid empty data when frames split; observe remains legacy-first with framed as secondary.
-- Retains fallback polling when observer returns empty, idle-aware command refresh, and code 13 recovery (reset session, refresh headers, refresh state before retry).
+- refresh_state parses chunks via framed parser first and falls back to legacy direct parsing, while observe remains legacy-first with framed secondary to catch split frames.
+- Command POSTs now enforce a timeout (API_TIMEOUT_SECONDS) so hung command calls surface quickly, while retries still reset session and refresh state on code 13.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b18`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b19`.
 
 
 ## Known Limitations
