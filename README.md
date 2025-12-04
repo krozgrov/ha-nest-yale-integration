@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b21 (beta)
+## Pre-release 2025.11.30b22 (beta)
 
 - Tracks first observer/fallback data via an event so the coordinator waits (up to 30s) for real lock data before declaring setup complete; fallback polling now sets the event when it gets data.
-- Keeps dual-parsed refresh/observe, idle-aware command refresh, command timeouts, and code 13 recovery (API timeout constant is now imported so command retries work).
+- Command retries now trigger a coordinator refresh when a gRPC INTERNAL error persists after full recovery, keeping entities in sync.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b21`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b22`.
 
 
 ## Known Limitations
