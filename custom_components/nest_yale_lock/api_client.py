@@ -19,6 +19,7 @@ from .const import (
     OBSERVE_IDLE_RESET_SECONDS,
     CONNECT_FAILURE_RESET_THRESHOLD,
     GRPC_CODE_INTERNAL,
+    API_TIMEOUT_SECONDS,
 )
 from .proto.nestlabs.gateway import v1_pb2
 from .proto.nestlabs.gateway import v2_pb2
