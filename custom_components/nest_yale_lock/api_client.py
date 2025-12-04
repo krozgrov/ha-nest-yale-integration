@@ -618,6 +618,15 @@ class NestAPIClient:
                     _LOGGER.error("Failed to send command to %s via %s: %s", device_id, api_url, err, exc_info=True)
                     self._note_connect_failure(err)
                     break
+            if recovered and last_error:
+                _LOGGER.warning("Command ultimately failed after recovering from INTERNAL error; forcing coordinator refresh")
+                try:
+                    data = await self.refresh_state()
+                    if data and "yale" in data:
+                        self.current_state["devices"]["locks"] = data["yale"]
+                except Exception as err:
+                    _LOGGER.debug("Coordinator refresh after failed command recovery also failed: %s", err)
+                break
         if last_error:
             raise last_error
         raise RuntimeError(f"Failed to send command to {device_id} for unknown reasons")
