@@ -51,11 +51,6 @@ class NestProtobufHandler:
         # Allow DecodeError warnings again after a fresh connection
         self._decode_warned = False
 
-    def prepend_chunk(self, chunk: bytes):
-        """Prepend a raw chunk back onto the buffer (used when legacy parsing sees partial frames)."""
-        if chunk:
-            self.buffer = bytearray(chunk) + self.buffer
-
     def _decode_varint(self, buffer, pos):
         value = 0
         shift = 0
