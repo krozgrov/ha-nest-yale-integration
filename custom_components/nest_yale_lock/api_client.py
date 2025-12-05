@@ -304,6 +304,9 @@ class NestAPIClient:
                                     if legacy_data:
                                         parsed_messages = [legacy_data]
                                 for locks_data in parsed_messages:
+                                    if locks_data.get("parse_failed"):
+                                        _LOGGER.debug("refresh_state received partial frame; waiting for more data")
+                                        continue
                                     if "yale" not in locks_data:
                                         continue
                                     self.current_state["devices"]["locks"] = locks_data["yale"]
@@ -407,6 +410,9 @@ class NestAPIClient:
                         auth_failure = False
 
                         for locks_data in parsed_messages:
+                            if locks_data.get("parse_failed"):
+                                _LOGGER.debug("Observe received partial frame; skipping and waiting for next chunk")
+                                continue
                             # Check for authentication failure
                             if locks_data.get("auth_failed"):
                                 _LOGGER.warning("Observe stream reported authentication failure, triggering re-auth")
