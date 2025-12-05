@@ -325,9 +325,6 @@ class NestAPIClient:
                                     self._last_observe_data_ts = asyncio.get_event_loop().time()
                                     self.transport_url = base_url
                                     return locks_data["yale"]
-                except asyncio.TimeoutError:
-                    _LOGGER.debug("refresh_state timeout after 30 seconds")
-                    last_error = TimeoutError("refresh_state timed out after 30 seconds")
                 except Exception as err:
                     last_error = err
                     _LOGGER.error("Refresh state failed via %s: %s", api_url, err, exc_info=True)
