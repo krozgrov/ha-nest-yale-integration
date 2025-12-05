@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b27 - Auto-Reload Recovery (beta)
+## Pre-release 2025.11.30b28 - Stream Timeout Guard (beta)
 
-- Restores the parser buffering that regressed in later betas so partial protobuf frames are re-queued instead of being dropped, which lets `refresh_state` and observe populate devices immediately after startup again.
-- Adds an automatic recovery path that schedules a Home Assistant config-entry reload when repeated fallback polls return no Yale data or when commands continue to fail, mirroring the GUI reload workflow without user intervention.
+- The initial `refresh_state` session now uses the same streaming shim (with per-chunk timeouts) as the live observer, so startup no longer hangs indefinitely when Nest stalls and the integration recovers cleanly without blocking Home Assistant.
+- Keeps the partial-frame buffering + automatic reload logic introduced in b27 so observer updates still resume automatically after transient failures.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b27`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b28`.
 
 
 ## Known Limitations
