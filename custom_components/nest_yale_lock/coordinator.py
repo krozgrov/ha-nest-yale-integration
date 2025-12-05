@@ -41,11 +41,7 @@ class NestCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Observer task created: %s", self._observer_task)
 
         if not self._initial_data_event.is_set():
-            try:
-                await asyncio.wait_for(self._initial_data_event.wait(), timeout=30)
-                _LOGGER.info("Initial observer update received")
-            except asyncio.TimeoutError:
-                _LOGGER.warning("Timed out waiting for initial observer data; entities may start unavailable")
+            self.hass.loop.create_task(self._log_initial_data_ready())
 
     async def _async_update_data(self):
         """Fetch data from API client (fallback only when observe stream is unhealthy)."""
@@ -144,3 +140,10 @@ class NestCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("Observer task cancelled")
         await self.api_client.close()
         _LOGGER.debug("Coordinator unloaded")
+
+    async def _log_initial_data_ready(self):
+        try:
+            await asyncio.wait_for(self._initial_data_event.wait(), timeout=30)
+            _LOGGER.info("Initial observer update received")
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Timed out waiting for initial observer data; entities may start unavailable")
