@@ -556,6 +556,7 @@ class NestAPIClient:
         )
 
         last_error = None
+        forced_refresh = False  # Track whether forced refresh was already attempted
 
         def _refresh_command_headers():
             headers["Authorization"] = f"Basic {self.access_token}"
@@ -624,15 +625,15 @@ class NestAPIClient:
                     _LOGGER.error("Failed to send command to %s via %s: %s", device_id, api_url, err, exc_info=True)
                     self._note_connect_failure(err)
                     break
-            if recovered and last_error:
-                _LOGGER.warning("Command ultimately failed after recovering from INTERNAL error; forcing coordinator refresh")
+            if last_error and not forced_refresh:
+                forced_refresh = True
+                _LOGGER.warning("Command ultimately failed after retries; forcing full state refresh to recover")
                 try:
                     data = await self.refresh_state()
                     if data and "yale" in data:
                         self.current_state["devices"]["locks"] = data["yale"]
                 except Exception as err:
-                    _LOGGER.debug("Coordinator refresh after failed command recovery also failed: %s", err)
-                break
+                    _LOGGER.debug("Forced refresh also failed: %s", err)
         if last_error:
             raise last_error
         raise RuntimeError(f"Failed to send command to {device_id} for unknown reasons")
