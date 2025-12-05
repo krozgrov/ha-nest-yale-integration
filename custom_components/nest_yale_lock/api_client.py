@@ -306,6 +306,7 @@ class NestAPIClient:
                                 for locks_data in parsed_messages:
                                     if locks_data.get("parse_failed"):
                                         _LOGGER.debug("refresh_state received partial frame; waiting for more data")
+                                        self.protobuf_handler.prepend_chunk(chunk)
                                         continue
                                     if "yale" not in locks_data:
                                         continue
@@ -409,6 +410,7 @@ class NestAPIClient:
                         for locks_data in parsed_messages:
                             if locks_data.get("parse_failed"):
                                 _LOGGER.debug("Observe received partial frame; skipping and waiting for next chunk")
+                                self.protobuf_handler.prepend_chunk(chunk)
                                 continue
                             # Check for authentication failure
                             if locks_data.get("auth_failed"):
