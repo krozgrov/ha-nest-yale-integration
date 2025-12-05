@@ -226,6 +226,17 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             _LOGGER.error("Command failed for %s: %s", self._attr_unique_id, e, exc_info=True)
             self._bolt_moving = False
             self._bolt_moving_to = None
+            error_text = str(e)
+            if self._coordinator:
+                if (
+                    isinstance(e, RuntimeError)
+                    or "Internal error" in error_text
+                    or "Command failed" in error_text
+                ):
+                    self._coordinator.schedule_reload(
+                        f"Command failure for {self._device_id}",
+                        delay=5,
+                    )
             self.async_schedule_update_ha_state()
             raise
 

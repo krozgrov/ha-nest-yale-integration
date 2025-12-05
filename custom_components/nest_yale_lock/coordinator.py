@@ -10,7 +10,7 @@ _LOGGER = logging.getLogger(__name__)
 class NestCoordinator(DataUpdateCoordinator):
     """Coordinator to manage Nest Yale Lock data."""
 
-    def __init__(self, hass: HomeAssistant, api_client):
+    def __init__(self, hass: HomeAssistant, api_client, entry_id: str | None = None):
         """Initialize the coordinator."""
         super().__init__(
             hass,
@@ -19,10 +19,13 @@ class NestCoordinator(DataUpdateCoordinator):
             update_interval=UPDATE_INTERVAL_SECONDS,
         )
         self.api_client = api_client
+        self.entry_id = entry_id
         self._observer_task = None
         self._observer_healthy = False  # Track if observe stream is working
         self.data = {}
         self._initial_data_event = asyncio.Event()
+        self._reload_task = None
+        self._empty_refresh_attempts = 0
         _LOGGER.debug("Initialized NestCoordinator with initial data: %s", self.data)
 
     async def async_setup(self):
@@ -43,6 +46,32 @@ class NestCoordinator(DataUpdateCoordinator):
         if not self._initial_data_event.is_set():
             self.hass.loop.create_task(self._log_initial_data_ready())
 
+    def schedule_reload(self, reason: str, delay: float = 0) -> None:
+        """Schedule a config-entry reload similar to HA's GUI reload button."""
+        if not self.entry_id:
+            _LOGGER.debug("Cannot schedule reload without entry_id (reason: %s)", reason)
+            return
+        if self._reload_task and not self._reload_task.done():
+            _LOGGER.debug("Reload already scheduled; ignoring new request (%s)", reason)
+            return
+
+        async def _do_reload():
+            if delay:
+                await asyncio.sleep(delay)
+            _LOGGER.warning(
+                "Automatically reloading Nest Yale Lock entry %s (%s)",
+                self.entry_id,
+                reason,
+            )
+            try:
+                await self.hass.config_entries.async_reload(self.entry_id)
+            except Exception as err:
+                _LOGGER.error("Automatic reload failed: %s", err, exc_info=True)
+            finally:
+                self._reload_task = None
+
+        self._reload_task = self.hass.loop.create_task(_do_reload())
+
     async def _async_update_data(self):
         """Fetch data from API client (fallback only when observe stream is unhealthy)."""
         # If observer claims healthy but we still have no data, force a fallback once
@@ -58,6 +87,9 @@ class NestCoordinator(DataUpdateCoordinator):
             new_data = await self.api_client.refresh_state()
             if not new_data:
                 _LOGGER.debug("Received empty lock data from refresh_state, keeping last known state")
+                self._empty_refresh_attempts += 1
+                if self._empty_refresh_attempts >= 3:
+                    self.schedule_reload("No Yale data from refresh_state (fallback)")
                 return self.data
 
             normalized_data = new_data.get("yale", new_data) if new_data else {}
@@ -68,6 +100,7 @@ class NestCoordinator(DataUpdateCoordinator):
                 device.pop("bolt_moving", None)
             if normalized_data:
                 self._initial_data_event.set()
+                self._empty_refresh_attempts = 0
             _LOGGER.debug("Normalized data from refresh_state: %s", normalized_data)
             return normalized_data
         except Exception as e:
@@ -110,6 +143,7 @@ class NestCoordinator(DataUpdateCoordinator):
                         
                         self.api_client.current_state["user_id"] = update.get("user_id")  # Persist user_id
                         self.api_client.current_state["all_traits"] = all_traits  # Persist trait data
+                        self._empty_refresh_attempts = 0
                         self.async_set_updated_data(normalized_update)
                         self._initial_data_event.set()
                         _LOGGER.debug("Applied normalized observer update: %s, current_state user_id: %s",
@@ -138,6 +172,14 @@ class NestCoordinator(DataUpdateCoordinator):
                 await self._observer_task
             except asyncio.CancelledError:
                 _LOGGER.debug("Observer task cancelled")
+        if self._reload_task and not self._reload_task.done():
+            _LOGGER.debug("Cancelling scheduled reload task")
+            self._reload_task.cancel()
+            try:
+                await self._reload_task
+            except asyncio.CancelledError:
+                pass
+            self._reload_task = None
         await self.api_client.close()
         _LOGGER.debug("Coordinator unloaded")
 

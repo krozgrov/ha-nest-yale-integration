@@ -297,34 +297,38 @@ class NestAPIClient:
                                 _LOGGER.error("HTTP %s from %s: %s", response.status, api_url, body)
                                 continue
                             async for chunk in response.content.iter_chunked(1024):
-                                # Prefer framed ingest; also run legacy direct parse to catch partials
                                 parsed_messages = await self.protobuf_handler._ingest_chunk(chunk)
                                 if not parsed_messages:
                                     legacy_data = await self.protobuf_handler._process_message(chunk)
                                     if legacy_data:
                                         parsed_messages = [legacy_data]
+                                    else:
+                                        continue
                                 for locks_data in parsed_messages:
                                     if locks_data.get("parse_failed"):
                                         _LOGGER.debug("refresh_state received partial frame; waiting for more data")
+                                        self.protobuf_handler.prepend_chunk(chunk)
                                         continue
-                                    if "yale" not in locks_data:
-                                        continue
-                                    self.current_state["devices"]["locks"] = locks_data["yale"]
-                                    if locks_data.get("user_id"):
-                                        old_user_id = self._user_id
-                                        self._user_id = locks_data["user_id"]
-                                        self.current_state["user_id"] = self._user_id
-                                        if old_user_id != self._user_id:
-                                            _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                                    if locks_data.get("structure_id"):
-                                        old_structure_id = self._structure_id
-                                        self._structure_id = locks_data["structure_id"]
-                                        self.current_state["structure_id"] = self._structure_id
-                                        if old_structure_id != self._structure_id:
-                                            _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                                    self._last_observe_data_ts = asyncio.get_event_loop().time()
-                                    self.transport_url = base_url
-                                    return locks_data["yale"]
+                                    if locks_data.get("yale"):
+                                        self.current_state["devices"]["locks"] = locks_data["yale"]
+                                        if locks_data.get("user_id"):
+                                            old_user_id = self._user_id
+                                            self._user_id = locks_data["user_id"]
+                                            self.current_state["user_id"] = self._user_id
+                                            if old_user_id != self._user_id:
+                                                _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                        if locks_data.get("structure_id"):
+                                            old_structure_id = self._structure_id
+                                            self._structure_id = locks_data["structure_id"]
+                                            self.current_state["structure_id"] = self._structure_id
+                                            if old_structure_id != self._structure_id:
+                                                _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                        self._last_observe_data_ts = asyncio.get_event_loop().time()
+                                        self.transport_url = base_url
+                                        return locks_data["yale"]
+                except asyncio.TimeoutError:
+                    _LOGGER.debug("refresh_state timeout after 30 seconds")
+                    last_error = TimeoutError("refresh_state timed out after 30 seconds")
                 except Exception as err:
                     last_error = err
                     _LOGGER.error("Refresh state failed via %s: %s", api_url, err, exc_info=True)
@@ -409,6 +413,7 @@ class NestAPIClient:
                         for locks_data in parsed_messages:
                             if locks_data.get("parse_failed"):
                                 _LOGGER.debug("Observe received partial frame; skipping and waiting for next chunk")
+                                self.protobuf_handler.prepend_chunk(chunk)
                                 continue
                             # Check for authentication failure
                             if locks_data.get("auth_failed"):

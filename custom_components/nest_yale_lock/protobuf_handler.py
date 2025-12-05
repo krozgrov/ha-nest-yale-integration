@@ -51,6 +51,12 @@ class NestProtobufHandler:
         # Allow DecodeError warnings again after a fresh connection
         self._decode_warned = False
 
+    def prepend_chunk(self, chunk: bytes):
+        """Push a raw chunk back into the buffer so we can wait for more data."""
+        if chunk:
+            # Prepend while preserving any buffered bytes that already exist
+            self.buffer = bytearray(chunk) + self.buffer
+
     def _decode_varint(self, buffer, pos):
         value = 0
         shift = 0
