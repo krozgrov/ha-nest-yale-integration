@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b25 (beta)
+## Pre-release 2025.11.30b27 - Auto-Reload Recovery (beta)
 
-- Coordinator still tracks initial data readiness but now logs it asynchronously so HA startup is not blocked while the observer warms up.
-- Command retries force a full state refresh if all gRPC INTERNAL recovery attempts fail, and observer ignores partial `parse_failed` frames to avoid entities going unavailable.
+- Restores the parser buffering that regressed in later betas so partial protobuf frames are re-queued instead of being dropped, which lets `refresh_state` and observe populate devices immediately after startup again.
+- Adds an automatic recovery path that schedules a Home Assistant config-entry reload when repeated fallback polls return no Yale data or when commands continue to fail, mirroring the GUI reload workflow without user intervention.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b25`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b27`.
 
 
 ## Known Limitations
