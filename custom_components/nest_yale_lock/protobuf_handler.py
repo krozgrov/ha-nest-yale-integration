@@ -178,8 +178,22 @@ class NestProtobufHandler:
                 locks_data["auth_failed"] = True
                 return locks_data
 
-            # First pass: Identify lock devices by BoltLockTrait
+            # First pass: Identify lock devices by BoltLockTrait or Linus lock resource hints (set operations)
             for msg in self.stream_body.message:
+                for set_op in msg.set:
+                    obj_id = getattr(set_op, "resource_id", None) or getattr(getattr(set_op, "object", None), "id", None)
+                    resource_type = getattr(set_op, "resource_type", "") or ""
+                    trait_type = getattr(getattr(set_op, "property_key", None), "trait_type", "") if hasattr(set_op, "property_key") else ""
+                    if obj_id and (
+                        "LinusLock" in resource_type
+                        or "BoltLockTrait" in trait_type
+                        or resource_type.lower().startswith("yale.resource")
+                    ):
+                        lock_device_ids.add(obj_id)
+                        _LOGGER.debug("Identified lock device via set: %s (%s)", obj_id, resource_type or trait_type)
+                    if obj_id and trait_type and "DeviceIdentityTrait" in trait_type:
+                        trait_key = f"{obj_id}:{trait_type}"
+                        all_traits[trait_key] = {"object_id": obj_id, "type_url": trait_type, "decoded": False}
                 for get_op in msg.get:
                     obj_id = get_op.object.id if get_op.object.id else None
                     property_any = getattr(get_op.data, "property", None)
@@ -195,6 +209,17 @@ class NestProtobufHandler:
 
             # Second pass: Process traits only for lock devices, structures, and users
             for msg in self.stream_body.message:
+                for set_op in msg.set:
+                    obj_id = getattr(set_op, "resource_id", None) or getattr(getattr(set_op, "object", None), "id", None)
+                    obj_key = getattr(getattr(set_op, "property_key", None), "property_key", None) or "unknown"
+                    trait_type = getattr(getattr(set_op, "property_key", None), "trait_type", None)
+                    should_process = obj_id and (obj_id in lock_device_ids or obj_id.startswith("STRUCTURE_") or obj_id.startswith("USER_"))
+                    if should_process and trait_type:
+                        trait_key = f"{obj_id}:{trait_type}"
+                        if trait_key not in all_traits:
+                            all_traits[trait_key] = {"object_id": obj_id, "type_url": trait_type, "decoded": False}
+                        _LOGGER.debug("Processing set-op trait hint `%s` for `%s` with key `%s`", trait_type, obj_id, obj_key)
+
                 for get_op in msg.get:
                     obj_id = get_op.object.id if get_op.object.id else None
                     obj_key = get_op.object.key if get_op.object.key else "unknown"
@@ -317,6 +342,16 @@ class NestProtobufHandler:
                             _LOGGER.error("Failed to parse UserInfoTrait: %s", err, exc_info=True)
 
             locks_data["all_traits"] = all_traits
+            # If we saw a lock device but no BoltLockTrait yet, seed a placeholder so entities can initialize
+            for obj_id in lock_device_ids:
+                locks_data["yale"].setdefault(
+                    obj_id,
+                    {
+                        "device_id": obj_id,
+                        "bolt_locked": True,
+                        "actuator_state": weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_OK,
+                    },
+                )
             _LOGGER.debug(f"Final lock data: {locks_data}")
             return locks_data
 

@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b33 - Non-Blocking Startup (beta)
+## Pre-release 2025.11.30b34 - Instant Seed (beta)
 
-- Home Assistant startup no longer waits on long `refresh_state` calls: the initial refresh is capped at 5s and the observer takes over for first data.
-- Sticky availability window remains (15 minutes) to keep the lock from flipping to unavailable during reconnects; streaming timeouts and partial buffering stay in place.
+- Seeds lock entities as soon as DeviceIdentityTrait/Linus lock hints arrive (even before BoltLockTrait), so the lock comes up immediately after HA restart.
+- Keeps prior improvements: 5s capped initial refresh, 15-minute sticky availability window, streaming timeouts, and partial-frame buffering.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b33`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b34`.
 
 
 ## Known Limitations
