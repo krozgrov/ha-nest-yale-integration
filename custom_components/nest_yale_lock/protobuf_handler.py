@@ -214,6 +214,11 @@ class NestProtobufHandler:
                     obj_key = getattr(getattr(set_op, "property_key", None), "property_key", None) or "unknown"
                     trait_type = getattr(getattr(set_op, "property_key", None), "trait_type", None)
                     should_process = obj_id and (obj_id in lock_device_ids or obj_id.startswith("STRUCTURE_") or obj_id.startswith("USER_"))
+                    # Capture structure/user ids from set frames so commands have IDs early
+                    if obj_id and obj_id.startswith("STRUCTURE_"):
+                        locks_data["structure_id"] = obj_id.replace("STRUCTURE_", "")
+                    if obj_id and obj_id.startswith("USER_"):
+                        locks_data["user_id"] = obj_id
                     if should_process and trait_type:
                         trait_key = f"{obj_id}:{trait_type}"
                         if trait_key not in all_traits:

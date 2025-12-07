@@ -529,6 +529,8 @@ class NestAPIClient:
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
             _LOGGER.debug("Using structure_id: %s", effective_structure_id)
+        elif self._structure_id:
+            headers["X-Nest-Structure-Id"] = self._structure_id
         if self._user_id:
             headers["X-nl-user-id"] = str(self._user_id)
 

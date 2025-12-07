@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b34 - Instant Seed (beta)
+## Pre-release 2025.11.30b35 - Early IDs for Commands (beta)
 
-- Seeds lock entities as soon as DeviceIdentityTrait/Linus lock hints arrive (even before BoltLockTrait), so the lock comes up immediately after HA restart.
-- Keeps prior improvements: 5s capped initial refresh, 15-minute sticky availability window, streaming timeouts, and partial-frame buffering.
+- Capture structure_id/user_id from early “set” frames so commands have IDs immediately after startup, reducing gRPC INTERNAL errors when BoltLockTrait hasn’t arrived yet.
+- Keeps instant seed, capped initial refresh (5s), sticky availability window (15 minutes), streaming timeouts, and partial buffering from prior betas.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b34`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b35`.
 
 
 ## Known Limitations
