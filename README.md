@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b35 - Early IDs for Commands (beta)
+## Pre-release 2025.11.30b36 - Clear Optimistic State (beta)
 
-- Capture structure_id/user_id from early “set” frames so commands have IDs immediately after startup, reducing gRPC INTERNAL errors when BoltLockTrait hasn’t arrived yet.
-- Keeps instant seed, capped initial refresh (5s), sticky availability window (15 minutes), streaming timeouts, and partial buffering from prior betas.
+- Added a safety timer to clear “locking/unlocking” optimistic state if no observer update arrives within ~10s, so the UI doesn’t stay stuck after a successful command.
+- Retains early ID capture, instant seed, capped initial refresh (5s), 15-minute sticky availability, streaming timeouts, and partial buffering from prior betas.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b35`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b36`.
 
 
 ## Known Limitations
