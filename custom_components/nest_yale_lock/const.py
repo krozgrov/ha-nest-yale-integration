@@ -42,7 +42,8 @@ API_NEST_REAUTH_MINUTES = 20 * 24 * 60  # 20 days
 API_HTTP2_PING_INTERVAL_SECONDS = 60
 OBSERVE_IDLE_RESET_SECONDS = 600  # Force reconnect if stream idle this long (10 minutes - increased to reduce reconnections)
 CONNECT_FAILURE_RESET_THRESHOLD = 3  # Recreate session after N consecutive connect errors
-STALE_STATE_MAX_SECONDS = 180  # Keep entities available for this long after last good update
+# Keep entities available during reconnects for this long after last good update
+STALE_STATE_MAX_SECONDS = 900  # 15 minutes
 
 # REST API Endpoints (from nest-endpoints.js)
 URL_NEST_AUTH = "https://{api_hostname}/session"

@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b30 - Stickier Availability (beta)
+## Pre-release 2025.11.30b31 - Longer Sticky Window (beta)
 
-- Lock entities now stay available if we have any last-known state, even if the observer is briefly reconnecting; a short stale timer (default ~3 minutes) replaces the immediate flip to unavailable.
-- Startup `refresh_state` still uses streaming timeouts and the partial-frame buffering + auto-reload logic from prior betas.
+- Extends the “sticky” availability window to 15 minutes so brief reconnection gaps won’t flip the lock to unavailable, while keeping last-known state visible.
+- Startup streaming timeouts, partial-frame buffering, and auto-reload logic from prior betas remain in place.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b30`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b31`.
 
 
 ## Known Limitations
