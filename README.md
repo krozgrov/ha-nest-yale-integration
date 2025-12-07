@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b31 - Longer Sticky Window (beta)
+## Pre-release 2025.11.30b32 - Faster Startup (beta)
 
-- Extends the “sticky” availability window to 15 minutes so brief reconnection gaps won’t flip the lock to unavailable, while keeping last-known state visible.
-- Startup streaming timeouts, partial-frame buffering, and auto-reload logic from prior betas remain in place.
+- Initial `refresh_state` is now best-effort with a 10s cap so HA startup won’t hang; the observer takes over immediately afterward.
+- Sticky availability window remains (15 minutes) to keep the lock from flipping to unavailable during reconnects; streaming timeouts and partial buffering stay in place.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b31`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b32`.
 
 
 ## Known Limitations

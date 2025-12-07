@@ -35,13 +35,17 @@ class NestCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Starting async_setup for coordinator")
         await self.api_client.async_setup()
 
-        await self.async_refresh()
-        if self.data:
-            _LOGGER.debug("Initial data fetched: %s", self.data)
-            self._initial_data_event.set()
-            self._last_good_update = asyncio.get_event_loop().time()
-        else:
-            _LOGGER.warning("Coordinator data is empty after initial refresh, waiting for observer updates.")
+        # Best-effort initial refresh but don't block HA startup
+        try:
+            await asyncio.wait_for(self.async_refresh(), timeout=10)
+            if self.data:
+                _LOGGER.debug("Initial data fetched: %s", self.data)
+                self._initial_data_event.set()
+                self._last_good_update = asyncio.get_event_loop().time()
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Initial refresh timed out after 10s; continuing with observer")
+        except Exception as err:
+            _LOGGER.warning("Initial refresh failed (non-blocking): %s", err)
 
         self._observer_task = self.hass.loop.create_task(self._run_observer())
         _LOGGER.debug("Observer task created: %s", self._observer_task)
