@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b32 - Faster Startup (beta)
+## Pre-release 2025.11.30b33 - Non-Blocking Startup (beta)
 
-- Initial `refresh_state` is now best-effort with a 10s cap so HA startup won’t hang; the observer takes over immediately afterward.
+- Home Assistant startup no longer waits on long `refresh_state` calls: the initial refresh is capped at 5s and the observer takes over for first data.
 - Sticky availability window remains (15 minutes) to keep the lock from flipping to unavailable during reconnects; streaming timeouts and partial buffering stay in place.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b32`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b33`.
 
 
 ## Known Limitations
