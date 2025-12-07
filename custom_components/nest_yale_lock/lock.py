@@ -303,9 +303,21 @@ class NestYaleLock(NestYaleEntity, LockEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        available = bool(self._device_data) and self._coordinator.last_update_success
-        _LOGGER.debug("Availability check for %s: %s", self._attr_unique_id, available)
+        age = self._coordinator.last_good_update_age() if hasattr(self._coordinator, "last_good_update_age") else None
+        if age is None:
+            available = bool(self._device_data) and self._coordinator.last_update_success
+        else:
+            available = bool(self._device_data) and age < self._coordinator.hass.data.get(
+                "nest_yale_lock_stale_max",  # optional override
+                getattr(self._coordinator, "_stale_max_seconds", None) or self._default_stale_max(),
+            )
+        _LOGGER.debug("Availability check for %s: %s (age=%s)", self._attr_unique_id, available, age)
         return available
+
+    @staticmethod
+    def _default_stale_max() -> int:
+        from .const import STALE_STATE_MAX_SECONDS
+        return STALE_STATE_MAX_SECONDS
 
     @property
     def state(self) -> LockState:

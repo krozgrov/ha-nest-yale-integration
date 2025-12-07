@@ -3,7 +3,7 @@ import logging
 import asyncio
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from .const import DOMAIN, UPDATE_INTERVAL_SECONDS
+from .const import DOMAIN, UPDATE_INTERVAL_SECONDS, STALE_STATE_MAX_SECONDS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,6 +26,8 @@ class NestCoordinator(DataUpdateCoordinator):
         self._initial_data_event = asyncio.Event()
         self._reload_task = None
         self._empty_refresh_attempts = 0
+        self._last_good_update = None
+        self._stale_max_seconds = STALE_STATE_MAX_SECONDS
         _LOGGER.debug("Initialized NestCoordinator with initial data: %s", self.data)
 
     async def async_setup(self):
@@ -37,6 +39,7 @@ class NestCoordinator(DataUpdateCoordinator):
         if self.data:
             _LOGGER.debug("Initial data fetched: %s", self.data)
             self._initial_data_event.set()
+            self._last_good_update = asyncio.get_event_loop().time()
         else:
             _LOGGER.warning("Coordinator data is empty after initial refresh, waiting for observer updates.")
 
@@ -101,6 +104,7 @@ class NestCoordinator(DataUpdateCoordinator):
             if normalized_data:
                 self._initial_data_event.set()
                 self._empty_refresh_attempts = 0
+                self._last_good_update = asyncio.get_event_loop().time()
             _LOGGER.debug("Normalized data from refresh_state: %s", normalized_data)
             return normalized_data
         except Exception as e:
@@ -144,6 +148,7 @@ class NestCoordinator(DataUpdateCoordinator):
                         self.api_client.current_state["user_id"] = update.get("user_id")  # Persist user_id
                         self.api_client.current_state["all_traits"] = all_traits  # Persist trait data
                         self._empty_refresh_attempts = 0
+                        self._last_good_update = asyncio.get_event_loop().time()
                         self.async_set_updated_data(normalized_update)
                         self._initial_data_event.set()
                         _LOGGER.debug("Applied normalized observer update: %s, current_state user_id: %s",
@@ -182,6 +187,12 @@ class NestCoordinator(DataUpdateCoordinator):
             self._reload_task = None
         await self.api_client.close()
         _LOGGER.debug("Coordinator unloaded")
+
+    def last_good_update_age(self) -> float | None:
+        """Return age in seconds since last successful device payload."""
+        if self._last_good_update is None:
+            return None
+        return asyncio.get_event_loop().time() - self._last_good_update
 
     async def _log_initial_data_ready(self):
         try:

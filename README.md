@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b28 - Stream Timeout Guard (beta)
+## Pre-release 2025.11.30b29 - Seamless Reconnect (beta)
 
-- The initial `refresh_state` session now uses the same streaming shim (with per-chunk timeouts) as the live observer, so startup no longer hangs indefinitely when Nest stalls and the integration recovers cleanly without blocking Home Assistant.
-- Keeps the partial-frame buffering + automatic reload logic introduced in b27 so observer updates still resume automatically after transient failures.
+- Keeps the last known lock state “sticky” for a short window during reconnects so entities stay available while the stream restarts, instead of flipping to unavailable.
+- Startup `refresh_state` still uses the streaming shim with per-chunk timeouts, and the partial-frame buffering + auto-reload logic from b27 remains in place.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b28`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b29`.
 
 
 ## Known Limitations
