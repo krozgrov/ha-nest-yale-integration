@@ -55,7 +55,6 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         # Store internal state as entity attributes, not in device dict
         self._bolt_moving = False
         self._bolt_moving_to: bool | None = None
-        self._bolt_timer = None
         self._attr_has_entity_name = False
         self._attr_should_poll = False
         self._state: LockState | None = None
@@ -225,10 +224,8 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             # Set optimistic state - the observe stream will confirm the actual state
             self._bolt_moving = True
             self._bolt_moving_to = lock
-            # Ensure we clear optimistic state if no update arrives
-            if self._bolt_timer and not self._bolt_timer.done():
-                self._bolt_timer.cancel()
-            self._bolt_timer = asyncio.create_task(self._clear_bolt_moving(delay=10))
+            # Clear optimistic state after a short delay if no update arrives
+            asyncio.create_task(self._clear_bolt_moving())
             self.async_write_ha_state()
             _LOGGER.info("Command %s sent successfully for %s, waiting for observe stream to confirm state change",
                          "lock" if lock else "unlock", self._attr_unique_id)
@@ -282,9 +279,6 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                 # State actually changed, clear optimistic flags
                 self._bolt_moving = False
                 self._bolt_moving_to = None
-                if self._bolt_timer and not self._bolt_timer.done():
-                    self._bolt_timer.cancel()
-                    self._bolt_timer = None
                 _LOGGER.info("Lock state changed for %s: %s -> %s", self._attr_unique_id, 
                             "locked" if old_bolt_locked else "unlocked",
                             "locked" if self._device_data.get("bolt_locked", False) else "unlocked")
@@ -309,14 +303,12 @@ class NestYaleLock(NestYaleEntity, LockEntity):
 
     async def _clear_bolt_moving(self):
         """Clear bolt_moving state after delay."""
-        # Default delay of 5s unless overridden by caller
-        delay = 5
-        if isinstance(self._bolt_moving_to, bool):
-            delay = 10
-        await asyncio.sleep(delay)
-        self._bolt_moving = False
-        self.async_schedule_update_ha_state()
-        _LOGGER.debug("Cleared bolt_moving for %s after delay", self._attr_unique_id)
+        await asyncio.sleep(5)
+        if self._bolt_moving:
+            self._bolt_moving = False
+            self._bolt_moving_to = None
+            self.async_schedule_update_ha_state()
+            _LOGGER.debug("Cleared bolt_moving for %s after delay", self._attr_unique_id)
 
     @property
     def available(self) -> bool:
