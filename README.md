@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b37 - Faster State Clear (beta)
+## Pre-release 2025.11.30b38 - Command ID Refresh (beta)
 
-- Reverts the long optimistic timer and clears “locking/unlocking” after ~5s if no observer update arrives, while still clearing immediately when updates come in.
-- Keeps early ID capture, instant seed, capped initial refresh (5s), 15-minute sticky availability, streaming timeouts, and partial buffering from prior betas.
+- Refreshes structure_id after INTERNAL error recovery and simplifies headers to avoid sending empty IDs, reducing gRPC INTERNAL errors on lock/unlock.
+- Keeps earlier fixes: instant seed, early ID capture from set frames, capped initial refresh (5s), sticky availability, streaming timeouts, partial buffering, and 5s optimistic clear.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b37`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b38`.
 
 
 ## Known Limitations

@@ -529,8 +529,6 @@ class NestAPIClient:
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
             _LOGGER.debug("Using structure_id: %s", effective_structure_id)
-        elif self._structure_id:
-            headers["X-Nest-Structure-Id"] = self._structure_id
         if self._user_id:
             headers["X-nl-user-id"] = str(self._user_id)
 
@@ -747,3 +745,9 @@ class NestAPIClient:
         # Force token renewal
         self.access_token = None
         await self.authenticate()
+        # Refresh structure_id after reauth so commands have IDs
+        try:
+            self._structure_id = await self.fetch_structure_id()
+            self.current_state["structure_id"] = self._structure_id
+        except Exception as err:
+            _LOGGER.debug("Structure id refresh after reauth failed: %s", err)
