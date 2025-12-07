@@ -62,6 +62,12 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         # Keeping these for backward compatibility with existing code that references them
         self._user_id = self._coordinator.api_client.user_id
         self._structure_id = self._coordinator.api_client.structure_id
+        # Seed last_good_update if we already have data so availability stays True while reconnecting
+        try:
+            if self._device_data and getattr(self._coordinator, "_last_good_update", None) is None:
+                self._coordinator._last_good_update = asyncio.get_event_loop().time()
+        except Exception:
+            pass
         _LOGGER.debug(
             "Initialized lock with user_id: %s, structure_id: %s, device_id=%s, unique_id=%s, device=%s",
             self._user_id,
@@ -304,13 +310,17 @@ class NestYaleLock(NestYaleEntity, LockEntity):
     def available(self) -> bool:
         """Return if entity is available."""
         age = self._coordinator.last_good_update_age() if hasattr(self._coordinator, "last_good_update_age") else None
-        if age is None:
-            available = bool(self._device_data) and self._coordinator.last_update_success
-        else:
-            available = bool(self._device_data) and age < self._coordinator.hass.data.get(
+        stale_limit = self._coordinator.hass.data.get(
                 "nest_yale_lock_stale_max",  # optional override
                 getattr(self._coordinator, "_stale_max_seconds", None) or self._default_stale_max(),
             )
+        if not self._device_data:
+            available = False
+        elif age is None:
+            # If we have data but no timestamp yet, stay available (we seeded above on init)
+            available = True
+        else:
+            available = age < stale_limit
         _LOGGER.debug("Availability check for %s: %s (age=%s)", self._attr_unique_id, available, age)
         return available
 

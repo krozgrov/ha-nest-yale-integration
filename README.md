@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b29 - Seamless Reconnect (beta)
+## Pre-release 2025.11.30b30 - Stickier Availability (beta)
 
-- Keeps the last known lock state “sticky” for a short window during reconnects so entities stay available while the stream restarts, instead of flipping to unavailable.
-- Startup `refresh_state` still uses the streaming shim with per-chunk timeouts, and the partial-frame buffering + auto-reload logic from b27 remains in place.
+- Lock entities now stay available if we have any last-known state, even if the observer is briefly reconnecting; a short stale timer (default ~3 minutes) replaces the immediate flip to unavailable.
+- Startup `refresh_state` still uses streaming timeouts and the partial-frame buffering + auto-reload logic from prior betas.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b29`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b30`.
 
 
 ## Known Limitations
