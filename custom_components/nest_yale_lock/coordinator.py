@@ -133,8 +133,9 @@ class NestCoordinator(DataUpdateCoordinator):
                             device.setdefault("device_id", device_id)
                             if "actuatorState" in device:
                                 device["actuator_state"] = device["actuatorState"]
-                            # Remove bolt_moving from device dict - it's now entity state
-                            device.pop("bolt_moving", None)
+                            # Preserve bolt_moving if the stream sent it (used to clear optimistic state promptly)
+                            if "bolt_moving" not in device:
+                                device["bolt_moving"] = False
                             
                             # Extract trait data for this device from all_traits
                             device_traits = {}

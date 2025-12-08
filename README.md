@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b39 - Clear Moving on Updates (beta)
+## Pre-release 2025.11.30b40 - Keep Moving Flag (beta)
 
-- Preserve `bolt_moving` from observer updates and clear optimistic moving state as soon as we see a non-moving update, reducing “stuck locking/unlocking” even when BoltLockTrait arrives later.
+- Preserve `bolt_moving` from observer updates with a safe default, so optimistic clear happens as soon as the stream reports the actuator is no longer moving.
 - Keeps earlier fixes: command ID refresh, instant seed, early ID capture from set frames, capped initial refresh (5s), sticky availability, streaming timeouts, partial buffering, and 5s optimistic clear.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b39`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b40`.
 
 
 ## Known Limitations
