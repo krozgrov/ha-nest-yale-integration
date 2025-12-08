@@ -270,13 +270,15 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             if "actuator_state" in new_data:
                 actuator_state = new_data["actuator_state"]
                 self._bolt_moving = actuator_state not in [weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_OK]
+            elif "bolt_moving" in new_data:
+                self._bolt_moving = bool(new_data.get("bolt_moving"))
             else:
                 # Clear optimistic state when we get a real update
                 self._bolt_moving = False
             
             # Clear optimistic state when we get a real update
-            if old_bolt_locked != self._device_data.get("bolt_locked", False):
-                # State actually changed, clear optimistic flags
+            if old_bolt_locked != self._device_data.get("bolt_locked", False) or not self._bolt_moving:
+                # State changed or actuator not moving, clear optimistic flags
                 self._bolt_moving = False
                 self._bolt_moving_to = None
                 _LOGGER.info("Lock state changed for %s: %s -> %s", self._attr_unique_id, 
