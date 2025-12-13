@@ -105,6 +105,11 @@ class NestCoordinator(DataUpdateCoordinator):
                 device.setdefault("device_id", device_id)
                 # Remove bolt_moving from device dict - it's now entity state
                 device.pop("bolt_moving", None)
+            # Keep API client's cache in sync for metadata lookups (name/firmware fallbacks)
+            try:
+                self.api_client.current_state["devices"]["locks"].update(normalized_data)
+            except Exception:
+                pass
             if normalized_data:
                 self._initial_data_event.set()
                 self._empty_refresh_attempts = 0
@@ -150,6 +155,12 @@ class NestCoordinator(DataUpdateCoordinator):
                             else:
                                 _LOGGER.debug("No trait data found for device %s in all_traits (keys: %s)", device_id, list(all_traits.keys())[:5])
                         
+                        # Keep API client's cache in sync for metadata lookups (name/firmware fallbacks)
+                        try:
+                            self.api_client.current_state["devices"]["locks"].update(normalized_update)
+                        except Exception:
+                            pass
+
                         self.api_client.current_state["user_id"] = update.get("user_id")  # Persist user_id
                         self.api_client.current_state["all_traits"] = all_traits  # Persist trait data
                         self._empty_refresh_attempts = 0

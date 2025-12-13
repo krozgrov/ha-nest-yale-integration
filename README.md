@@ -4,7 +4,7 @@
 
 # Google Nest x Yale Lock Integration for Home Assistant
 
-An integration for Home Assistant that connects your Google Nest x Yale Lock, enabling control directly from Home Assistant using reversed-enginered protobuf messaging protocol.
+An integration for Home Assistant that connects your Google Nest x Yale Lock, enabling control directly from Home Assistant using reverse-engineered protobuf messaging.
 
 ## Sponsor
 
@@ -22,16 +22,17 @@ A lot of effort is going into this integration. So if you can afford it and want
 
 ## Status
 
-Core lock and unlock commands work reliably, and state updates are handled via a observe stream with automatic reconnection and authentication renewal.
+Core lock and unlock commands work reliably, and state updates are handled via an Observe stream with automatic reconnection and authentication renewal.
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.11.30b40 - Keep Moving Flag (beta)
+## Pre-release 2025.12.13b1 - Faster Add / Non-blocking Auth (beta)
 
-- Preserve `bolt_moving` from observer updates with a safe default, so optimistic clear happens as soon as the stream reports the actuator is no longer moving.
-- Keeps earlier fixes: command ID refresh, instant seed, early ID capture from set frames, capped initial refresh (5s), sticky availability, streaming timeouts, partial buffering, and 5s optimistic clear.
+- Improve “Add Integration” speed by keeping config-flow credential validation token-only (avoid blocking on long streaming refresh during auth).
+- Keep `structure_id` fetch best-effort with a short timeout; discovery continues via Observe stream.
+- Includes b40 behavior: preserve `bolt_moving` from observer updates with a safe default so optimistic clear happens promptly when the stream reports the actuator is no longer moving.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.11.30b40`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.13b1`.
 
 
 ## Known Limitations

@@ -50,6 +50,8 @@ class NestYaleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
         try:
+            # Keep validation fast: authenticate should only verify credentials and obtain a token.
+            # Device discovery happens later via the coordinator's Observe stream.
             await api_client.authenticate()
         finally:
             await api_client.close()  # Ensure session is properly closed

@@ -220,9 +220,22 @@ class NestAPIClient:
             else:
                 _LOGGER.warning(f"No id_token in auth_data, awaiting stream for user_id and structure_id")
             _LOGGER.info(f"Authenticated with access_token: {self.access_token[:10]}..., user_id: {self._user_id}, structure_id: {self._structure_id}")
-            await self.refresh_state()  # Initial refresh to discover IDs
-            # Also ensure structure_id is set via REST directly
-            self._structure_id = await self.fetch_structure_id()
+            # IMPORTANT: Do NOT block authentication on refresh_state().
+            #
+            # refresh_state() is a streaming call that can take up to API_TIMEOUT_SECONDS
+            # (and may retry). During config flow validation / initial setup, this makes
+            # adding the integration feel "stuck" even though credentials are valid.
+            #
+            # Device discovery is primarily handled by the Observe stream started by the
+            # coordinator; fallback polling still uses refresh_state() when needed.
+            #
+            # We keep a best-effort structure_id fetch (REST) but cap it so setup stays snappy.
+            try:
+                self._structure_id = await asyncio.wait_for(self.fetch_structure_id(), timeout=5)
+            except asyncio.TimeoutError:
+                _LOGGER.debug("StructureId fetch timed out after 5s; will continue without explicit structure_id")
+            except Exception as e:
+                _LOGGER.debug("StructureId fetch failed (continuing): %s", e)
             self.current_state["structure_id"] = self._structure_id
             # Schedule preemptive re-auth
             self._schedule_reauth()
