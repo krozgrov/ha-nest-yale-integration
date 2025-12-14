@@ -26,7 +26,7 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.14b1 - Prevent Phantom Lock/Unlock (beta)
+## Pre-release 2025.12.14b2 - Log Cleanup (beta)
 
 - Improve “Add Integration” speed by keeping config-flow credential validation token-only (avoid blocking on long streaming refresh during auth).
 - Keep `structure_id` fetch best-effort with a short timeout; discovery continues via Observe stream.
@@ -34,8 +34,9 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 - Fix Device Info firmware/serial updates when trait data arrives before the entity is fully added to Home Assistant.
 - Fix battery sensor availability to reflect push updates (avoid staying UNKNOWN when polling refresh hasn’t run).
 - Prevent phantom “locked/unlocked” state flips by ignoring ambiguous `BoltLockTrait.lockedState` values (UNKNOWN/UNSPECIFIED) instead of treating them as “unlocked”.
+- Reduce log noise: only log “Lock state changed …” when the locked state actually changes; log optimistic moving clears separately.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.14b1`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.14b2`.
 
 
 ## Known Limitations

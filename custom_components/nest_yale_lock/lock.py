@@ -257,6 +257,8 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         if new_data:
             old_state = self._device_data.copy()
             old_bolt_locked = self._device_data.get("bolt_locked", False)
+            old_bolt_moving = self._bolt_moving
+            old_bolt_moving_to = self._bolt_moving_to
             
             # Update device data
             self._device_data.update(new_data)
@@ -276,14 +278,27 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                 # Clear optimistic state when we get a real update
                 self._bolt_moving = False
             
-            # Clear optimistic state when we get a real update
-            if old_bolt_locked != self._device_data.get("bolt_locked", False) or not self._bolt_moving:
-                # State changed or actuator not moving, clear optimistic flags
-                self._bolt_moving = False
+            new_bolt_locked = self._device_data.get("bolt_locked", False)
+
+            # Log a real lock/unlock only when the boolean locked state actually changes.
+            if old_bolt_locked != new_bolt_locked:
+                _LOGGER.info(
+                    "Lock state changed for %s: %s -> %s",
+                    self._attr_unique_id,
+                    "locked" if old_bolt_locked else "unlocked",
+                    "locked" if new_bolt_locked else "unlocked",
+                )
+
+            # If we were in an optimistic moving state and the stream now indicates
+            # the actuator is no longer moving, clear optimistic flags and log that
+            # separately (avoids misleading 'unlocked -> unlocked' messages).
+            if (old_bolt_moving or old_bolt_moving_to is not None) and not self._bolt_moving:
                 self._bolt_moving_to = None
-                _LOGGER.info("Lock state changed for %s: %s -> %s", self._attr_unique_id, 
-                            "locked" if old_bolt_locked else "unlocked",
-                            "locked" if self._device_data.get("bolt_locked", False) else "unlocked")
+                _LOGGER.debug(
+                    "Cleared optimistic moving state for %s (locked=%s)",
+                    self._attr_unique_id,
+                    new_bolt_locked,
+                )
             
             # Set HA state based on actual lock state
             if self.is_locked:
