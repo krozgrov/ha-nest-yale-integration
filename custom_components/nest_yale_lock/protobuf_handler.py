@@ -304,13 +304,30 @@ class NestProtobufHandler:
                                 _LOGGER.warning("Unpacking BoltLockTrait failed for %s, skipping", obj_id)
                                 continue
 
+                            # Only publish bolt_locked when the stream explicitly reports LOCKED or UNLOCKED.
+                            # The API can transiently emit UNKNOWN/UNSPECIFIED during reconnects/motion;
+                            # treating those as "unlocked" causes phantom HA state flips.
+                            locked_state = bolt_lock.lockedState
+                            bolt_locked_value = None
+                            if locked_state == weave_security_pb2.BoltLockTrait.BOLT_LOCKED_STATE_LOCKED:
+                                bolt_locked_value = True
+                            elif locked_state == weave_security_pb2.BoltLockTrait.BOLT_LOCKED_STATE_UNLOCKED:
+                                bolt_locked_value = False
+
                             locks_data["yale"][obj_id] = {
                                 "device_id": obj_id,
-                                "bolt_locked": bolt_lock.lockedState == weave_security_pb2.BoltLockTrait.BOLT_LOCKED_STATE_LOCKED,
                                 "bolt_moving": bolt_lock.actuatorState
                                 not in [weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_OK],
                                 "actuator_state": bolt_lock.actuatorState,
                             }
+                            if bolt_locked_value is not None:
+                                locks_data["yale"][obj_id]["bolt_locked"] = bolt_locked_value
+                            else:
+                                _LOGGER.debug(
+                                    "Skipping bolt_locked update for %s due to ambiguous lockedState=%s",
+                                    obj_id,
+                                    locked_state,
+                                )
                             if bolt_lock.boltLockActor.originator.resourceId:
                                 locks_data["user_id"] = bolt_lock.boltLockActor.originator.resourceId
                             _LOGGER.debug("Parsed BoltLockTrait for %s: %s, user_id=%s", obj_id, locks_data["yale"][obj_id], locks_data["user_id"])
