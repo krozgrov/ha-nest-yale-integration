@@ -26,17 +26,16 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.14b2 - Log Cleanup (beta)
+## Release 2025.12.17 - Stability + Faster Setup
 
-- Improve “Add Integration” speed by keeping config-flow credential validation token-only (avoid blocking on long streaming refresh during auth).
-- Keep `structure_id` fetch best-effort with a short timeout; discovery continues via Observe stream.
-- Includes b40 behavior: preserve `bolt_moving` from observer updates with a safe default so optimistic clear happens promptly when the stream reports the actuator is no longer moving.
-- Fix Device Info firmware/serial updates when trait data arrives before the entity is fully added to Home Assistant.
-- Fix battery sensor availability to reflect push updates (avoid staying UNKNOWN when polling refresh hasn’t run).
-- Prevent phantom “locked/unlocked” state flips by ignoring ambiguous `BoltLockTrait.lockedState` values (UNKNOWN/UNSPECIFIED) instead of treating them as “unlocked”.
-- Reduce log noise: only log “Lock state changed …” when the locked state actually changes; log optimistic moving clears separately.
+- Faster “Add Integration” by keeping config-flow credential validation token-only (avoid blocking on long streaming refresh during auth).
+- More reliable metadata: firmware/serial/battery populate correctly after onboarding.
+- Fewer state glitches:
+  - Preserve `bolt_moving` from observer updates with a safe default so optimistic clear happens promptly when the stream reports the actuator is no longer moving.
+  - Ignore ambiguous `BoltLockTrait.lockedState` values (UNKNOWN/UNSPECIFIED) to prevent phantom locked/unlocked flips.
+  - Reduce log noise: only log “Lock state changed …” when the locked state actually changes; log optimistic moving clears separately.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.14b2`.
+> To update via HACS: download version `2025.12.17` and restart Home Assistant.
 
 
 ## Known Limitations
