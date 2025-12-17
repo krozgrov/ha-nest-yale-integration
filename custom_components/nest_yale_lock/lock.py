@@ -4,9 +4,10 @@ from homeassistant.components.lock import LockEntity, LockState
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from .const import DOMAIN, COMMAND_ERROR_CODE_FAILED
+from .const import DOMAIN
 from .entity import NestYaleEntity
 from .proto.weave.trait import security_pb2 as weave_security_pb2
+from .proto.nest import rpc_pb2
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,6 +62,12 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         # Keeping these for backward compatibility with existing code that references them
         self._user_id = self._coordinator.api_client.user_id
         self._structure_id = self._coordinator.api_client.structure_id
+        # Seed last_good_update if we already have data so availability stays True while reconnecting
+        try:
+            if self._device_data and getattr(self._coordinator, "_last_good_update", None) is None:
+                self._coordinator._last_good_update = asyncio.get_event_loop().time()
+        except Exception:
+            pass
         _LOGGER.debug(
             "Initialized lock with user_id: %s, structure_id: %s, device_id=%s, unique_id=%s, device=%s",
             self._user_id,
@@ -196,13 +203,29 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                 _LOGGER.debug("Lock command response: %s", response_hex)
             else:
                 _LOGGER.debug("Lock command response (non-bytes): %s", response)
-            if response_hex == COMMAND_ERROR_CODE_FAILED:
-                _LOGGER.warning("Command failed with error code %s, not updating local state", COMMAND_ERROR_CODE_FAILED)
-                return
+            
+            # Parse response to check for errors
+            if isinstance(response, bytes) and response:
+                try:
+                    stream_body = rpc_pb2.StreamBody()
+                    stream_body.ParseFromString(response)
+                    if stream_body.status.code != 0:
+                        error_code = stream_body.status.code
+                        error_message = stream_body.status.message or "Unknown error"
+                        _LOGGER.warning(
+                            "Command failed according to response: %s (code=%s)",
+                            error_message,
+                            error_code,
+                        )
+                        return
+                except Exception as e:
+                    _LOGGER.debug("Could not parse command response: %s", e)
 
             # Set optimistic state - the observe stream will confirm the actual state
             self._bolt_moving = True
             self._bolt_moving_to = lock
+            # Clear optimistic state after a short delay if no update arrives
+            asyncio.create_task(self._clear_bolt_moving())
             self.async_write_ha_state()
             _LOGGER.info("Command %s sent successfully for %s, waiting for observe stream to confirm state change",
                          "lock" if lock else "unlock", self._attr_unique_id)
@@ -211,6 +234,17 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             _LOGGER.error("Command failed for %s: %s", self._attr_unique_id, e, exc_info=True)
             self._bolt_moving = False
             self._bolt_moving_to = None
+            error_text = str(e)
+            if self._coordinator:
+                if (
+                    isinstance(e, RuntimeError)
+                    or "Internal error" in error_text
+                    or "Command failed" in error_text
+                ):
+                    self._coordinator.schedule_reload(
+                        f"Command failure for {self._device_id}",
+                        delay=5,
+                    )
             self.async_schedule_update_ha_state()
             raise
 
@@ -223,6 +257,8 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         if new_data:
             old_state = self._device_data.copy()
             old_bolt_locked = self._device_data.get("bolt_locked", False)
+            old_bolt_moving = self._bolt_moving
+            old_bolt_moving_to = self._bolt_moving_to
             
             # Update device data
             self._device_data.update(new_data)
@@ -236,18 +272,33 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             if "actuator_state" in new_data:
                 actuator_state = new_data["actuator_state"]
                 self._bolt_moving = actuator_state not in [weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_OK]
+            elif "bolt_moving" in new_data:
+                self._bolt_moving = bool(new_data.get("bolt_moving"))
             else:
                 # Clear optimistic state when we get a real update
                 self._bolt_moving = False
             
-            # Clear optimistic state when we get a real update
-            if old_bolt_locked != self._device_data.get("bolt_locked", False):
-                # State actually changed, clear optimistic flags
-                self._bolt_moving = False
+            new_bolt_locked = self._device_data.get("bolt_locked", False)
+
+            # Log a real lock/unlock only when the boolean locked state actually changes.
+            if old_bolt_locked != new_bolt_locked:
+                _LOGGER.info(
+                    "Lock state changed for %s: %s -> %s",
+                    self._attr_unique_id,
+                    "locked" if old_bolt_locked else "unlocked",
+                    "locked" if new_bolt_locked else "unlocked",
+                )
+
+            # If we were in an optimistic moving state and the stream now indicates
+            # the actuator is no longer moving, clear optimistic flags and log that
+            # separately (avoids misleading 'unlocked -> unlocked' messages).
+            if (old_bolt_moving or old_bolt_moving_to is not None) and not self._bolt_moving:
                 self._bolt_moving_to = None
-                _LOGGER.info("Lock state changed for %s: %s -> %s", self._attr_unique_id, 
-                            "locked" if old_bolt_locked else "unlocked",
-                            "locked" if self._device_data.get("bolt_locked", False) else "unlocked")
+                _LOGGER.debug(
+                    "Cleared optimistic moving state for %s (locked=%s)",
+                    self._attr_unique_id,
+                    new_bolt_locked,
+                )
             
             # Set HA state based on actual lock state
             if self.is_locked:
@@ -270,16 +321,34 @@ class NestYaleLock(NestYaleEntity, LockEntity):
     async def _clear_bolt_moving(self):
         """Clear bolt_moving state after delay."""
         await asyncio.sleep(5)
-        self._bolt_moving = False
-        self.async_schedule_update_ha_state()
-        _LOGGER.debug("Cleared bolt_moving for %s after delay", self._attr_unique_id)
+        if self._bolt_moving:
+            self._bolt_moving = False
+            self._bolt_moving_to = None
+            self.async_schedule_update_ha_state()
+            _LOGGER.debug("Cleared bolt_moving for %s after delay", self._attr_unique_id)
 
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        available = bool(self._device_data) and self._coordinator.last_update_success
-        _LOGGER.debug("Availability check for %s: %s", self._attr_unique_id, available)
+        age = self._coordinator.last_good_update_age() if hasattr(self._coordinator, "last_good_update_age") else None
+        stale_limit = self._coordinator.hass.data.get(
+                "nest_yale_lock_stale_max",  # optional override
+                getattr(self._coordinator, "_stale_max_seconds", None) or self._default_stale_max(),
+            )
+        if not self._device_data:
+            available = False
+        elif age is None:
+            # If we have data but no timestamp yet, stay available (we seeded above on init)
+            available = True
+        else:
+            available = age < stale_limit
+        _LOGGER.debug("Availability check for %s: %s (age=%s)", self._attr_unique_id, available, age)
         return available
+
+    @staticmethod
+    def _default_stale_max() -> int:
+        from .const import STALE_STATE_MAX_SECONDS
+        return STALE_STATE_MAX_SECONDS
 
     @property
     def state(self) -> LockState:

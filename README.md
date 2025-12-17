@@ -4,7 +4,7 @@
 
 # Google Nest x Yale Lock Integration for Home Assistant
 
-An integration for Home Assistant that connects your Google Nest x Yale Lock, enabling control directly from Home Assistant using reversed-enginered protobuf messaging protocol.
+An integration for Home Assistant that connects your Google Nest x Yale Lock, enabling control directly from Home Assistant using reverse-engineered protobuf messaging.
 
 ## Sponsor
 
@@ -22,9 +22,21 @@ A lot of effort is going into this integration. So if you can afford it and want
 
 ## Status
 
-Core lock and unlock commands work reliably, and state updates are handled via a observe stream with automatic reconnection and authentication renewal.
+Core lock and unlock commands work reliably, and state updates are handled via an Observe stream with automatic reconnection and authentication renewal.
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
+
+## Pre-release 2025.12.14b2 - Log Cleanup (beta)
+
+- Improve “Add Integration” speed by keeping config-flow credential validation token-only (avoid blocking on long streaming refresh during auth).
+- Keep `structure_id` fetch best-effort with a short timeout; discovery continues via Observe stream.
+- Includes b40 behavior: preserve `bolt_moving` from observer updates with a safe default so optimistic clear happens promptly when the stream reports the actuator is no longer moving.
+- Fix Device Info firmware/serial updates when trait data arrives before the entity is fully added to Home Assistant.
+- Fix battery sensor availability to reflect push updates (avoid staying UNKNOWN when polling refresh hasn’t run).
+- Prevent phantom “locked/unlocked” state flips by ignoring ambiguous `BoltLockTrait.lockedState` values (UNKNOWN/UNSPECIFIED) instead of treating them as “unlocked”.
+- Reduce log noise: only log “Lock state changed …” when the locked state actually changes; log optimistic moving clears separately.
+
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.14b2`.
 
 
 ## Known Limitations

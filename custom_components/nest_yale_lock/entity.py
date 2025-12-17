@@ -18,6 +18,10 @@ class NestYaleEntity(CoordinatorEntity):
         self._device_id = device_id
         self._device_data = device_data.copy() if device_data else {}
         self._device_info_updated = False
+        # If trait data arrives before the entity is added to HA, we may not be
+        # able to update the device registry yet. Track that and retry once the
+        # entity is fully added.
+        self._device_registry_update_pending = False
         
         # Get initial metadata
         metadata = self._coordinator.api_client.get_device_metadata(device_id)
@@ -99,7 +103,10 @@ class NestYaleEntity(CoordinatorEntity):
                 self._attr_device_info["manufacturer"] = new_manufacturer
             if new_model:
                 self._attr_device_info["model"] = new_model
-            self._device_info_updated = True
+            # IMPORTANT: don't mark as "updated" yet — we still need to update the
+            # device registry once the entity is added to HA, otherwise firmware/
+            # serial can remain "unknown" in the Device Info card.
+            self._device_registry_update_pending = True
             return
         
         try:
@@ -177,6 +184,9 @@ class NestYaleEntity(CoordinatorEntity):
                     self._attr_device_info["manufacturer"] = new_manufacturer
                 if new_model:
                     self._attr_device_info["model"] = new_model
+                # Retry on next update (or when entity is fully registered).
+                self._device_registry_update_pending = True
+                return
         except Exception as e:
             _LOGGER.error("Error updating device registry for %s: %s", self._attr_unique_id, e, exc_info=True)
             # Still update _attr_device_info even if registry update fails
@@ -188,8 +198,18 @@ class NestYaleEntity(CoordinatorEntity):
                 self._attr_device_info["manufacturer"] = new_manufacturer
             if new_model:
                 self._attr_device_info["model"] = new_model
+            self._device_registry_update_pending = True
+            return
         
         self._device_info_updated = True
+        self._device_registry_update_pending = False
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()
+        # If we saw trait data early, retry registry update now that hass is available.
+        if not self._device_info_updated or self._device_registry_update_pending:
+            self._update_device_info_from_traits()
 
     @property
     def device_info(self) -> DeviceInfo:
