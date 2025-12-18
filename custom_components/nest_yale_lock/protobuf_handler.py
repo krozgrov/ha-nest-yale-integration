@@ -108,6 +108,18 @@ class NestProtobufHandler:
                     if frame_len == 0:
                         continue
                     self.pending_length = frame_len
+                elif self.buffer and self.buffer[0] == 0x0A:
+                    # Nest streams often deliver a StreamBody message that begins with a length-delimited
+                    # field tag (0x0A) followed by a varint length. This is NOT a standalone length prefix;
+                    # it's part of the protobuf encoding. We use it to find frame boundaries (similar to
+                    # nest_legacy's observe framing) to avoid parsing stray trailing bytes as new messages.
+                    message_length, end_pos = self._decode_varint(self.buffer, 1)
+                    if message_length is None:
+                        break
+                    frame_size = end_pos + message_length
+                    if len(self.buffer) < frame_size:
+                        break
+                    self.pending_length = frame_size
                 else:
                     length, offset = self._decode_varint(self.buffer, 0)
                     if length is None or offset > len(self.buffer):
