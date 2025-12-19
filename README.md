@@ -26,13 +26,13 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.19b19 - Fix user_id overwrite (beta)
+## Pre-release 2025.12.19b20 - Prefer USER_* for commands (beta)
 
-- Fix command regressions caused by user id format switching:
-  - Keep numeric-ish user id (from token/REST) separate from stream `USER_...` id
-  - Do not overwrite the numeric id with the stream id; prefer numeric for `X-nl-user-id` and command originator
+- Try to restore b1/b2 command behavior:
+  - Prefer stream `USER_...` id for `X-nl-user-id` and command originator when present
+  - Fall back to numeric-ish id when `USER_...` is not available
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b19`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b20`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 

@@ -168,7 +168,14 @@ class NestAPIClient:
         return self._user_id_stream
 
     def _user_id_for_headers(self) -> str | None:
-        """Prefer numeric-ish user id for headers/commands; fall back to stream user id."""
+        """Pick the best user id for headers/commands.
+
+        In practice, the Observe stream often provides a USER_* resource id which appears to
+        work better for command authorization than the numeric-ish id_token subject in some
+        environments. Prefer USER_* when present; fall back to numeric-ish id otherwise.
+        """
+        if isinstance(self._user_id_stream, str) and self._user_id_stream.startswith("USER_"):
+            return self._user_id_stream
         return self._user_id or self._user_id_stream
 
     @property
