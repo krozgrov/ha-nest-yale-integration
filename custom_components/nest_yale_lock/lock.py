@@ -233,7 +233,9 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         except Exception as e:
             # Do not bubble exceptions up to HA websocket calls (it logs a scary stack trace).
             # We log the failure, clear optimistic state, and schedule a reload when appropriate.
-            _LOGGER.error("Command failed for %s: %s", self._attr_unique_id, e, exc_info=True)
+            # Also avoid logging a full traceback here; failures like code=13 are common when the
+            # lock/backend is temporarily unreachable, and we already schedule a reload.
+            _LOGGER.warning("Command failed for %s: %s", self._attr_unique_id, e)
             self._bolt_moving = False
             self._bolt_moving_to = None
             error_text = str(e)

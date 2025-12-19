@@ -26,12 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.19b8 - Command UX cleanup (beta)
+## Pre-release 2025.12.19b9 - Reduce command failure tracebacks (beta)
 
-- Reduce HA UI/log noise: command failures no longer bubble as “Unexpected exception” websocket stack traces.
+- Reduce log noise further: command failures no longer log full Python tracebacks in `custom_components.nest_yale_lock.lock`.
 - (Still schedules a reload on failures like code=13 INTERNAL.)
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b8`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b9`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 
