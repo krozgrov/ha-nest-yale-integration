@@ -28,6 +28,9 @@ class NestCoordinator(DataUpdateCoordinator):
         self._empty_refresh_attempts = 0
         self._last_good_update = None
         self._stale_max_seconds = STALE_STATE_MAX_SECONDS
+        self._watchdog_task: asyncio.Task | None = None
+        self._last_recovery_ts: float | None = None
+        self._recovery_attempts: int = 0
         _LOGGER.debug("Initialized NestCoordinator with initial data: %s", self.data)
 
     async def async_setup(self):
@@ -50,8 +53,34 @@ class NestCoordinator(DataUpdateCoordinator):
         self._observer_task = self.hass.loop.create_task(self._run_observer())
         _LOGGER.debug("Observer task created: %s", self._observer_task)
 
+        # Watchdog: detect stale push updates and recover (refresh → reload) with rate limiting.
+        if not self._watchdog_task or self._watchdog_task.done():
+            self._watchdog_task = self.hass.loop.create_task(self._watchdog_loop())
+
         if not self._initial_data_event.is_set():
             self.hass.loop.create_task(self._log_initial_data_ready())
+
+    def _merge_device_update(self, update: dict) -> dict:
+        """Merge a partial device update into existing coordinator data.
+
+        The observe stream can send partial device dicts; merging avoids dropping fields like
+        traits/settings that were previously known.
+        """
+        if not isinstance(update, dict):
+            return self.data or {}
+        current = self.data or {}
+        if not isinstance(current, dict):
+            current = {}
+        merged: dict = {**current}
+        for device_id, device in update.items():
+            if not isinstance(device, dict):
+                continue
+            prev = merged.get(device_id, {})
+            if isinstance(prev, dict):
+                merged[device_id] = {**prev, **device}
+            else:
+                merged[device_id] = device
+        return merged
 
     def schedule_reload(self, reason: str, delay: float = 0) -> None:
         """Schedule a config-entry reload similar to HA's GUI reload button."""
@@ -165,7 +194,7 @@ class NestCoordinator(DataUpdateCoordinator):
                         self.api_client.current_state["all_traits"] = all_traits  # Persist trait data
                         self._empty_refresh_attempts = 0
                         self._last_good_update = asyncio.get_event_loop().time()
-                        self.async_set_updated_data(normalized_update)
+                        self.async_set_updated_data(self._merge_device_update(normalized_update))
                         self._initial_data_event.set()
                         _LOGGER.debug("Applied normalized observer update: %s, current_state user_id: %s",
                                       normalized_update, self.api_client.current_state["user_id"])
@@ -193,6 +222,12 @@ class NestCoordinator(DataUpdateCoordinator):
                 await self._observer_task
             except asyncio.CancelledError:
                 _LOGGER.debug("Observer task cancelled")
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except asyncio.CancelledError:
+                pass
         if self._reload_task and not self._reload_task.done():
             _LOGGER.debug("Cancelling scheduled reload task")
             self._reload_task.cancel()
@@ -216,3 +251,55 @@ class NestCoordinator(DataUpdateCoordinator):
             _LOGGER.info("Initial observer update received")
         except asyncio.TimeoutError:
             _LOGGER.warning("Timed out waiting for initial observer data; entities may start unavailable")
+
+    async def _watchdog_loop(self):
+        """Background watchdog to recover if observe stream stalls for too long."""
+        # Conservative defaults; can be tuned later via options.
+        check_every = 60
+        stale_refresh_after = 10 * 60  # 10 minutes without a good payload → force one fallback refresh
+        stale_reload_after = 30 * 60   # 30 minutes without a good payload → reload entry (rate-limited)
+        min_reload_interval = 30 * 60  # don't reload more often than every 30 minutes
+
+        while True:
+            await asyncio.sleep(check_every)
+            try:
+                age = self.last_good_update_age()
+                if age is None:
+                    continue
+
+                # If the stream is healthy and we are receiving updates, do nothing.
+                if age < stale_refresh_after:
+                    self._recovery_attempts = 0
+                    continue
+
+                # First recovery step: force a fallback refresh (even if observer claims healthy).
+                if self._recovery_attempts == 0:
+                    _LOGGER.warning(
+                        "Watchdog: no Yale updates for %.0fs; forcing fallback refresh_state",
+                        age,
+                    )
+                    self._observer_healthy = False
+                    try:
+                        await asyncio.wait_for(self.async_refresh(), timeout=20)
+                    except Exception as err:
+                        _LOGGER.debug("Watchdog refresh attempt failed: %s", err)
+                    self._last_recovery_ts = asyncio.get_event_loop().time()
+                    self._recovery_attempts = 1
+                    continue
+
+                # Second step: if still stale long enough, reload (rate-limited).
+                if age >= stale_reload_after:
+                    now = asyncio.get_event_loop().time()
+                    if self._last_recovery_ts and (now - self._last_recovery_ts) < min_reload_interval:
+                        continue
+                    _LOGGER.warning(
+                        "Watchdog: still no Yale updates for %.0fs; scheduling entry reload",
+                        age,
+                    )
+                    self._last_recovery_ts = now
+                    self._recovery_attempts += 1
+                    self.schedule_reload("Watchdog stale observe/updates", delay=0)
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                _LOGGER.debug("Watchdog loop error (ignored): %s", err, exc_info=True)

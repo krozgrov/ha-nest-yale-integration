@@ -595,7 +595,10 @@ class NestAPIClient:
                 try:
                     raw_data = await self.connection.post(api_url, headers, encoded_data, read_timeout=API_TIMEOUT_SECONDS)
                     self.transport_url = base_url
-                    status_code, status_msg = self._parse_command_status(raw_data)
+                    # Prefer gateway v1 response parsing when possible (more accurate than StreamBody fallback)
+                    status_code, status_msg = self._parse_v1_operation_status(raw_data)
+                    if status_code is None:
+                        status_code, status_msg = self._parse_command_status(raw_data)
                     if status_code not in (None, 0):
                         _LOGGER.warning(
                             "Command response reported failure for %s: code=%s, msg=%s",
@@ -623,6 +626,16 @@ class NestAPIClient:
                         api_url,
                         len(raw_data) if raw_data else 0,
                     )
+                    try:
+                        self._last_command_info = {
+                            "ts": asyncio.get_event_loop().time(),
+                            "device_id": device_id,
+                            "type_url": command.get("command", {}).get("type_url"),
+                            "status_code": 0,
+                            "status_message": None,
+                        }
+                    except Exception:
+                        pass
                     return raw_data
                 except aiohttp.ClientResponseError as cre:
                     if cre.status in (401, 403) and not reauthed:
@@ -650,6 +663,16 @@ class NestAPIClient:
                 except Exception as err:
                     _LOGGER.debug("Forced refresh also failed: %s", err)
         if last_error:
+            try:
+                self._last_command_info = {
+                    "ts": asyncio.get_event_loop().time(),
+                    "device_id": device_id,
+                    "type_url": command.get("command", {}).get("type_url"),
+                    "status_code": getattr(last_error, "status", None) or -1,
+                    "status_message": str(last_error),
+                }
+            except Exception:
+                pass
             raise last_error
         raise RuntimeError(f"Failed to send command to {device_id} for unknown reasons")
 
@@ -719,11 +742,31 @@ class NestAPIClient:
         for base_url in self._candidate_bases():
             api_url = f"{base_url}{ENDPOINT_UPDATE}"
             raw = await self.connection.post(api_url, headers, encoded, read_timeout=API_TIMEOUT_SECONDS)
-            # Best-effort parse; some responses are not StreamBody.
-            try:
+            status_code, status_msg = self._parse_v1_operation_status(raw)
+            if status_code is None:
                 status_code, status_msg = self._parse_command_status(raw)
-                if status_code not in (None, 0):
-                    raise RuntimeError(f"Update bolt_lock_settings failed (code {status_code}): {status_msg or 'Unknown error'}")
+            if status_code not in (None, 0):
+                try:
+                    self._last_command_info = {
+                        "ts": asyncio.get_event_loop().time(),
+                        "device_id": device_id,
+                        "type_url": "weave.trait.security.BoltLockSettingsTrait",
+                        "status_code": int(status_code) if status_code is not None else None,
+                        "status_message": status_msg,
+                    }
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"Update bolt_lock_settings failed (code {status_code}): {status_msg or 'Unknown error'}"
+                )
+            try:
+                self._last_command_info = {
+                    "ts": asyncio.get_event_loop().time(),
+                    "device_id": device_id,
+                    "type_url": "weave.trait.security.BoltLockSettingsTrait",
+                    "status_code": 0,
+                    "status_message": None,
+                }
             except Exception:
                 pass
             return raw
@@ -825,6 +868,64 @@ class NestAPIClient:
         except Exception as err:
             _LOGGER.debug("Could not parse command response: %s", err)
             return 0, None
+
+    def _parse_v1_operation_status(self, response_data: bytes):
+        """Parse v1 gateway responses for operation status (preferred over StreamBody when present).
+
+        The protobuf API may return:
+        - ResourceCommandResponseFromAPI (wrapper) for SendCommand
+        - ResourceCommandResponse
+        - BatchTraitOperation for BatchUpdateState
+
+        Returns:
+            (code, message) if we can confidently determine status, otherwise (None, None)
+        """
+        if not response_data:
+            return None, None
+
+        # 1) ResourceCommandResponseFromAPI (wrapper)
+        try:
+            wrapper = v1_pb2.ResourceCommandResponseFromAPI()
+            wrapper.ParseFromString(response_data)
+            # Heuristic: wrapper has either response(s) or the unknown field populated
+            if getattr(wrapper, "resouceCommandResponse", None) or getattr(wrapper, "unknown", ""):
+                for resp in getattr(wrapper, "resouceCommandResponse", []):
+                    for op in getattr(resp, "traitOperations", []):
+                        status = getattr(op, "status", None)
+                        if status and getattr(status, "code", 0) not in (0, None):
+                            return int(status.code), getattr(status, "message", None)
+                return 0, None
+        except Exception:
+            pass
+
+        # 2) ResourceCommandResponse
+        try:
+            resp = v1_pb2.ResourceCommandResponse()
+            resp.ParseFromString(response_data)
+            # Heuristic: requires at least one trait operation to be meaningful
+            if getattr(resp, "traitOperations", None):
+                for op in getattr(resp, "traitOperations", []):
+                    status = getattr(op, "status", None)
+                    if status and getattr(status, "code", 0) not in (0, None):
+                        return int(status.code), getattr(status, "message", None)
+                return 0, None
+        except Exception:
+            pass
+
+        # 3) BatchTraitOperation (BatchUpdateState)
+        try:
+            batch = v1_pb2.BatchTraitOperation()
+            batch.ParseFromString(response_data)
+            if getattr(batch, "traitOperation", None):
+                for op in getattr(batch, "traitOperation", []):
+                    status = getattr(op, "status", None)
+                    if status and getattr(status, "code", 0) not in (0, None):
+                        return int(status.code), getattr(status, "message", None)
+                return 0, None
+        except Exception:
+            pass
+
+        return None, None
 
     async def _recover_after_internal_error(self):
         """Reset session and reauthenticate after an INTERNAL gRPC error."""

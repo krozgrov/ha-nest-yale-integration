@@ -182,7 +182,43 @@ class NestProtobufHandler:
         try:
             self.stream_body.Clear()
             self.stream_body.ParseFromString(message)
-            _LOGGER.debug(f"Parsed StreamBody: {self.stream_body}")
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                # Avoid dumping massive protobufs into logs; summarize instead.
+                try:
+                    msg_count = len(self.stream_body.message)
+                    get_count = 0
+                    set_count = 0
+                    type_urls: list[str] = []
+                    for m in self.stream_body.message[:10]:
+                        get_count += len(getattr(m, "get", []))
+                        set_count += len(getattr(m, "set", []))
+                        for g in getattr(m, "get", [])[:10]:
+                            prop = getattr(getattr(g, "data", None), "property", None)
+                            if prop and getattr(prop, "type_url", None):
+                                type_urls.append(prop.type_url)
+                        for s in getattr(m, "set", [])[:10]:
+                            trait_type = getattr(getattr(s, "property_key", None), "trait_type", None)
+                            if trait_type:
+                                type_urls.append(trait_type)
+                    # De-dupe while preserving order (first 15 only)
+                    seen = set()
+                    uniq = []
+                    for t in type_urls:
+                        if t in seen:
+                            continue
+                        seen.add(t)
+                        uniq.append(t)
+                        if len(uniq) >= 15:
+                            break
+                    _LOGGER.debug(
+                        "Parsed StreamBody: messages=%d get=%d set=%d types=%s",
+                        msg_count,
+                        get_count,
+                        set_count,
+                        uniq,
+                    )
+                except Exception:
+                    _LOGGER.debug("Parsed StreamBody (summary unavailable)")
 
             # Check for authentication failure (status code 7)
             if self.stream_body.HasField("status") and self.stream_body.status.code == 7:
