@@ -26,13 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.18b7 - Command retry improvements (beta)
+## Pre-release 2025.12.19b8 - Command UX cleanup (beta)
 
-- Command reliability improvements:
-  - Use a fresh protobuf `requestId` + `request-id` header **per retry attempt** (avoids code=6 “already exists”)
-  - Retry `code=4 Deadline exceeded` / `code=6 Already exists` once after a best-effort `refresh_state()`
+- Reduce HA UI/log noise: command failures no longer bubble as “Unexpected exception” websocket stack traces.
+- (Still schedules a reload on failures like code=13 INTERNAL.)
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.18b7`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b8`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 

@@ -231,6 +231,8 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                          "lock" if lock else "unlock", self._attr_unique_id)
 
         except Exception as e:
+            # Do not bubble exceptions up to HA websocket calls (it logs a scary stack trace).
+            # We log the failure, clear optimistic state, and schedule a reload when appropriate.
             _LOGGER.error("Command failed for %s: %s", self._attr_unique_id, e, exc_info=True)
             self._bolt_moving = False
             self._bolt_moving_to = None
@@ -246,7 +248,7 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                         delay=5,
                     )
             self.async_schedule_update_ha_state()
-            raise
+            return
 
     async def async_added_to_hass(self):
         _LOGGER.debug("Entity %s added to HA", self._attr_unique_id)
