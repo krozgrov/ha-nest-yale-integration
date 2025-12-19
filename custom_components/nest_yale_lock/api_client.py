@@ -133,7 +133,12 @@ class NestAPIClient:
         self.auth_data = {}
         self.transport_url = None
         self._user_id = None  # Discover dynamically
-        self._structure_id = None  # Discover dynamically
+        # Nest exposes multiple structure id formats:
+        # - UUID-like (e.g. 2ce65ea0-...) used by certain APIs/headers
+        # - Legacy short id (e.g. 018C...) that shows up in StreamBody STRUCTURE_* ids
+        # Keep both, and prefer UUID for command headers.
+        self._structure_id = None  # UUID-like preferred
+        self._structure_id_legacy = None  # legacy short id from stream
         self.current_state = {"devices": {"locks": {}}, "user_id": self._user_id, "structure_id": self._structure_id}
         self._last_observe_data_ts = None
         # Use Home Assistant managed session
@@ -151,6 +156,10 @@ class NestAPIClient:
     @property
     def structure_id(self):
         return self._structure_id
+
+    @property
+    def structure_id_legacy(self):
+        return self._structure_id_legacy
 
     def _select_structure_id_for_header(self, override: str | None = None) -> str | None:
         """Pick the best structure id for X-Nest-Structure-Id.
@@ -254,7 +263,10 @@ class NestAPIClient:
             #
             # We keep a best-effort structure_id fetch (REST) but cap it so setup stays snappy.
             try:
-                self._structure_id = await asyncio.wait_for(self.fetch_structure_id(), timeout=5)
+                sid = await asyncio.wait_for(self.fetch_structure_id(), timeout=5)
+                # fetch_structure_id returns UUID-like ids; keep as preferred structure id.
+                if sid:
+                    self._structure_id = sid
             except asyncio.TimeoutError:
                 _LOGGER.debug("StructureId fetch timed out after 5s; will continue without explicit structure_id")
             except Exception as e:
@@ -352,14 +364,20 @@ class NestAPIClient:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
                                 if locks_data.get("structure_id"):
                                     new_sid = locks_data["structure_id"]
-                                    # Only accept UUID-like structure ids from stream; ignore legacy short ids
-                                    # so we don't poison X-Nest-Structure-Id.
-                                    if _is_uuid_like(new_sid) or self._structure_id is None:
+                                    if _is_uuid_like(new_sid):
                                         old_structure_id = self._structure_id
                                         self._structure_id = new_sid
                                         self.current_state["structure_id"] = self._structure_id
                                         if old_structure_id != self._structure_id:
-                                            _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                            _LOGGER.info(
+                                                "Updated structure_id (uuid) from stream: %s (was %s)",
+                                                self._structure_id,
+                                                old_structure_id,
+                                            )
+                                    else:
+                                        # Keep legacy short id separately
+                                        self._structure_id_legacy = new_sid
+                                        self.current_state["structure_id_legacy"] = new_sid
                                 self._last_observe_data_ts = asyncio.get_event_loop().time()
                                 self.transport_url = base_url
                                 return locks_data["yale"]
@@ -475,12 +493,19 @@ class NestAPIClient:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
                             if locks_data.get("structure_id"):
                                 new_sid = locks_data["structure_id"]
-                                if _is_uuid_like(new_sid) or self._structure_id is None:
+                                if _is_uuid_like(new_sid):
                                     old_structure_id = self._structure_id
                                     self._structure_id = new_sid
                                     self.current_state["structure_id"] = self._structure_id
                                     if old_structure_id != self._structure_id:
-                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                        _LOGGER.info(
+                                            "Updated structure_id (uuid) from stream: %s (was %s)",
+                                            self._structure_id,
+                                            old_structure_id,
+                                        )
+                                else:
+                                    self._structure_id_legacy = new_sid
+                                    self.current_state["structure_id_legacy"] = new_sid
                             self.transport_url = base_url
                             self._last_observe_data_ts = current_time
                         # Yield full locks_data including all_traits so coordinator can extract trait data
@@ -564,8 +589,13 @@ class NestAPIClient:
             "origin": "https://home.nest.com",
         }
 
-        # NOTE: nest_legacy succeeds without X-Nest-Structure-Id / X-nl-user-id headers for SendCommand.
-        # These headers can vary in format (legacy vs UUID) and may contribute to INTERNAL/deadline errors.
+        # Prefer UUID-like structure id for command headers (avoid legacy short ids from stream).
+        effective_structure_id = self._select_structure_id_for_header(structure_id)
+        if effective_structure_id:
+            headers["X-Nest-Structure-Id"] = effective_structure_id
+            _LOGGER.debug("Using structure_id for command: %s", effective_structure_id)
+        if self._user_id:
+            headers["X-nl-user-id"] = str(self._user_id)
 
         cmd_any = any_pb2.Any()
         cmd_any.type_url = command["command"]["type_url"]
@@ -587,7 +617,15 @@ class NestAPIClient:
 
         def _refresh_command_headers():
             headers["Authorization"] = f"Basic {self.access_token}"
-            # Intentionally do not set X-Nest-Structure-Id / X-nl-user-id
+            effective_sid = self._select_structure_id_for_header(structure_id)
+            if effective_sid:
+                headers["X-Nest-Structure-Id"] = effective_sid
+            else:
+                headers.pop("X-Nest-Structure-Id", None)
+            if self._user_id:
+                headers["X-nl-user-id"] = str(self._user_id)
+            else:
+                headers.pop("X-nl-user-id", None)
 
         _refresh_command_headers()
 
@@ -760,7 +798,11 @@ class NestAPIClient:
             "origin": "https://home.nest.com",
         }
 
-        # NOTE: keep update calls aligned with SendCommand (no X-Nest-Structure-Id / X-nl-user-id).
+        effective_structure_id = self._select_structure_id_for_header(structure_id)
+        if effective_structure_id:
+            headers["X-Nest-Structure-Id"] = effective_structure_id
+        if self._user_id:
+            headers["X-nl-user-id"] = str(self._user_id)
 
         # Build the trait state
         state_proto = weave_security_pb2.BoltLockSettingsTrait()

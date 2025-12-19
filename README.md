@@ -26,13 +26,13 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.19b12 - Prevent reload thrash (beta)
+## Pre-release 2025.12.19b13 - Fix structure id poisoning (beta)
 
-- Reduce “everything is UNKNOWN” behavior during command failures:
-  - Add a reload cooldown (prevents repeated automatic reload loops)
-  - Don’t auto-reload on transient command failures (e.g. code=13) unless the stream is actually stale
+- Fix command failures caused by “structure id poisoning”:
+  - Track legacy `STRUCTURE_...` ids from the stream separately
+  - Prefer UUID-like structure ids for `X-Nest-Structure-Id` so commands don’t get sent with/without the wrong structure id
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b12`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b13`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 
