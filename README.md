@@ -26,12 +26,13 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.19b9 - Reduce command failure tracebacks (beta)
+## Pre-release 2025.12.19b10 - Fix structure_id for commands (beta)
 
-- Reduce log noise further: command failures no longer log full Python tracebacks in `custom_components.nest_yale_lock.lock`.
-- (Still schedules a reload on failures like code=13 INTERNAL.)
+- Fix command reliability regression:
+  - Prefer UUID-like structure ids for `X-Nest-Structure-Id` (ignore legacy short ids from stream)
+  - Avoid sending an invalid structure id header, which can trigger INTERNAL/deadline errors
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b9`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b10`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 

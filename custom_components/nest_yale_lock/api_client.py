@@ -48,6 +48,12 @@ def _transport_candidates(session_base):
 
 _LOGGER = logging.getLogger(__name__)
 
+def _is_uuid_like(value: str | None) -> bool:
+    """Return True if value looks like a UUID (contains hyphens and sufficient length)."""
+    if not value or not isinstance(value, str):
+        return False
+    return "-" in value and len(value) >= 16
+
 class ConnectionShim:
     def __init__(self, session):
         self.connected = True
@@ -145,6 +151,20 @@ class NestAPIClient:
     @property
     def structure_id(self):
         return self._structure_id
+
+    def _select_structure_id_for_header(self, override: str | None = None) -> str | None:
+        """Pick the best structure id for X-Nest-Structure-Id.
+
+        The Nest APIs expose both UUID-like structure ids and shorter legacy ids. The gRPC
+        header expects the UUID-like id; sending a legacy id can cause INTERNAL/deadline errors.
+        """
+        candidate = override or self._structure_id
+        if _is_uuid_like(candidate):
+            return candidate
+        # If override was legacy-like, fall back to our stored structure id only if UUID-like.
+        if _is_uuid_like(self._structure_id):
+            return self._structure_id
+        return None
 
     def _build_observe_payload(self):
         request = v2_pb2.ObserveRequest(version=2, subscribe=True)
@@ -331,11 +351,15 @@ class NestAPIClient:
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
                                 if locks_data.get("structure_id"):
-                                    old_structure_id = self._structure_id
-                                    self._structure_id = locks_data["structure_id"]
-                                    self.current_state["structure_id"] = self._structure_id
-                                    if old_structure_id != self._structure_id:
-                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                    new_sid = locks_data["structure_id"]
+                                    # Only accept UUID-like structure ids from stream; ignore legacy short ids
+                                    # so we don't poison X-Nest-Structure-Id.
+                                    if _is_uuid_like(new_sid) or self._structure_id is None:
+                                        old_structure_id = self._structure_id
+                                        self._structure_id = new_sid
+                                        self.current_state["structure_id"] = self._structure_id
+                                        if old_structure_id != self._structure_id:
+                                            _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
                                 self._last_observe_data_ts = asyncio.get_event_loop().time()
                                 self.transport_url = base_url
                                 return locks_data["yale"]
@@ -450,11 +474,13 @@ class NestAPIClient:
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
                             if locks_data.get("structure_id"):
-                                old_structure_id = self._structure_id
-                                self._structure_id = locks_data["structure_id"]
-                                self.current_state["structure_id"] = self._structure_id
-                                if old_structure_id != self._structure_id:
-                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                new_sid = locks_data["structure_id"]
+                                if _is_uuid_like(new_sid) or self._structure_id is None:
+                                    old_structure_id = self._structure_id
+                                    self._structure_id = new_sid
+                                    self.current_state["structure_id"] = self._structure_id
+                                    if old_structure_id != self._structure_id:
+                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
                             self.transport_url = base_url
                             self._last_observe_data_ts = current_time
                         # Yield full locks_data including all_traits so coordinator can extract trait data
@@ -539,7 +565,7 @@ class NestAPIClient:
         }
 
         # Include structure id when available (matches working test client behavior)
-        effective_structure_id = structure_id or self._structure_id
+        effective_structure_id = self._select_structure_id_for_header(structure_id)
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
             _LOGGER.debug("Using structure_id: %s", effective_structure_id)
@@ -747,7 +773,7 @@ class NestAPIClient:
             "origin": "https://home.nest.com",
         }
 
-        effective_structure_id = structure_id or self._structure_id
+        effective_structure_id = self._select_structure_id_for_header(structure_id)
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
         if self._user_id:
