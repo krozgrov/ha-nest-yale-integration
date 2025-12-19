@@ -26,13 +26,11 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.18b5 - Fix StreamBody error handling (beta)
+## Pre-release 2025.12.18b6 - Reduce decode warning noise (beta)
 
-- Fix command/settings status parsing:
-  - Always parse `StreamBody.status` first (it reliably carries gRPC errors for SendCommand)
-  - Only fall back to v1 operation parsing when StreamBody can’t be parsed
+- Reduce log noise: the “Some protobuf messages could not be decoded” banner is now DEBUG-only and won’t repeat on every reconnect.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.18b5`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.18b6`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 

@@ -48,8 +48,8 @@ class NestProtobufHandler:
         self.buffer.clear()
         self.pending_length = None
         self.stream_body.Clear()
-        # Allow DecodeError warnings again after a fresh connection
-        self._decode_warned = False
+        # Do not reset _decode_warned here; avoid repeating the same "harmless" message
+        # after every reconnect. We only want to log it once per HA runtime.
 
     def prepend_chunk(self, chunk: bytes):
         """Push a raw chunk back into the buffer so we can wait for more data."""
@@ -499,8 +499,8 @@ class NestProtobufHandler:
             # during startup we may see partial frames; signal caller to retry with more data.
             locks_data["parse_failed"] = True
             if not self._decode_warned:
-                _LOGGER.warning(
-                    "Some protobuf messages could not be decoded; this is expected and harmless. "
+                _LOGGER.debug(
+                    "Some protobuf messages could not be decoded (often harmless/unmapped). "
                     "Enable DEBUG to see details."
                 )
                 self._decode_warned = True
