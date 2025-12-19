@@ -39,13 +39,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator = NestCoordinator(hass, conn, entry.entry_id)
         _LOGGER.debug("Setting up coordinator")
         await coordinator.async_setup()
-        # Best-effort initial refresh without blocking startup
-        try:
-            await asyncio.wait_for(coordinator.async_refresh(), timeout=5)
-        except asyncio.TimeoutError:
-            _LOGGER.warning("Initial refresh timed out after 5s; continuing with observer updates")
-        except Exception as err:
-            _LOGGER.debug("Initial refresh failed (non-blocking): %s", err)
+        # Note: coordinator.async_setup() already performs a best-effort initial refresh with a timeout.
         _LOGGER.debug("Coordinator setup complete, initial data: %s", coordinator.data)
         if not coordinator.data:
             _LOGGER.warning("Initial data still empty; waiting for observer updates (entities will use last-known state)")

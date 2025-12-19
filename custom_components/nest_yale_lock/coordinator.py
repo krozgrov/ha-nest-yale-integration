@@ -37,7 +37,13 @@ class NestCoordinator(DataUpdateCoordinator):
     async def async_setup(self):
         """Set up the coordinator."""
         _LOGGER.debug("Starting async_setup for coordinator")
-        await self.api_client.async_setup()
+        # api_client is created via NestAPIClient.create() in __init__.py which already
+        # runs api_client.async_setup(). Avoid running it twice (can slow HA startup).
+        try:
+            if not getattr(self.api_client, "access_token", None):
+                await self.api_client.authenticate()
+        except Exception as err:
+            _LOGGER.debug("Coordinator auth precheck failed (continuing): %s", err)
 
         # Best-effort initial refresh but don't block HA startup
         try:

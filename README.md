@@ -26,13 +26,13 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.19b17 - Fix structure_id=None for commands (beta)
+## Pre-release 2025.12.19b18 - Reduce startup blocking (beta)
 
-- Fix command failures caused by `structure_id=None`:
-  - `api_client.structure_id` now falls back to the legacy `018C…` structure id when UUID is unavailable
-  - Entities/commands will now have a usable `X-Nest-Structure-Id` header instead of sending none
+- Reduce HA startup blocking:
+  - Avoid running `NestAPIClient.async_setup()` twice (it was being called from both the client factory and coordinator)
+  - Remove duplicate initial refresh (coordinator already does a best-effort refresh with timeout)
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b17`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b18`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 
