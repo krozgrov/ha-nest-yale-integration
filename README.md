@@ -26,11 +26,15 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.18b1 - Decode Error Improvements (beta)
+## Pre-release 2025.12.18b2 - Lock UI Entities (beta)
 
-- Reduce noisy `DecodeError in StreamBody` logs by improving Observe stream framing (better boundary detection so we don’t try to parse stray trailing bytes as separate messages).
+- Add lock-focused UI entities:
+  - Sensors: **Last Action**
+  - Configuration: **Auto-Relock** + **Auto-Relock Duration**
+  - Diagnostics: **Battery Level** + **Tamper**
+- Keep the decode-error improvements from `2025.12.18b1` (better Observe framing reduces noisy StreamBody decode errors).
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.18b1`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.18b2`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 

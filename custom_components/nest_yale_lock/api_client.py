@@ -6,12 +6,14 @@ import asyncio
 import jwt
 from contextlib import nullcontext
 from google.protobuf import any_pb2
+from google.protobuf import field_mask_pb2
 from .auth import NestAuthenticator
 from .protobuf_handler import NestProtobufHandler
 from .const import (
     API_RETRY_DELAY_SECONDS,
     URL_PROTOBUF,
     ENDPOINT_OBSERVE,
+    ENDPOINT_UPDATE,
     ENDPOINT_SENDCOMMAND,
     PRODUCTION_HOSTNAME,
     USER_AGENT_STRING,
@@ -24,6 +26,7 @@ from .const import (
 from .proto.nestlabs.gateway import v1_pb2
 from .proto.nestlabs.gateway import v2_pb2
 from .proto.nest import rpc_pb2
+from .proto.weave.trait import security_pb2 as weave_security_pb2
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 
@@ -649,6 +652,82 @@ class NestAPIClient:
         if last_error:
             raise last_error
         raise RuntimeError(f"Failed to send command to {device_id} for unknown reasons")
+
+    async def update_bolt_lock_settings(
+        self,
+        device_id: str,
+        *,
+        auto_relock_on: bool | None = None,
+        auto_relock_duration: int | None = None,
+        structure_id: str | None = None,
+    ):
+        """Update BoltLockSettingsTrait via TraitBatchApi/BatchUpdateState."""
+        if auto_relock_on is None and auto_relock_duration is None:
+            return None
+
+        # Ensure token/ids are present
+        if not self.access_token:
+            await self.authenticate()
+
+        request_id = str(uuid.uuid4())
+        headers = {
+            "Authorization": f"Basic {self.access_token}",
+            "Content-Type": "application/x-protobuf",
+            "User-Agent": USER_AGENT_STRING,
+            "X-Accept-Content-Transfer-Encoding": "binary",
+            "X-Accept-Response-Streaming": "true",
+            "Accept": "application/x-protobuf",
+            "Accept-Encoding": "gzip, deflate, br",
+            "referer": "https://home.nest.com/",
+            "origin": "https://home.nest.com",
+            "request-id": request_id,
+        }
+
+        effective_structure_id = structure_id or self._structure_id
+        if effective_structure_id:
+            headers["X-Nest-Structure-Id"] = effective_structure_id
+        if self._user_id:
+            headers["X-nl-user-id"] = str(self._user_id)
+
+        # Build the trait state
+        state_proto = weave_security_pb2.BoltLockSettingsTrait()
+        mask_paths: list[str] = []
+        if auto_relock_on is not None:
+            state_proto.autoRelockOn = bool(auto_relock_on)
+            mask_paths.append("autoRelockOn")
+        if auto_relock_duration is not None:
+            state_proto.autoRelockDuration.seconds = int(auto_relock_duration)
+            mask_paths.append("autoRelockDuration")
+
+        any_state = any_pb2.Any()
+        # Match Nest style type_url prefix for compatibility
+        any_state.Pack(state_proto, type_url_prefix="type.nestlabs.com")
+
+        update_req = v1_pb2.TraitUpdateStateRequest(
+            traitRequest=v1_pb2.TraitRequest(
+                resourceId=device_id,
+                traitLabel="bolt_lock_settings",
+                requestId=request_id,
+            ),
+            state=any_state,
+            stateMask=field_mask_pb2.FieldMask(paths=mask_paths) if mask_paths else None,
+        )
+
+        batch_req = v1_pb2.BatchTraitUpdateStateRequest(requests=[update_req])
+        encoded = batch_req.SerializeToString()
+
+        for base_url in self._candidate_bases():
+            api_url = f"{base_url}{ENDPOINT_UPDATE}"
+            raw = await self.connection.post(api_url, headers, encoded, read_timeout=API_TIMEOUT_SECONDS)
+            # Best-effort parse; some responses are not StreamBody.
+            try:
+                status_code, status_msg = self._parse_command_status(raw)
+                if status_code not in (None, 0):
+                    raise RuntimeError(f"Update bolt_lock_settings failed (code {status_code}): {status_msg or 'Unknown error'}")
+            except Exception:
+                pass
+            return raw
+        raise RuntimeError("No valid gRPC endpoint available for BatchUpdateState")
 
     async def close(self):
         if self.connection and self.connection.connected:

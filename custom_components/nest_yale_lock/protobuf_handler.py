@@ -342,6 +342,29 @@ class NestProtobufHandler:
                                 )
                             if bolt_lock.boltLockActor.originator.resourceId:
                                 locks_data["user_id"] = bolt_lock.boltLockActor.originator.resourceId
+
+                            # Capture last action (who/what caused the change). This drives the "Last Action" sensor.
+                            try:
+                                method = bolt_lock.boltLockActor.method
+                                method_map = {
+                                    weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_PHYSICAL: "Physical",
+                                    weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_KEYPAD_PIN: "Keypad",
+                                    weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_VOICE_ASSISTANT: "Voice Assistant",
+                                    weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_EXPLICIT: "Remote",
+                                    weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_IMPLICIT: "Remote",
+                                    weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_OTHER: "Remote",
+                                    weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_DELEGATE: "Remote",
+                                }
+                                locks_data["yale"][obj_id]["last_action"] = method_map.get(method, "Other")
+                                locks_data["yale"][obj_id]["last_action_method"] = int(method)
+                            except Exception:
+                                pass
+                            try:
+                                if bolt_lock.HasField("lockedStateLastChangedAt"):
+                                    ts = bolt_lock.lockedStateLastChangedAt
+                                    locks_data["yale"][obj_id]["last_action_timestamp"] = ts.ToJsonString()
+                            except Exception:
+                                pass
                             _LOGGER.debug("Parsed BoltLockTrait for %s: %s, user_id=%s", obj_id, locks_data["yale"][obj_id], locks_data["user_id"])
 
                         except DecodeError as err:
@@ -350,6 +373,52 @@ class NestProtobufHandler:
                         except Exception as err:
                             _LOGGER.error("Unexpected error unpacking BoltLockTrait for %s: %s", obj_id, err, exc_info=True)
                             continue
+
+                    elif "BoltLockSettingsTrait" in (type_url or "") and obj_id:
+                        try:
+                            if not property_any:
+                                continue
+                            settings = weave_security_pb2.BoltLockSettingsTrait()
+                            unpacked = property_any.Unpack(settings)
+                            if not unpacked:
+                                continue
+                            device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
+                            device["auto_relock_on"] = bool(getattr(settings, "autoRelockOn", False))
+                            duration = getattr(settings, "autoRelockDuration", None)
+                            device["auto_relock_duration"] = int(getattr(duration, "seconds", 0) or 0) if duration else 0
+                        except Exception as err:
+                            _LOGGER.debug("Failed to decode BoltLockSettingsTrait for %s: %s", obj_id, err)
+
+                    elif "BoltLockCapabilitiesTrait" in (type_url or "") and obj_id:
+                        try:
+                            if not property_any:
+                                continue
+                            caps = weave_security_pb2.BoltLockCapabilitiesTrait()
+                            unpacked = property_any.Unpack(caps)
+                            if not unpacked:
+                                continue
+                            device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
+                            max_dur = getattr(caps, "maxAutoRelockDuration", None)
+                            device["max_auto_relock_duration"] = int(getattr(max_dur, "seconds", 0) or 0) if max_dur else 0
+                        except Exception as err:
+                            _LOGGER.debug("Failed to decode BoltLockCapabilitiesTrait for %s: %s", obj_id, err)
+
+                    elif "TamperTrait" in (type_url or "") and obj_id:
+                        try:
+                            if not property_any:
+                                continue
+                            tamper = weave_security_pb2.TamperTrait()
+                            unpacked = property_any.Unpack(tamper)
+                            if not unpacked:
+                                continue
+                            device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
+                            # tamperState enum: CLEAR=1, TAMPERED=2, UNKNOWN=3 (0=UNSPECIFIED)
+                            state_val = int(getattr(tamper, "tamperState", 0) or 0)
+                            device["tamper_state"] = state_val
+                            device["tamper"] = "Clear" if state_val == 1 else ("Tampered" if state_val == 2 else "Unknown")
+                            device["tamper_detected"] = state_val == 2
+                        except Exception as err:
+                            _LOGGER.debug("Failed to decode TamperTrait for %s: %s", obj_id, err)
 
                     elif "StructureInfoTrait" in (type_url or "") and obj_id:
                         try:

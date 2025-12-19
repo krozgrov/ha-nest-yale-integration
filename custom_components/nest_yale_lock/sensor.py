@@ -2,6 +2,7 @@
 import logging
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.const import PERCENTAGE
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -29,17 +30,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             if not isinstance(device, dict):
                 continue
             device.setdefault("device_id", device_id)
-            unique_id = f"{DOMAIN}_battery_{device_id}"
-            if unique_id in added:
-                continue
             try:
-                new_entities.append(NestYaleBatterySensor(coordinator, device))
-                added.add(unique_id)
-                _LOGGER.debug("Prepared new battery sensor entity: %s", unique_id)
+                # Battery (diagnostic)
+                battery_uid = f"{DOMAIN}_battery_{device_id}"
+                if battery_uid not in added:
+                    new_entities.append(NestYaleBatterySensor(coordinator, device))
+                    added.add(battery_uid)
+                    _LOGGER.debug("Prepared new battery sensor entity: %s", battery_uid)
+
+                # Last Action (sensor)
+                last_action_uid = f"{DOMAIN}_last_action_{device_id}"
+                if last_action_uid not in added:
+                    new_entities.append(NestYaleLastActionSensor(coordinator, device))
+                    added.add(last_action_uid)
+                    _LOGGER.debug("Prepared new last action sensor entity: %s", last_action_uid)
             except Exception as e:
                 _LOGGER.error("Failed to create battery sensor for %s: %s", device_id, e, exc_info=True)
         if new_entities:
-            _LOGGER.info("Adding %d Nest Yale battery sensors", len(new_entities))
+            _LOGGER.info("Adding %d Nest Yale sensors", len(new_entities))
             async_add_entities(new_entities)
 
     # Add whatever we have now, then subscribe for future updates
@@ -65,6 +73,7 @@ class NestYaleBatterySensor(NestYaleEntity, SensorEntity):
         self._attr_device_class = SensorDeviceClass.BATTERY
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_native_unit_of_measurement = PERCENTAGE
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
         _LOGGER.debug("Initialized battery sensor for %s", self._attr_unique_id)
 
     @property
@@ -124,4 +133,29 @@ class NestYaleBatterySensor(NestYaleEntity, SensorEntity):
         if age is None:
             return True
         return age < stale_limit
+
+
+class NestYaleLastActionSensor(NestYaleEntity, SensorEntity):
+    """Last action sensor (Physical/Keypad/Remote/etc)."""
+
+    def __init__(self, coordinator, device):
+        device_id = device.get("device_id")
+        if not device_id:
+            raise ValueError("device_id is required for last action sensor")
+        super().__init__(coordinator, device_id, device)
+        self._attr_unique_id = f"{DOMAIN}_last_action_{device_id}"
+        self._attr_name = "Last Action"
+        _LOGGER.debug("Initialized last action sensor for %s", self._attr_unique_id)
+
+    @property
+    def native_value(self) -> str | None:
+        # Populated by protobuf_handler (BoltLockTrait.boltLockActor.method mapping)
+        return self._device_data.get("last_action")
+
+    def _handle_coordinator_update(self) -> None:
+        new_data = self._coordinator.data.get(self._device_id)
+        if new_data:
+            self._device_data.update(new_data)
+            self._update_device_info_from_traits()
+        self.async_write_ha_state()
 
