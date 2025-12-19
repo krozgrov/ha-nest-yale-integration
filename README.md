@@ -26,13 +26,13 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.19b16 - Stable requestId (beta)
+## Pre-release 2025.12.19b17 - Fix structure_id=None for commands (beta)
 
-- Fix command regressions vs b1/b2 by aligning retry semantics:
-  - Reuse the same `request-id`/`requestId` across retries (b1/b2 behavior)
-  - Only regenerate request id when we hit `code=6` (already exists)
+- Fix command failures caused by `structure_id=None`:
+  - `api_client.structure_id` now falls back to the legacy `018C…` structure id when UUID is unavailable
+  - Entities/commands will now have a usable `X-Nest-Structure-Id` header instead of sending none
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b16`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b17`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 

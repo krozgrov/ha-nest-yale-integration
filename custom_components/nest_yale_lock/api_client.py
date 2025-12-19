@@ -156,7 +156,10 @@ class NestAPIClient:
 
     @property
     def structure_id(self):
-        return self._structure_id
+        # Prefer UUID-like ids, but fall back to legacy structure ids when UUID is unavailable.
+        # This ensures commands have a usable X-Nest-Structure-Id header in environments where
+        # fetch_structure_id() fails or only legacy ids are observed.
+        return self._structure_id or self._structure_id_legacy
 
     @property
     def structure_id_legacy(self):
@@ -434,7 +437,7 @@ class NestAPIClient:
                                     if _is_uuid_like(new_sid):
                                         old_structure_id = self._structure_id
                                         self._structure_id = new_sid
-                                        self.current_state["structure_id"] = self._structure_id
+                                        self.current_state["structure_id"] = self.structure_id
                                         if old_structure_id != self._structure_id:
                                             _LOGGER.info(
                                                 "Updated structure_id (uuid) from stream: %s (was %s)",
@@ -445,6 +448,8 @@ class NestAPIClient:
                                         # Keep legacy short id separately
                                         self._structure_id_legacy = new_sid
                                         self.current_state["structure_id_legacy"] = new_sid
+                                        # Expose best-effort structure_id for entities/commands.
+                                        self.current_state["structure_id"] = self.structure_id
                                 self._last_observe_data_ts = asyncio.get_event_loop().time()
                                 self.transport_url = base_url
                                 return locks_data["yale"]
@@ -563,7 +568,7 @@ class NestAPIClient:
                                 if _is_uuid_like(new_sid):
                                     old_structure_id = self._structure_id
                                     self._structure_id = new_sid
-                                    self.current_state["structure_id"] = self._structure_id
+                                    self.current_state["structure_id"] = self.structure_id
                                     if old_structure_id != self._structure_id:
                                         _LOGGER.info(
                                             "Updated structure_id (uuid) from stream: %s (was %s)",
@@ -573,6 +578,7 @@ class NestAPIClient:
                                 else:
                                     self._structure_id_legacy = new_sid
                                     self.current_state["structure_id_legacy"] = new_sid
+                                    self.current_state["structure_id"] = self.structure_id
                             self.transport_url = base_url
                             self._last_observe_data_ts = current_time
                         # Yield full locks_data including all_traits so coordinator can extract trait data
