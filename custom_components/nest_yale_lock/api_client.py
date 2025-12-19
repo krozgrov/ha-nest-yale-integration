@@ -701,13 +701,13 @@ class NestAPIClient:
             reauthed = False
             recovered = False
             tried_alt_structure = False
+            # Use a stable request-id across retries (matches known-working b1/b2 behavior).
+            # Only generate a new one if we specifically hit code=6 (already exists).
+            request_id = str(uuid.uuid4())
+            headers["request-id"] = request_id
+            encoded_data = _build_command_request(request_id)
             for _ in range(3):
                 try:
-                    # IMPORTANT: generate a fresh request-id per attempt; reusing it can trigger
-                    # code=6 "Requested entity already exists" on retries.
-                    request_id = str(uuid.uuid4())
-                    headers["request-id"] = request_id
-                    encoded_data = _build_command_request(request_id)
                     _LOGGER.debug(
                         "Sending command to %s (trait=%s), bytes=%d, structure_id=%s, request_id=%s",
                         device_id,
@@ -737,6 +737,11 @@ class NestAPIClient:
                         )
                         # One-time recovery retry for common transient errors.
                         if status_code in (4, 6) and not recovered:
+                            if status_code == 6:
+                                # Regenerate request-id if server reports it already exists.
+                                request_id = str(uuid.uuid4())
+                                headers["request-id"] = request_id
+                                encoded_data = _build_command_request(request_id)
                             _LOGGER.warning(
                                 "Transient command failure (code=%s). Refreshing state and retrying once.",
                                 status_code,
@@ -931,10 +936,11 @@ class NestAPIClient:
             api_url = f"{base_url}{ENDPOINT_UPDATE}"
             recovered = False
             tried_alt_structure = False
+            # Stable request-id across retries (b1 behavior); only regen on code=6.
+            request_id = str(uuid.uuid4())
+            headers["request-id"] = request_id
+            encoded = _build_update_request(request_id)
             for _ in range(2):
-                request_id = str(uuid.uuid4())
-                headers["request-id"] = request_id
-                encoded = _build_update_request(request_id)
                 raw = await self.connection.post(api_url, headers, encoded, read_timeout=API_TIMEOUT_SECONDS)
                 trailer_code, trailer_msg, payload = self._extract_grpc_status(raw)
                 if trailer_code not in (None, 0):
@@ -965,6 +971,10 @@ class NestAPIClient:
                             )
                             continue
                     if status_code in (4, 6) and not recovered:
+                        if status_code == 6:
+                            request_id = str(uuid.uuid4())
+                            headers["request-id"] = request_id
+                            encoded = _build_update_request(request_id)
                         _LOGGER.warning(
                             "Transient bolt_lock_settings failure (code=%s). Refreshing state and retrying once.",
                             status_code,

@@ -26,13 +26,13 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.19b15 - grpc-web response parsing (beta)
+## Pre-release 2025.12.19b16 - Stable requestId (beta)
 
-- Fix command regressions vs b1/b2 by improving response handling:
-  - Properly unframe grpc-web responses (data frames + trailers) before parsing status
-  - On `code=13 INTERNAL`, retry once with the alternate structure-id format (UUID vs legacy) before doing heavy recovery
+- Fix command regressions vs b1/b2 by aligning retry semantics:
+  - Reuse the same `request-id`/`requestId` across retries (b1/b2 behavior)
+  - Only regenerate request id when we hit `code=6` (already exists)
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b15`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b16`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 
