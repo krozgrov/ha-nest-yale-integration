@@ -595,10 +595,11 @@ class NestAPIClient:
                 try:
                     raw_data = await self.connection.post(api_url, headers, encoded_data, read_timeout=API_TIMEOUT_SECONDS)
                     self.transport_url = base_url
-                    # Prefer gateway v1 response parsing when possible (more accurate than StreamBody fallback)
-                    status_code, status_msg = self._parse_v1_operation_status(raw_data)
+                    # Prefer StreamBody status first for SendCommand (it reliably carries gRPC errors),
+                    # then fall back to v1 operation parsing.
+                    status_code, status_msg = self._parse_command_status(raw_data)
                     if status_code is None:
-                        status_code, status_msg = self._parse_command_status(raw_data)
+                        status_code, status_msg = self._parse_v1_operation_status(raw_data)
                     if status_code not in (None, 0):
                         _LOGGER.warning(
                             "Command response reported failure for %s: code=%s, msg=%s",
@@ -627,12 +628,19 @@ class NestAPIClient:
                             api_url,
                             len(raw_data) if raw_data else 0,
                         )
-                    else:
+                    elif status_code is None:
                         _LOGGER.debug(
                             "Command response could not be parsed for %s at %s (payload_len=%d); assuming success",
                             device_id,
                             api_url,
                             len(raw_data) if raw_data else 0,
+                        )
+                    else:
+                        _LOGGER.debug(
+                            "Command returned unexpected status_code=%s for %s at %s",
+                            status_code,
+                            device_id,
+                            api_url,
                         )
                     try:
                         self._last_command_info = {
@@ -750,9 +758,10 @@ class NestAPIClient:
         for base_url in self._candidate_bases():
             api_url = f"{base_url}{ENDPOINT_UPDATE}"
             raw = await self.connection.post(api_url, headers, encoded, read_timeout=API_TIMEOUT_SECONDS)
-            status_code, status_msg = self._parse_v1_operation_status(raw)
+            # Prefer StreamBody first (if present), then v1 operation parsing
+            status_code, status_msg = self._parse_command_status(raw)
             if status_code is None:
-                status_code, status_msg = self._parse_command_status(raw)
+                status_code, status_msg = self._parse_v1_operation_status(raw)
             if status_code not in (None, 0):
                 try:
                     self._last_command_info = {
