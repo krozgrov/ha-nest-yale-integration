@@ -26,13 +26,13 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.19b10 - Fix structure_id for commands (beta)
+## Pre-release 2025.12.19b11 - Command header alignment (beta)
 
-- Fix command reliability regression:
-  - Prefer UUID-like structure ids for `X-Nest-Structure-Id` (ignore legacy short ids from stream)
-  - Avoid sending an invalid structure id header, which can trigger INTERNAL/deadline errors
+- Command header alignment (match `nest_legacy` behavior):
+  - Do not send `X-Nest-Structure-Id` or `X-nl-user-id` for SendCommand/BatchUpdateState
+  - Helps avoid INTERNAL/deadline errors caused by structure/user id format mismatches
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b10`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b11`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 

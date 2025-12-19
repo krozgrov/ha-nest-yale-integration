@@ -564,13 +564,8 @@ class NestAPIClient:
             "origin": "https://home.nest.com",
         }
 
-        # Include structure id when available (matches working test client behavior)
-        effective_structure_id = self._select_structure_id_for_header(structure_id)
-        if effective_structure_id:
-            headers["X-Nest-Structure-Id"] = effective_structure_id
-            _LOGGER.debug("Using structure_id: %s", effective_structure_id)
-        if self._user_id:
-            headers["X-nl-user-id"] = str(self._user_id)
+        # NOTE: nest_legacy succeeds without X-Nest-Structure-Id / X-nl-user-id headers for SendCommand.
+        # These headers can vary in format (legacy vs UUID) and may contribute to INTERNAL/deadline errors.
 
         cmd_any = any_pb2.Any()
         cmd_any.type_url = command["command"]["type_url"]
@@ -592,15 +587,7 @@ class NestAPIClient:
 
         def _refresh_command_headers():
             headers["Authorization"] = f"Basic {self.access_token}"
-            active_structure_id = structure_id or self._structure_id
-            if active_structure_id:
-                headers["X-Nest-Structure-Id"] = active_structure_id
-            else:
-                headers.pop("X-Nest-Structure-Id", None)
-            if self._user_id:
-                headers["X-nl-user-id"] = str(self._user_id)
-            else:
-                headers.pop("X-nl-user-id", None)
+            # Intentionally do not set X-Nest-Structure-Id / X-nl-user-id
 
         _refresh_command_headers()
 
@@ -773,11 +760,7 @@ class NestAPIClient:
             "origin": "https://home.nest.com",
         }
 
-        effective_structure_id = self._select_structure_id_for_header(structure_id)
-        if effective_structure_id:
-            headers["X-Nest-Structure-Id"] = effective_structure_id
-        if self._user_id:
-            headers["X-nl-user-id"] = str(self._user_id)
+        # NOTE: keep update calls aligned with SendCommand (no X-Nest-Structure-Id / X-nl-user-id).
 
         # Build the trait state
         state_proto = weave_security_pb2.BoltLockSettingsTrait()
