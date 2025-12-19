@@ -133,14 +133,23 @@ class NestAPIClient:
         self.access_token = None
         self.auth_data = {}
         self.transport_url = None
-        self._user_id = None  # Discover dynamically
+        # Nest exposes multiple user id formats:
+        # - numeric-ish (from id_token "sub" / REST user data) used for headers/originator
+        # - resource id string like USER_... from Observe stream
+        self._user_id = None  # preferred (numeric-ish)
+        self._user_id_stream = None  # USER_... from stream
         # Nest exposes multiple structure id formats:
         # - UUID-like (e.g. 2ce65ea0-...) used by certain APIs/headers
         # - Legacy short id (e.g. 018C...) that shows up in StreamBody STRUCTURE_* ids
         # Keep both, and prefer UUID for command headers.
         self._structure_id = None  # UUID-like preferred
         self._structure_id_legacy = None  # legacy short id from stream
-        self.current_state = {"devices": {"locks": {}}, "user_id": self._user_id, "structure_id": self._structure_id}
+        self.current_state = {
+            "devices": {"locks": {}},
+            "user_id": self.user_id,
+            "user_id_stream": self._user_id_stream,
+            "structure_id": self._structure_id,
+        }
         self._last_observe_data_ts = None
         # Use Home Assistant managed session
         self.session = async_get_clientsession(hass)
@@ -152,7 +161,15 @@ class NestAPIClient:
 
     @property
     def user_id(self):
-        return self._user_id
+        return self._user_id or self._user_id_stream
+
+    @property
+    def user_id_stream(self):
+        return self._user_id_stream
+
+    def _user_id_for_headers(self) -> str | None:
+        """Prefer numeric-ish user id for headers/commands; fall back to stream user id."""
+        return self._user_id or self._user_id_stream
 
     @property
     def structure_id(self):
@@ -317,7 +334,7 @@ class NestAPIClient:
             if id_token:
                 decoded = jwt.decode(id_token, options={"verify_signature": False})
                 self._user_id = decoded.get("sub", None)
-                self.current_state["user_id"] = self._user_id
+                self.current_state["user_id"] = self.user_id
                 _LOGGER.info(f"Initial user_id from id_token: {self._user_id}, structure_id: {self._structure_id}")
             else:
                 _LOGGER.warning(f"No id_token in auth_data, awaiting stream for user_id and structure_id")
@@ -370,7 +387,7 @@ class NestAPIClient:
             if possible_user_id:
                 old_user_id = self._user_id
                 self._user_id = possible_user_id
-                self.current_state["user_id"] = self._user_id
+                self.current_state["user_id"] = self.user_id
                 if old_user_id != self._user_id:
                     _LOGGER.info(f"Updated user_id from user_data: {self._user_id} (was {old_user_id})")
             structures = user_data.get("structures", {})
@@ -427,11 +444,19 @@ class NestAPIClient:
                             if locks_data.get("yale"):
                                 self.current_state["devices"]["locks"] = locks_data["yale"]
                                 if locks_data.get("user_id"):
-                                    old_user_id = self._user_id
-                                    self._user_id = locks_data["user_id"]
-                                    self.current_state["user_id"] = self._user_id
-                                    if old_user_id != self._user_id:
-                                        _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                    old_stream = self._user_id_stream
+                                    self._user_id_stream = locks_data["user_id"]
+                                    # Do NOT overwrite numeric-ish _user_id if we already have it
+                                    if self._user_id is None:
+                                        self._user_id = self._user_id_stream
+                                    self.current_state["user_id_stream"] = self._user_id_stream
+                                    self.current_state["user_id"] = self.user_id
+                                    if old_stream != self._user_id_stream:
+                                        _LOGGER.info(
+                                            "Updated user_id_stream from stream: %s (was %s)",
+                                            self._user_id_stream,
+                                            old_stream,
+                                        )
                                 if locks_data.get("structure_id"):
                                     new_sid = locks_data["structure_id"]
                                     if _is_uuid_like(new_sid):
@@ -558,11 +583,18 @@ class NestAPIClient:
                                 last_data_time = current_time
                                 _LOGGER.debug("Observe stream received yale data")
                                 if locks_data.get("user_id"):
-                                    old_user_id = self._user_id
-                                    self._user_id = locks_data["user_id"]
-                                    self.current_state["user_id"] = self._user_id
-                                    if old_user_id != self._user_id:
-                                        _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                    old_stream = self._user_id_stream
+                                    self._user_id_stream = locks_data["user_id"]
+                                    if self._user_id is None:
+                                        self._user_id = self._user_id_stream
+                                    self.current_state["user_id_stream"] = self._user_id_stream
+                                    self.current_state["user_id"] = self.user_id
+                                    if old_stream != self._user_id_stream:
+                                        _LOGGER.info(
+                                            "Updated user_id_stream from stream: %s (was %s)",
+                                            self._user_id_stream,
+                                            old_stream,
+                                        )
                             if locks_data.get("structure_id"):
                                 new_sid = locks_data["structure_id"]
                                 if _is_uuid_like(new_sid):
@@ -667,8 +699,9 @@ class NestAPIClient:
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
             _LOGGER.debug("Using structure_id for command: %s", effective_structure_id)
-        if self._user_id:
-            headers["X-nl-user-id"] = str(self._user_id)
+        uid_hdr = self._user_id_for_headers()
+        if uid_hdr:
+            headers["X-nl-user-id"] = str(uid_hdr)
 
         cmd_any = any_pb2.Any()
         cmd_any.type_url = command["command"]["type_url"]
@@ -695,8 +728,9 @@ class NestAPIClient:
                 headers["X-Nest-Structure-Id"] = effective_sid
             else:
                 headers.pop("X-Nest-Structure-Id", None)
-            if self._user_id:
-                headers["X-nl-user-id"] = str(self._user_id)
+            uid = self._user_id_for_headers()
+            if uid:
+                headers["X-nl-user-id"] = str(uid)
             else:
                 headers.pop("X-nl-user-id", None)
 
@@ -908,8 +942,9 @@ class NestAPIClient:
         effective_structure_id = self._select_structure_id_for_header(structure_id)
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
-        if self._user_id:
-            headers["X-nl-user-id"] = str(self._user_id)
+        uid_hdr = self._user_id_for_headers()
+        if uid_hdr:
+            headers["X-nl-user-id"] = str(uid_hdr)
 
         # Build the trait state
         state_proto = weave_security_pb2.BoltLockSettingsTrait()

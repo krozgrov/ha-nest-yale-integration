@@ -26,13 +26,13 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.19b18 - Reduce startup blocking (beta)
+## Pre-release 2025.12.19b19 - Fix user_id overwrite (beta)
 
-- Reduce HA startup blocking:
-  - Avoid running `NestAPIClient.async_setup()` twice (it was being called from both the client factory and coordinator)
-  - Remove duplicate initial refresh (coordinator already does a best-effort refresh with timeout)
+- Fix command regressions caused by user id format switching:
+  - Keep numeric-ish user id (from token/REST) separate from stream `USER_...` id
+  - Do not overwrite the numeric id with the stream id; prefer numeric for `X-nl-user-id` and command originator
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b18`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b19`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 
