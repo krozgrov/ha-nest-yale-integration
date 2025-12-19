@@ -26,16 +26,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.18b3 - Reliability + Diagnostics (beta)
+## Pre-release 2025.12.18b4 - Fix command response handling (beta)
 
-- Reliability improvements:
-  - Watchdog to recover from stale updates (force a fallback refresh; reload only as a last resort)
-  - Merge partial observe updates so traits/settings don’t get dropped between frames
-  - Improved response parsing for commands/settings updates (prefer gateway v1 operation status when present)
-- Better diagnostics: include stream health + last command info in HA diagnostics download
-- Log cleanup: stop dumping huge StreamBody payloads; log a compact summary instead
+- Fix regression where some gRPC error responses were incorrectly logged as “Command succeeded”.
+- Commands and settings updates now reliably detect `StreamBody.status` errors (e.g. code=4, code=6) and surface them properly.
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.18b3`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.18b4`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 

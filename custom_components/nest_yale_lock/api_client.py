@@ -620,12 +620,20 @@ class NestAPIClient:
                         last_error = RuntimeError(f"Command failed (code {status_code}): {status_msg or 'Unknown error'}")
                         break
 
-                    _LOGGER.info(
-                        "Command succeeded for %s at %s, payload_len=%d",
-                        device_id,
-                        api_url,
-                        len(raw_data) if raw_data else 0,
-                    )
+                    if status_code == 0:
+                        _LOGGER.info(
+                            "Command succeeded for %s at %s, payload_len=%d",
+                            device_id,
+                            api_url,
+                            len(raw_data) if raw_data else 0,
+                        )
+                    else:
+                        _LOGGER.debug(
+                            "Command response could not be parsed for %s at %s (payload_len=%d); assuming success",
+                            device_id,
+                            api_url,
+                            len(raw_data) if raw_data else 0,
+                        )
                     try:
                         self._last_command_info = {
                             "ts": asyncio.get_event_loop().time(),
@@ -867,7 +875,7 @@ class NestAPIClient:
             return stream_body.status.code, stream_body.status.message
         except Exception as err:
             _LOGGER.debug("Could not parse command response: %s", err)
-            return 0, None
+            return None, None
 
     def _parse_v1_operation_status(self, response_data: bytes):
         """Parse v1 gateway responses for operation status (preferred over StreamBody when present).
@@ -887,10 +895,13 @@ class NestAPIClient:
         try:
             wrapper = v1_pb2.ResourceCommandResponseFromAPI()
             wrapper.ParseFromString(response_data)
-            # Heuristic: wrapper has either response(s) or the unknown field populated
-            if getattr(wrapper, "resouceCommandResponse", None) or getattr(wrapper, "unknown", ""):
-                for resp in getattr(wrapper, "resouceCommandResponse", []):
-                    for op in getattr(resp, "traitOperations", []):
+            # Strict heuristic: only consider it a match if we have at least one command response
+            # or a non-empty known field. Protobuf will happily "parse" unrelated bytes into
+            # unknown fields; treating that as success causes false positives.
+            responses = getattr(wrapper, "resouceCommandResponse", None) or []
+            if responses:
+                for resp in responses:
+                    for op in getattr(resp, "traitOperations", []) or []:
                         status = getattr(op, "status", None)
                         if status and getattr(status, "code", 0) not in (0, None):
                             return int(status.code), getattr(status, "message", None)
@@ -903,8 +914,9 @@ class NestAPIClient:
             resp = v1_pb2.ResourceCommandResponse()
             resp.ParseFromString(response_data)
             # Heuristic: requires at least one trait operation to be meaningful
-            if getattr(resp, "traitOperations", None):
-                for op in getattr(resp, "traitOperations", []):
+            ops = getattr(resp, "traitOperations", None) or []
+            if ops:
+                for op in ops:
                     status = getattr(op, "status", None)
                     if status and getattr(status, "code", 0) not in (0, None):
                         return int(status.code), getattr(status, "message", None)
@@ -916,8 +928,9 @@ class NestAPIClient:
         try:
             batch = v1_pb2.BatchTraitOperation()
             batch.ParseFromString(response_data)
-            if getattr(batch, "traitOperation", None):
-                for op in getattr(batch, "traitOperation", []):
+            ops = getattr(batch, "traitOperation", None) or []
+            if ops:
+                for op in ops:
                     status = getattr(op, "status", None)
                     if status and getattr(status, "code", 0) not in (0, None):
                         return int(status.code), getattr(status, "message", None)
