@@ -26,13 +26,13 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.19b14 - Legacy structure id fallback (beta)
+## Pre-release 2025.12.19b15 - grpc-web response parsing (beta)
 
-- Fix command failures when only the legacy structure id is available:
-  - Prefer UUID-like structure ids for `X-Nest-Structure-Id`
-  - If no UUID structure id is known, fall back to the legacy `018C...` structure id (matches earlier working betas)
+- Fix command regressions vs b1/b2 by improving response handling:
+  - Properly unframe grpc-web responses (data frames + trailers) before parsing status
+  - On `code=13 INTERNAL`, retry once with the alternate structure-id format (UUID vs legacy) before doing heavy recovery
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b14`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.19b15`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 

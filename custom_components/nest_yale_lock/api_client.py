@@ -4,6 +4,7 @@ import uuid
 import aiohttp
 import asyncio
 import jwt
+import urllib.parse
 from contextlib import nullcontext
 from google.protobuf import any_pb2
 from google.protobuf import field_mask_pb2
@@ -180,6 +181,66 @@ class NestAPIClient:
         if self._structure_id_legacy:
             return self._structure_id_legacy
         return None
+
+    @staticmethod
+    def _grpc_web_unframe(body: bytes) -> tuple[list[bytes], dict[str, str]]:
+        """Best-effort grpc-web body unframing.
+
+        grpc-web responses are typically a sequence of frames:
+        - 1 byte flags (0x00 data, 0x80 trailers)
+        - 4 byte big-endian length
+        - payload bytes
+        """
+        data_frames: list[bytes] = []
+        trailers: dict[str, str] = {}
+        if not body or len(body) < 5:
+            return data_frames, trailers
+
+        i = 0
+        while i + 5 <= len(body):
+            flags = body[i]
+            length = int.from_bytes(body[i + 1 : i + 5], "big", signed=False)
+            i += 5
+            if length < 0 or i + length > len(body):
+                break
+            payload = body[i : i + length]
+            i += length
+
+            if flags & 0x80:
+                # Trailers are ASCII header-like lines.
+                try:
+                    text = payload.decode("utf-8", errors="ignore")
+                    for line in text.splitlines():
+                        if ":" not in line:
+                            continue
+                        k, v = line.split(":", 1)
+                        trailers[k.strip().lower()] = v.strip()
+                except Exception:
+                    pass
+            else:
+                data_frames.append(payload)
+
+        return data_frames, trailers
+
+    def _extract_grpc_status(self, raw: bytes) -> tuple[int | None, str | None, bytes]:
+        """Return (status_code, status_msg, payload_bytes) from a grpc-web response."""
+        frames, trailers = self._grpc_web_unframe(raw)
+        payload = frames[0] if frames else raw
+
+        grpc_status = trailers.get("grpc-status")
+        grpc_message = trailers.get("grpc-message")
+        if grpc_status is not None:
+            try:
+                code = int(grpc_status)
+            except Exception:
+                code = None
+            msg = None
+            if grpc_message is not None:
+                # grpc-message is typically URL-encoded
+                msg = urllib.parse.unquote(grpc_message)
+            return code, msg, payload
+
+        return None, None, payload
 
     def _build_observe_payload(self):
         request = v2_pb2.ObserveRequest(version=2, subscribe=True)
@@ -639,6 +700,7 @@ class NestAPIClient:
             api_url = f"{base_url}{ENDPOINT_SENDCOMMAND}"
             reauthed = False
             recovered = False
+            tried_alt_structure = False
             for _ in range(3):
                 try:
                     # IMPORTANT: generate a fresh request-id per attempt; reusing it can trigger
@@ -657,11 +719,15 @@ class NestAPIClient:
 
                     raw_data = await self.connection.post(api_url, headers, encoded_data, read_timeout=API_TIMEOUT_SECONDS)
                     self.transport_url = base_url
-                    # Prefer StreamBody status first for SendCommand (it reliably carries gRPC errors),
-                    # then fall back to v1 operation parsing.
-                    status_code, status_msg = self._parse_command_status(raw_data)
-                    if status_code is None:
-                        status_code, status_msg = self._parse_v1_operation_status(raw_data)
+                    # Parse grpc-web trailers first (most reliable), then fall back to protobuf payload parsing.
+                    trailer_code, trailer_msg, payload = self._extract_grpc_status(raw_data)
+                    if trailer_code not in (None, 0):
+                        status_code, status_msg = trailer_code, trailer_msg
+                    else:
+                        # Prefer StreamBody status first, then v1 operation parsing.
+                        status_code, status_msg = self._parse_command_status(payload)
+                        if status_code is None:
+                            status_code, status_msg = self._parse_v1_operation_status(payload)
                     if status_code not in (None, 0):
                         _LOGGER.warning(
                             "Command response reported failure for %s: code=%s, msg=%s",
@@ -682,6 +748,30 @@ class NestAPIClient:
                             recovered = True
                             continue
                         if status_code == GRPC_CODE_INTERNAL and not recovered:
+                            # If we have both UUID-like and legacy structure ids, try the other one once
+                            # before doing heavier recovery. Different accounts/devices appear to accept
+                            # different structure-id formats.
+                            alt_sid = None
+                            current_sid = headers.get("X-Nest-Structure-Id")
+                            if not tried_alt_structure:
+                                if current_sid and self._structure_id_legacy and current_sid != self._structure_id_legacy:
+                                    alt_sid = self._structure_id_legacy
+                                elif current_sid and _is_uuid_like(current_sid) and self._structure_id_legacy:
+                                    alt_sid = self._structure_id_legacy
+                                elif current_sid and not _is_uuid_like(current_sid) and _is_uuid_like(self._structure_id):
+                                    alt_sid = self._structure_id
+                                elif not current_sid and self._structure_id_legacy:
+                                    alt_sid = self._structure_id_legacy
+                                elif not current_sid and _is_uuid_like(self._structure_id):
+                                    alt_sid = self._structure_id
+                            if alt_sid:
+                                tried_alt_structure = True
+                                headers["X-Nest-Structure-Id"] = alt_sid
+                                _LOGGER.warning(
+                                    "Retrying command with alternate structure id format: %s",
+                                    alt_sid,
+                                )
+                                continue
                             _LOGGER.warning("Internal error indicates stale connection; resetting session and retrying command")
                             await self._recover_after_internal_error()
                             _refresh_command_headers()
@@ -840,16 +930,40 @@ class NestAPIClient:
         for base_url in self._candidate_bases():
             api_url = f"{base_url}{ENDPOINT_UPDATE}"
             recovered = False
+            tried_alt_structure = False
             for _ in range(2):
                 request_id = str(uuid.uuid4())
                 headers["request-id"] = request_id
                 encoded = _build_update_request(request_id)
                 raw = await self.connection.post(api_url, headers, encoded, read_timeout=API_TIMEOUT_SECONDS)
-                # Prefer StreamBody first (if present), then v1 operation parsing
-                status_code, status_msg = self._parse_command_status(raw)
-                if status_code is None:
-                    status_code, status_msg = self._parse_v1_operation_status(raw)
+                trailer_code, trailer_msg, payload = self._extract_grpc_status(raw)
+                if trailer_code not in (None, 0):
+                    status_code, status_msg = trailer_code, trailer_msg
+                else:
+                    status_code, status_msg = self._parse_command_status(payload)
+                    if status_code is None:
+                        status_code, status_msg = self._parse_v1_operation_status(payload)
                 if status_code not in (None, 0):
+                    if status_code == GRPC_CODE_INTERNAL and not tried_alt_structure:
+                        # Try alternate structure id format once before failing.
+                        alt_sid = None
+                        current_sid = headers.get("X-Nest-Structure-Id")
+                        if current_sid and self._structure_id_legacy and current_sid != self._structure_id_legacy:
+                            alt_sid = self._structure_id_legacy
+                        elif current_sid and not _is_uuid_like(current_sid) and _is_uuid_like(self._structure_id):
+                            alt_sid = self._structure_id
+                        elif not current_sid and self._structure_id_legacy:
+                            alt_sid = self._structure_id_legacy
+                        elif not current_sid and _is_uuid_like(self._structure_id):
+                            alt_sid = self._structure_id
+                        if alt_sid:
+                            tried_alt_structure = True
+                            headers["X-Nest-Structure-Id"] = alt_sid
+                            _LOGGER.warning(
+                                "Retrying bolt_lock_settings with alternate structure id format: %s",
+                                alt_sid,
+                            )
+                            continue
                     if status_code in (4, 6) and not recovered:
                         _LOGGER.warning(
                             "Transient bolt_lock_settings failure (code=%s). Refreshing state and retrying once.",
