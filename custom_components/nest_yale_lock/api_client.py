@@ -526,7 +526,6 @@ class NestAPIClient:
                 except Exception as err:
                     _LOGGER.debug("Pre-command refresh_state failed (continuing anyway): %s", err)
 
-        request_id = str(uuid.uuid4())
         headers = {
             "Authorization": f"Basic {self.access_token}",
             "Content-Type": "application/x-protobuf",
@@ -537,7 +536,6 @@ class NestAPIClient:
             "Accept-Encoding": "gzip, deflate, br",
             "referer": "https://home.nest.com/",
             "origin": "https://home.nest.com",
-            "request-id": request_id,
         }
 
         # Include structure id when available (matches working test client behavior)
@@ -552,23 +550,16 @@ class NestAPIClient:
         cmd_any.type_url = command["command"]["type_url"]
         cmd_any.value = command["command"]["value"] if isinstance(command["command"]["value"], bytes) else command["command"]["value"].SerializeToString()
 
-        request = v1_pb2.ResourceCommandRequest()
-        resource_command = request.resourceCommands.add()
-        resource_command.command.CopyFrom(cmd_any)
-        if command.get("traitLabel"):
-            resource_command.traitLabel = command["traitLabel"]
-        # Use the bare device_id (matches 2025.10.18.1 working behavior)
-        request.resourceRequest.resourceId = device_id
-        request.resourceRequest.requestId = request_id
-        encoded_data = request.SerializeToString()
-
-        _LOGGER.debug(
-            "Sending command to %s (trait=%s), bytes=%d, structure_id=%s",
-            device_id,
-            command.get("command", {}).get("type_url"),
-            len(encoded_data),
-            self._structure_id,
-        )
+        def _build_command_request(req_id: str) -> bytes:
+            req = v1_pb2.ResourceCommandRequest()
+            rc = req.resourceCommands.add()
+            rc.command.CopyFrom(cmd_any)
+            if command.get("traitLabel"):
+                rc.traitLabel = command["traitLabel"]
+            # Use the bare device_id (matches 2025.10.18.1 working behavior)
+            req.resourceRequest.resourceId = device_id
+            req.resourceRequest.requestId = req_id
+            return req.SerializeToString()
 
         last_error = None
         forced_refresh = False  # Track whether forced refresh was already attempted
@@ -593,6 +584,20 @@ class NestAPIClient:
             recovered = False
             for _ in range(3):
                 try:
+                    # IMPORTANT: generate a fresh request-id per attempt; reusing it can trigger
+                    # code=6 "Requested entity already exists" on retries.
+                    request_id = str(uuid.uuid4())
+                    headers["request-id"] = request_id
+                    encoded_data = _build_command_request(request_id)
+                    _LOGGER.debug(
+                        "Sending command to %s (trait=%s), bytes=%d, structure_id=%s, request_id=%s",
+                        device_id,
+                        command.get("command", {}).get("type_url"),
+                        len(encoded_data),
+                        self._structure_id,
+                        request_id,
+                    )
+
                     raw_data = await self.connection.post(api_url, headers, encoded_data, read_timeout=API_TIMEOUT_SECONDS)
                     self.transport_url = base_url
                     # Prefer StreamBody status first for SendCommand (it reliably carries gRPC errors),
@@ -607,6 +612,18 @@ class NestAPIClient:
                             status_code,
                             status_msg,
                         )
+                        # One-time recovery retry for common transient errors.
+                        if status_code in (4, 6) and not recovered:
+                            _LOGGER.warning(
+                                "Transient command failure (code=%s). Refreshing state and retrying once.",
+                                status_code,
+                            )
+                            try:
+                                await self.refresh_state()
+                            except Exception as err:
+                                _LOGGER.debug("refresh_state after transient error failed: %s", err)
+                            recovered = True
+                            continue
                         if status_code == GRPC_CODE_INTERNAL and not recovered:
                             _LOGGER.warning("Internal error indicates stale connection; resetting session and retrying command")
                             await self._recover_after_internal_error()
@@ -619,6 +636,16 @@ class NestAPIClient:
                             recovered = True
                             continue
                         last_error = RuntimeError(f"Command failed (code {status_code}): {status_msg or 'Unknown error'}")
+                        try:
+                            self._last_command_info = {
+                                "ts": asyncio.get_event_loop().time(),
+                                "device_id": device_id,
+                                "type_url": command.get("command", {}).get("type_url"),
+                                "status_code": int(status_code) if status_code is not None else None,
+                                "status_message": status_msg,
+                            }
+                        except Exception:
+                            pass
                         break
 
                     if status_code == 0:
@@ -647,8 +674,8 @@ class NestAPIClient:
                             "ts": asyncio.get_event_loop().time(),
                             "device_id": device_id,
                             "type_url": command.get("command", {}).get("type_url"),
-                            "status_code": 0,
-                            "status_message": None,
+                            "status_code": int(status_code) if status_code is not None else 0,
+                            "status_message": status_msg,
                         }
                     except Exception:
                         pass
@@ -708,7 +735,6 @@ class NestAPIClient:
         if not self.access_token:
             await self.authenticate()
 
-        request_id = str(uuid.uuid4())
         headers = {
             "Authorization": f"Basic {self.access_token}",
             "Content-Type": "application/x-protobuf",
@@ -719,7 +745,6 @@ class NestAPIClient:
             "Accept-Encoding": "gzip, deflate, br",
             "referer": "https://home.nest.com/",
             "origin": "https://home.nest.com",
-            "request-id": request_id,
         }
 
         effective_structure_id = structure_id or self._structure_id
@@ -742,51 +767,67 @@ class NestAPIClient:
         # Match Nest style type_url prefix for compatibility
         any_state.Pack(state_proto, type_url_prefix="type.nestlabs.com")
 
-        update_req = v1_pb2.TraitUpdateStateRequest(
-            traitRequest=v1_pb2.TraitRequest(
-                resourceId=device_id,
-                traitLabel="bolt_lock_settings",
-                requestId=request_id,
-            ),
-            state=any_state,
-            stateMask=field_mask_pb2.FieldMask(paths=mask_paths) if mask_paths else None,
-        )
-
-        batch_req = v1_pb2.BatchTraitUpdateStateRequest(requests=[update_req])
-        encoded = batch_req.SerializeToString()
+        def _build_update_request(req_id: str) -> bytes:
+            update_req = v1_pb2.TraitUpdateStateRequest(
+                traitRequest=v1_pb2.TraitRequest(
+                    resourceId=device_id,
+                    traitLabel="bolt_lock_settings",
+                    requestId=req_id,
+                ),
+                state=any_state,
+                stateMask=field_mask_pb2.FieldMask(paths=mask_paths) if mask_paths else None,
+            )
+            batch_req = v1_pb2.BatchTraitUpdateStateRequest(requests=[update_req])
+            return batch_req.SerializeToString()
 
         for base_url in self._candidate_bases():
             api_url = f"{base_url}{ENDPOINT_UPDATE}"
-            raw = await self.connection.post(api_url, headers, encoded, read_timeout=API_TIMEOUT_SECONDS)
-            # Prefer StreamBody first (if present), then v1 operation parsing
-            status_code, status_msg = self._parse_command_status(raw)
-            if status_code is None:
-                status_code, status_msg = self._parse_v1_operation_status(raw)
-            if status_code not in (None, 0):
+            recovered = False
+            for _ in range(2):
+                request_id = str(uuid.uuid4())
+                headers["request-id"] = request_id
+                encoded = _build_update_request(request_id)
+                raw = await self.connection.post(api_url, headers, encoded, read_timeout=API_TIMEOUT_SECONDS)
+                # Prefer StreamBody first (if present), then v1 operation parsing
+                status_code, status_msg = self._parse_command_status(raw)
+                if status_code is None:
+                    status_code, status_msg = self._parse_v1_operation_status(raw)
+                if status_code not in (None, 0):
+                    if status_code in (4, 6) and not recovered:
+                        _LOGGER.warning(
+                            "Transient bolt_lock_settings failure (code=%s). Refreshing state and retrying once.",
+                            status_code,
+                        )
+                        try:
+                            await self.refresh_state()
+                        except Exception as err:
+                            _LOGGER.debug("refresh_state after transient settings error failed: %s", err)
+                        recovered = True
+                        continue
+                    try:
+                        self._last_command_info = {
+                            "ts": asyncio.get_event_loop().time(),
+                            "device_id": device_id,
+                            "type_url": "weave.trait.security.BoltLockSettingsTrait",
+                            "status_code": int(status_code) if status_code is not None else None,
+                            "status_message": status_msg,
+                        }
+                    except Exception:
+                        pass
+                    raise RuntimeError(
+                        f"Update bolt_lock_settings failed (code {status_code}): {status_msg or 'Unknown error'}"
+                    )
                 try:
                     self._last_command_info = {
                         "ts": asyncio.get_event_loop().time(),
                         "device_id": device_id,
                         "type_url": "weave.trait.security.BoltLockSettingsTrait",
-                        "status_code": int(status_code) if status_code is not None else None,
+                        "status_code": int(status_code) if status_code is not None else 0,
                         "status_message": status_msg,
                     }
                 except Exception:
                     pass
-                raise RuntimeError(
-                    f"Update bolt_lock_settings failed (code {status_code}): {status_msg or 'Unknown error'}"
-                )
-            try:
-                self._last_command_info = {
-                    "ts": asyncio.get_event_loop().time(),
-                    "device_id": device_id,
-                    "type_url": "weave.trait.security.BoltLockSettingsTrait",
-                    "status_code": 0,
-                    "status_message": None,
-                }
-            except Exception:
-                pass
-            return raw
+                return raw
         raise RuntimeError("No valid gRPC endpoint available for BatchUpdateState")
 
     async def close(self):
