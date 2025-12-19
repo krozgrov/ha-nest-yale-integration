@@ -51,9 +51,7 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 ## Known Limitations
 
-- Logs may show `DecodeError in StreamBody: Error parsing message with type 'nest.rpc.StreamBody'` due to incomplete protobuf decoding. This is **harmless** and does not affect functionality.
-- Additional message types beyond the basic lock trait are unmapped, limiting advanced diagnostics and telemetry.
-- API response formats and authentication flows may change, potentially causing breaking updates.
+- This integration relies on an unofficial Nest API and reverse-engineered protobuf messages, which may change without notice and can cause breaking updates.
 
 ## Installation
 
