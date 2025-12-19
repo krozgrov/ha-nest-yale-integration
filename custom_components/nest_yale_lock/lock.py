@@ -240,11 +240,24 @@ class NestYaleLock(NestYaleEntity, LockEntity):
             self._bolt_moving_to = None
             error_text = str(e)
             if self._coordinator:
-                if (
-                    isinstance(e, RuntimeError)
-                    or "Internal error" in error_text
-                    or "Command failed" in error_text
-                ):
+                # Only schedule reload when it helps. For common transient failures like
+                # code=13 INTERNAL / code=4 deadline, reloading can thrash the entry and
+                # make entities go UNKNOWN. Prefer keeping state and letting watchdog recover.
+                stale_age = None
+                try:
+                    stale_age = self._coordinator.last_good_update_age()
+                except Exception:
+                    stale_age = None
+
+                # If we haven't had updates in a while, a reload can help re-establish stream/auth.
+                should_reload = False
+                if stale_age is not None and stale_age > 600:
+                    should_reload = True
+                # Auth-ish failures should still trigger reload.
+                if "401" in error_text or "403" in error_text or "auth" in error_text.lower():
+                    should_reload = True
+
+                if should_reload:
                     self._coordinator.schedule_reload(
                         f"Command failure for {self._device_id}",
                         delay=5,

@@ -31,6 +31,7 @@ class NestCoordinator(DataUpdateCoordinator):
         self._watchdog_task: asyncio.Task | None = None
         self._last_recovery_ts: float | None = None
         self._recovery_attempts: int = 0
+        self._last_reload_request_ts: float | None = None
         _LOGGER.debug("Initialized NestCoordinator with initial data: %s", self.data)
 
     async def async_setup(self):
@@ -87,6 +88,15 @@ class NestCoordinator(DataUpdateCoordinator):
         if not self.entry_id:
             _LOGGER.debug("Cannot schedule reload without entry_id (reason: %s)", reason)
             return
+        # Prevent reload thrash (which can make entities appear UNKNOWN/UNAVAILABLE).
+        now = asyncio.get_event_loop().time()
+        if self._last_reload_request_ts and (now - self._last_reload_request_ts) < 600:
+            _LOGGER.debug(
+                "Reload suppressed due to cooldown (reason=%s, last=%.0fs ago)",
+                reason,
+                now - self._last_reload_request_ts,
+            )
+            return
         if self._reload_task and not self._reload_task.done():
             _LOGGER.debug("Reload already scheduled; ignoring new request (%s)", reason)
             return
@@ -107,6 +117,7 @@ class NestCoordinator(DataUpdateCoordinator):
                 self._reload_task = None
 
         self._reload_task = self.hass.loop.create_task(_do_reload())
+        self._last_reload_request_ts = now
 
     async def _async_update_data(self):
         """Fetch data from API client (fallback only when observe stream is unhealthy)."""
