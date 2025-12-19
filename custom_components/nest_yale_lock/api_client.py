@@ -164,15 +164,21 @@ class NestAPIClient:
     def _select_structure_id_for_header(self, override: str | None = None) -> str | None:
         """Pick the best structure id for X-Nest-Structure-Id.
 
-        The Nest APIs expose both UUID-like structure ids and shorter legacy ids. The gRPC
-        header expects the UUID-like id; sending a legacy id can cause INTERNAL/deadline errors.
+        Nest exposes multiple structure id formats. Prefer UUID-like ids when available, but
+        fall back to the legacy short id only when we have no UUID-like structure id at all.
+        This matches older "working" behavior while avoiding poisoning the UUID slot.
         """
-        candidate = override or self._structure_id
-        if _is_uuid_like(candidate):
-            return candidate
-        # If override was legacy-like, fall back to our stored structure id only if UUID-like.
+        # Prefer an explicit override if it's UUID-like
+        if _is_uuid_like(override):
+            return override
+        # Prefer stored UUID-like structure id
         if _is_uuid_like(self._structure_id):
             return self._structure_id
+        # If we have no UUID-like id available, allow legacy ids as a fallback
+        if override:
+            return override
+        if self._structure_id_legacy:
+            return self._structure_id_legacy
         return None
 
     def _build_observe_payload(self):
