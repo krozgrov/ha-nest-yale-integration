@@ -43,6 +43,24 @@ def _normalize_any_type(any_message: Any) -> Any:
     return any_message
 
 
+def _pick_object_id(obj) -> str | None:
+    """Best-effort object id for messages that populate key/uuid instead of id."""
+    if obj is None:
+        return None
+    candidates = [
+        getattr(obj, "id", None),
+        getattr(obj, "key", None),
+        getattr(obj, "uuid", None),
+    ]
+    for value in candidates:
+        if isinstance(value, str) and value.startswith(("DEVICE_", "STRUCTURE_", "USER_")):
+            return value
+    for value in candidates:
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 class NestProtobufHandler:
     def __init__(self):
         self.buffer = bytearray()
@@ -300,7 +318,7 @@ class NestProtobufHandler:
                         trait_key = f"{obj_id}:{trait_type}"
                         all_traits[trait_key] = {"object_id": obj_id, "type_url": trait_type, "decoded": False}
                 for get_op in msg.get:
-                    obj_id = get_op.object.id if get_op.object.id else None
+                    obj_id = _pick_object_id(get_op.object)
                     property_any = getattr(get_op.data, "property", None)
                     property_any = _normalize_any_type(property_any) if property_any else None
                     type_url = getattr(property_any, "type_url", None) if property_any else None
@@ -331,8 +349,11 @@ class NestProtobufHandler:
                         _LOGGER.debug("Processing set-op trait hint `%s` for `%s` with key `%s`", trait_type, obj_id, obj_key)
 
                 for get_op in msg.get:
-                    obj_id = get_op.object.id if get_op.object.id else None
+                    obj_id = _pick_object_id(get_op.object)
                     obj_key = get_op.object.key if get_op.object.key else "unknown"
+                    if not obj_id and isinstance(obj_key, str) and obj_key:
+                        obj_id = obj_key
+                        _LOGGER.debug("Using object key as id for trait decode: %s", obj_key)
 
                     property_any = getattr(get_op.data, "property", None)
                     property_any = _normalize_any_type(property_any) if property_any else None
