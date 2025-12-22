@@ -42,6 +42,9 @@ class NestProtobufHandler:
         self.pending_length = None
         self.stream_body = rpc_pb2.StreamBody()
         self._decode_warned = False
+        self._last_parse_failed_len = None
+        self._last_parse_failed_head = None
+        self._last_parse_failed_buffer_len = None
 
     def reset_stream_state(self):
         """Clear stream parsing buffers between connections."""
@@ -50,6 +53,9 @@ class NestProtobufHandler:
         self.stream_body.Clear()
         # Allow DecodeError warnings again after a fresh connection
         self._decode_warned = False
+        self._last_parse_failed_len = None
+        self._last_parse_failed_head = None
+        self._last_parse_failed_buffer_len = None
 
     def prepend_chunk(self, chunk: bytes):
         """Push a raw chunk back into the buffer so we can wait for more data."""
@@ -137,7 +143,27 @@ class NestProtobufHandler:
             self.pending_length = None
             locks_data = await self._process_message(message)
             if locks_data.get("parse_failed"):
-                # Put data back and wait for more bytes (likely partial frame)
+                # Put data back and wait for more bytes (likely partial frame).
+                # If we keep seeing the same unparseable frame without new data,
+                # drop it to avoid stalling the stream indefinitely.
+                head = message[:32]
+                if (
+                    self._last_parse_failed_len == len(message)
+                    and self._last_parse_failed_head == head
+                    and self._last_parse_failed_buffer_len is not None
+                    and len(self.buffer) <= self._last_parse_failed_buffer_len
+                ):
+                    _LOGGER.debug(
+                        "Dropping repeated unparseable frame (len=%d) to avoid stream stall",
+                        len(message),
+                    )
+                    self._last_parse_failed_len = None
+                    self._last_parse_failed_head = None
+                    self._last_parse_failed_buffer_len = None
+                    continue
+                self._last_parse_failed_len = len(message)
+                self._last_parse_failed_head = head
+                self._last_parse_failed_buffer_len = len(self.buffer)
                 self.buffer = message + self.buffer
                 # Avoid runaway growth
                 if len(self.buffer) > MAX_BUFFER_SIZE:
@@ -147,6 +173,9 @@ class NestProtobufHandler:
                     break
                 break
             if locks_data.get("yale"):
+                self._last_parse_failed_len = None
+                self._last_parse_failed_head = None
+                self._last_parse_failed_buffer_len = None
                 results.append(locks_data)
 
         if (
@@ -159,8 +188,29 @@ class NestProtobufHandler:
             self.pending_length = None
             locks_data = await self._process_message(message)
             if locks_data.get("parse_failed"):
-                self.buffer = message + self.buffer
+                head = message[:32]
+                if (
+                    self._last_parse_failed_len == len(message)
+                    and self._last_parse_failed_head == head
+                    and self._last_parse_failed_buffer_len is not None
+                    and len(self.buffer) <= self._last_parse_failed_buffer_len
+                ):
+                    _LOGGER.debug(
+                        "Dropping repeated unparseable frame (len=%d) to avoid stream stall",
+                        len(message),
+                    )
+                    self._last_parse_failed_len = None
+                    self._last_parse_failed_head = None
+                    self._last_parse_failed_buffer_len = None
+                else:
+                    self._last_parse_failed_len = len(message)
+                    self._last_parse_failed_head = head
+                    self._last_parse_failed_buffer_len = len(self.buffer)
+                    self.buffer = message + self.buffer
             elif locks_data.get("yale"):
+                self._last_parse_failed_len = None
+                self._last_parse_failed_head = None
+                self._last_parse_failed_buffer_len = None
                 results.append(locks_data)
 
         return results
@@ -362,14 +412,18 @@ class NestProtobufHandler:
                             elif locked_state == weave_security_pb2.BoltLockTrait.BOLT_LOCKED_STATE_UNLOCKED:
                                 bolt_locked_value = False
 
-                            locks_data["yale"][obj_id] = {
-                                "device_id": obj_id,
-                                "bolt_moving": bolt_lock.actuatorState
-                                not in [weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_OK],
-                                "actuator_state": bolt_lock.actuatorState,
+                            device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
+                            device["device_id"] = obj_id
+                            actuator_state = bolt_lock.actuatorState
+                            moving_states = {
+                                weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_LOCKING,
+                                weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_UNLOCKING,
+                                weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_MOVING,
                             }
+                            device["actuator_state"] = actuator_state
+                            device["bolt_moving"] = actuator_state in moving_states
                             if bolt_locked_value is not None:
-                                locks_data["yale"][obj_id]["bolt_locked"] = bolt_locked_value
+                                device["bolt_locked"] = bolt_locked_value
                             else:
                                 _LOGGER.debug(
                                     "Skipping bolt_locked update for %s due to ambiguous lockedState=%s",
@@ -391,17 +445,22 @@ class NestProtobufHandler:
                                     weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_OTHER: "Remote",
                                     weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_DELEGATE: "Remote",
                                 }
-                                locks_data["yale"][obj_id]["last_action"] = method_map.get(method, "Other")
-                                locks_data["yale"][obj_id]["last_action_method"] = int(method)
+                                device["last_action"] = method_map.get(method, "Other")
+                                device["last_action_method"] = int(method)
                             except Exception:
                                 pass
                             try:
                                 if bolt_lock.HasField("lockedStateLastChangedAt"):
                                     ts = bolt_lock.lockedStateLastChangedAt
-                                    locks_data["yale"][obj_id]["last_action_timestamp"] = ts.ToJsonString()
+                                    device["last_action_timestamp"] = ts.ToJsonString()
                             except Exception:
                                 pass
-                            _LOGGER.debug("Parsed BoltLockTrait for %s: %s, user_id=%s", obj_id, locks_data["yale"][obj_id], locks_data["user_id"])
+                            _LOGGER.debug(
+                                "Parsed BoltLockTrait for %s: %s, user_id=%s",
+                                obj_id,
+                                device,
+                                locks_data["user_id"],
+                            )
 
                         except DecodeError as err:
                             _LOGGER.error("Failed to decode BoltLockTrait for %s: %s", obj_id, err)
@@ -467,7 +526,9 @@ class NestProtobufHandler:
                                 _LOGGER.warning("Unpacking StructureInfoTrait failed for %s, skipping", obj_id)
                                 continue
                             if structure.legacy_id:
-                                locks_data["structure_id"] = structure.legacy_id.split(".")[1]
+                                legacy_id = structure.legacy_id
+                                parts = legacy_id.split(".")
+                                locks_data["structure_id"] = parts[-1] if len(parts) > 1 else legacy_id
                             elif obj_id.startswith("STRUCTURE_"):
                                 locks_data["structure_id"] = obj_id.replace("STRUCTURE_", "")
                             _LOGGER.debug("Parsed StructureInfoTrait for %s: structure_id=%s", obj_id, locks_data["structure_id"])

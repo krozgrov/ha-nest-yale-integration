@@ -6,7 +6,6 @@ import asyncio
 import jwt
 from contextlib import nullcontext
 from google.protobuf import any_pb2
-from google.protobuf import field_mask_pb2
 from .auth import NestAuthenticator
 from .protobuf_handler import NestProtobufHandler
 from .const import (
@@ -712,15 +711,34 @@ class NestAPIClient:
         if self._user_id:
             headers["X-nl-user-id"] = str(self._user_id)
 
-        # Build the trait state
+        # Build the trait state (full trait update, nest_legacy-style).
+        # Prefer cached values to avoid unintentionally resetting settings.
+        cached = {}
+        try:
+            cached = (
+                self.current_state.get("devices", {})
+                .get("locks", {})
+                .get(device_id, {})
+            )
+        except Exception:
+            cached = {}
+
+        if auto_relock_on is None:
+            auto_relock_on = cached.get("auto_relock_on")
+        if auto_relock_duration is None:
+            auto_relock_duration = cached.get("auto_relock_duration")
+        if auto_relock_on is None and auto_relock_duration is None:
+            _LOGGER.debug(
+                "No auto-relock values available for %s; skipping update",
+                device_id,
+            )
+            return None
+
         state_proto = weave_security_pb2.BoltLockSettingsTrait()
-        mask_paths: list[str] = []
         if auto_relock_on is not None:
             state_proto.autoRelockOn = bool(auto_relock_on)
-            mask_paths.append("autoRelockOn")
         if auto_relock_duration is not None:
             state_proto.autoRelockDuration.seconds = int(auto_relock_duration)
-            mask_paths.append("autoRelockDuration")
 
         any_state = any_pb2.Any()
         # Match Nest style type_url prefix for compatibility
@@ -733,7 +751,6 @@ class NestAPIClient:
                 requestId=request_id,
             ),
             state=any_state,
-            stateMask=field_mask_pb2.FieldMask(paths=mask_paths) if mask_paths else None,
         )
 
         batch_req = v1_pb2.BatchTraitUpdateStateRequest(requests=[update_req])
