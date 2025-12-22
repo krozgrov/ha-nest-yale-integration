@@ -480,7 +480,8 @@ class NestProtobufHandler:
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
                             device["auto_relock_on"] = bool(getattr(settings, "autoRelockOn", False))
                             duration = getattr(settings, "autoRelockDuration", None)
-                            device["auto_relock_duration"] = int(getattr(duration, "seconds", 0) or 0) if duration else 0
+                            if settings.HasField("autoRelockDuration") and duration is not None:
+                                device["auto_relock_duration"] = int(getattr(duration, "seconds", 0) or 0)
                         except Exception as err:
                             _LOGGER.debug("Failed to decode BoltLockSettingsTrait for %s: %s", obj_id, err)
 
