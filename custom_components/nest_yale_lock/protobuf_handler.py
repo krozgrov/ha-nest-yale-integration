@@ -21,6 +21,13 @@ except ImportError:
 
 MAX_BUFFER_SIZE = 4194304  # 4MB
 CATALOG_THRESHOLD = 20000  # 20KB
+_LOCK_TRAIT_HINTS = (
+    "BoltLockTrait",
+    "BoltLockSettingsTrait",
+    "BoltLockCapabilitiesTrait",
+    "TamperTrait",
+    "PincodeInputTrait",
+)
 
 
 def _normalize_any_type(any_message: Any) -> Any:
@@ -284,7 +291,7 @@ class NestProtobufHandler:
                     trait_type = getattr(getattr(set_op, "property_key", None), "trait_type", "") if hasattr(set_op, "property_key") else ""
                     if obj_id and (
                         "LinusLock" in resource_type
-                        or "BoltLockTrait" in trait_type
+                        or any(hint in trait_type for hint in _LOCK_TRAIT_HINTS)
                         or resource_type.lower().startswith("yale.resource")
                     ):
                         lock_device_ids.add(obj_id)
@@ -301,7 +308,7 @@ class NestProtobufHandler:
                         type_url = "weave.trait.security.BoltLockTrait"
                     
                     # Track devices with BoltLockTrait as locks
-                    if obj_id and "BoltLockTrait" in (type_url or ""):
+                    if obj_id and any(hint in (type_url or "") for hint in _LOCK_TRAIT_HINTS):
                         lock_device_ids.add(obj_id)
                         _LOGGER.debug("Identified lock device: %s", obj_id)
 
