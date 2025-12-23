@@ -51,6 +51,7 @@ class NestYaleAutoRelockDurationNumber(NestYaleEntity, NumberEntity):
     _attr_entity_category = EntityCategory.CONFIG
     _attr_native_unit_of_measurement = "s"
     _attr_step = 1
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator, device: dict):
         device_id = device.get("device_id")
@@ -58,7 +59,7 @@ class NestYaleAutoRelockDurationNumber(NestYaleEntity, NumberEntity):
             raise ValueError("device_id is required for auto-relock duration")
         super().__init__(coordinator, device_id, device)
         self._attr_unique_id = f"{DOMAIN}_auto_relock_duration_{device_id}"
-        self._attr_name = "Auto-Relock Duration"
+        self._attr_name = "Auto-Lock Duration (Custom)"
         self._attr_native_min_value = 0
         # Default to 300s if capabilities not yet present; update dynamically in native_max_value
         self._attr_native_max_value = 300
@@ -90,5 +91,4 @@ class NestYaleAutoRelockDurationNumber(NestYaleEntity, NumberEntity):
             self._device_data.update(new_data)
             self._update_device_info_from_traits()
         self.async_write_ha_state()
-
 
