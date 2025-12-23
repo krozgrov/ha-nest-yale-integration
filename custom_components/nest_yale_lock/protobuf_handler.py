@@ -300,14 +300,24 @@ class NestProtobufHandler:
                     state_rank = _V2_STATE_ACCEPTED
                 elif _V2_STATE_CONFIRMED in state_types:
                     state_rank = _V2_STATE_CONFIRMED
-                current = updates.get(resource_id, {}).get(descriptor)
-                if current and current["rank"] >= state_rank and state_rank != _V2_STATE_ACCEPTED:
+                trait_entries = updates.setdefault(resource_id, {}).setdefault(descriptor, [])
+                replaced = False
+                for idx, entry in enumerate(trait_entries):
+                    if entry.get("rank") == state_rank:
+                        trait_entries[idx] = {
+                            "rank": state_rank,
+                            "any_msg": any_msg,
+                            "type_url": any_msg.type_url,
+                        }
+                        replaced = True
+                        break
+                if replaced:
                     continue
-                updates.setdefault(resource_id, {})[descriptor] = {
+                trait_entries.append({
                     "rank": state_rank,
                     "any_msg": any_msg,
                     "type_url": any_msg.type_url,
-                }
+                })
                 continue
             pos = self._skip_field(data, pos, wire_type)
 
@@ -328,6 +338,30 @@ class NestProtobufHandler:
                 continue
             pos = self._skip_field(message, pos, wire_type)
         return updates
+
+    def _merge_trait_message(self, existing, incoming):
+        if existing is None:
+            return incoming
+        if incoming is None:
+            return existing
+        if existing.__class__ is not incoming.__class__:
+            return incoming
+        merged = existing.__class__()
+        merged.CopyFrom(existing)
+        for field, value in incoming.ListFields():
+            if field.label == field.LABEL_REPEATED:
+                target = getattr(merged, field.name)
+                target.clear()
+                if field.type == field.TYPE_MESSAGE:
+                    for item in value:
+                        target.add().CopyFrom(item)
+                else:
+                    target.extend(list(value))
+            elif field.type == field.TYPE_MESSAGE:
+                getattr(merged, field.name).CopyFrom(value)
+            else:
+                setattr(merged, field.name, value)
+        return merged
 
     def _apply_bolt_lock_trait(self, obj_id, bolt_lock, locks_data):
         # Only publish bolt_locked when the stream explicitly reports LOCKED or UNLOCKED.
@@ -446,39 +480,53 @@ class NestProtobufHandler:
             if obj_id.startswith("USER_"):
                 locks_data["user_id"] = obj_id
 
-            for descriptor_name, entry in trait_map.items():
+            for descriptor_name, entries in trait_map.items():
                 trait_cls = _V2_TRAIT_CLASS_MAP.get(descriptor_name)
                 if not trait_cls:
                     continue
-                any_msg = entry.get("any_msg")
-                if not any_msg:
+                if isinstance(entries, dict):
+                    entries = [entries]
+                if not entries:
                     continue
-                normalized_any = _normalize_any_type(any_msg)
-                trait_msg = trait_cls()
-                try:
-                    unpacked = normalized_any.Unpack(trait_msg)
-                except DecodeError:
-                    continue
-                if not unpacked:
-                    continue
-                type_url = normalized_any.type_url or entry.get("type_url") or ""
 
-                trait_states.setdefault(obj_id, {})[descriptor_name] = trait_msg
+                merged_msg = None
+                merged_type_url = ""
+                for entry in sorted(entries, key=lambda item: item.get("rank", 0)):
+                    any_msg = entry.get("any_msg")
+                    if not any_msg:
+                        continue
+                    normalized_any = _normalize_any_type(any_msg)
+                    trait_msg = trait_cls()
+                    try:
+                        unpacked = normalized_any.Unpack(trait_msg)
+                    except DecodeError:
+                        continue
+                    if not unpacked:
+                        continue
+                    merged_msg = self._merge_trait_message(merged_msg, trait_msg)
+                    if not merged_type_url:
+                        merged_type_url = normalized_any.type_url or entry.get("type_url") or ""
+
+                if merged_msg is None:
+                    continue
+                type_url = merged_type_url
+
+                trait_states.setdefault(obj_id, {})[descriptor_name] = merged_msg
 
                 if "BoltLockTrait" in descriptor_name:
                     lock_device_ids.add(obj_id)
-                    self._apply_bolt_lock_trait(obj_id, trait_msg, locks_data)
+                    self._apply_bolt_lock_trait(obj_id, merged_msg, locks_data)
                 elif "BoltLockSettingsTrait" in descriptor_name:
                     lock_device_ids.add(obj_id)
-                    self._apply_bolt_lock_settings_trait(obj_id, trait_msg, locks_data)
+                    self._apply_bolt_lock_settings_trait(obj_id, merged_msg, locks_data)
                 elif "BoltLockCapabilitiesTrait" in descriptor_name:
                     lock_device_ids.add(obj_id)
-                    self._apply_bolt_lock_capabilities_trait(obj_id, trait_msg, locks_data)
+                    self._apply_bolt_lock_capabilities_trait(obj_id, merged_msg, locks_data)
                 elif "TamperTrait" in descriptor_name:
                     lock_device_ids.add(obj_id)
-                    self._apply_tamper_trait(obj_id, trait_msg, locks_data)
+                    self._apply_tamper_trait(obj_id, merged_msg, locks_data)
                 elif "StructureInfoTrait" in descriptor_name:
-                    self._apply_structure_info_trait(obj_id, trait_msg, locks_data)
+                    self._apply_structure_info_trait(obj_id, merged_msg, locks_data)
                 elif "DeviceIdentityTrait" in descriptor_name and PROTO_AVAILABLE:
                     trait_key = f"{obj_id}:{type_url}"
                     all_traits[trait_key] = {
@@ -486,10 +534,10 @@ class NestProtobufHandler:
                         "type_url": type_url,
                         "decoded": True,
                         "data": {
-                            "serial_number": trait_msg.serial_number if trait_msg.serial_number else None,
-                            "firmware_version": trait_msg.fw_version if trait_msg.fw_version else None,
-                            "manufacturer": trait_msg.manufacturer.value if trait_msg.HasField("manufacturer") else None,
-                            "model": trait_msg.model_name.value if trait_msg.HasField("model_name") else None,
+                            "serial_number": merged_msg.serial_number if merged_msg.serial_number else None,
+                            "firmware_version": merged_msg.fw_version if merged_msg.fw_version else None,
+                            "manufacturer": merged_msg.manufacturer.value if merged_msg.HasField("manufacturer") else None,
+                            "model": merged_msg.model_name.value if merged_msg.HasField("model_name") else None,
                         },
                     }
                 elif "BatteryPowerSourceTrait" in descriptor_name and PROTO_AVAILABLE:
@@ -499,13 +547,13 @@ class NestProtobufHandler:
                         "type_url": type_url,
                         "decoded": True,
                         "data": {
-                            "battery_level": trait_msg.remaining.remainingPercent.value
-                            if trait_msg.HasField("remaining") and trait_msg.remaining.HasField("remainingPercent")
+                            "battery_level": merged_msg.remaining.remainingPercent.value
+                            if merged_msg.HasField("remaining") and merged_msg.remaining.HasField("remainingPercent")
                             else None,
-                            "voltage": trait_msg.assessedVoltage.value if trait_msg.HasField("assessedVoltage") else None,
-                            "condition": trait_msg.condition,
-                            "status": trait_msg.status,
-                            "replacement_indicator": trait_msg.replacementIndicator,
+                            "voltage": merged_msg.assessedVoltage.value if merged_msg.HasField("assessedVoltage") else None,
+                            "condition": merged_msg.condition,
+                            "status": merged_msg.status,
+                            "replacement_indicator": merged_msg.replacementIndicator,
                         },
                     }
 
