@@ -535,8 +535,8 @@ class NestAPIClient:
                             self._apply_cached_settings_to_update(locks_data)
                             self.transport_url = base_url
                             self._last_observe_data_ts = current_time
-                        # Yield full locks_data including all_traits so coordinator can extract trait data
-                        yield locks_data
+                            # Yield full locks_data including all_traits so coordinator can extract trait data
+                            yield locks_data
 
                         if auth_failure:
                             # Reconnect with the new token

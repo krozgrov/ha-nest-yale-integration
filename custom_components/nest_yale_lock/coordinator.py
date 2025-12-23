@@ -161,6 +161,13 @@ class NestCoordinator(DataUpdateCoordinator):
                     _LOGGER.debug("Received observer update: %s", update)
                     normalized_update = update.get("yale", update) if update else {}
                     all_traits = update.get("all_traits", {})
+                    cached_traits = self.api_client.current_state.get("all_traits", {}) or {}
+                    if all_traits:
+                        merged_traits = {**cached_traits, **all_traits}
+                        self.api_client.current_state["all_traits"] = merged_traits
+                        all_traits = merged_traits
+                    else:
+                        all_traits = cached_traits
                     if normalized_update:
                         for device_id, device in normalized_update.items():
                             # Ensure required fields exist even if absent in payload
