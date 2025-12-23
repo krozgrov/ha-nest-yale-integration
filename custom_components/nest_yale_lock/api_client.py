@@ -201,6 +201,60 @@ class NestAPIClient:
     def _candidate_bases(self):
         return _transport_candidates(self.transport_url)
 
+    def _merge_trait_state(self, existing, incoming):
+        if existing is None:
+            return incoming
+        if incoming is None:
+            return existing
+        if existing.__class__ is not incoming.__class__:
+            return incoming
+        merged = existing.__class__()
+        merged.CopyFrom(existing)
+        for field, value in incoming.ListFields():
+            if field.label == field.LABEL_REPEATED:
+                target = getattr(merged, field.name)
+                target.clear()
+                if field.type == field.TYPE_MESSAGE:
+                    for item in value:
+                        target.add().CopyFrom(item)
+                else:
+                    target.extend(list(value))
+            elif field.type == field.TYPE_MESSAGE:
+                getattr(merged, field.name).CopyFrom(value)
+            else:
+                setattr(merged, field.name, value)
+        return merged
+
+    def _merge_trait_states(self, trait_states: dict | None) -> None:
+        if not trait_states:
+            return
+        current_traits = self.current_state.setdefault("traits", {})
+        for resource_id, traits in trait_states.items():
+            resource_traits = current_traits.setdefault(resource_id, {})
+            for trait_name, trait_msg in traits.items():
+                existing = resource_traits.get(trait_name)
+                resource_traits[trait_name] = self._merge_trait_state(existing, trait_msg)
+
+    def _apply_cached_settings_to_update(self, locks_data: dict) -> None:
+        yale = locks_data.get("yale") if isinstance(locks_data, dict) else None
+        if not yale:
+            return
+        trait_cache = self.current_state.get("traits", {})
+        for device_id, device in yale.items():
+            settings = trait_cache.get(device_id, {}).get("weave.trait.security.BoltLockSettingsTrait")
+            if not settings:
+                continue
+            try:
+                fields = {field.name for field, _ in settings.ListFields()}
+            except Exception:
+                fields = set()
+            if settings.HasField("autoRelockDuration"):
+                device["auto_relock_duration"] = int(settings.autoRelockDuration.seconds)
+            if "autoRelockOn" in fields:
+                device["auto_relock_on"] = bool(settings.autoRelockOn)
+            elif settings.HasField("autoRelockDuration") and settings.autoRelockDuration.seconds == 0:
+                device["auto_relock_on"] = False
+
     @classmethod
     async def create(cls, hass, issue_token, api_key=None, cookies=None, user_id=None):
         _LOGGER.debug("Entering create")
@@ -362,14 +416,11 @@ class NestAPIClient:
                                 self.current_state["structure_id"] = self._structure_id
                                 if old_structure_id != self._structure_id:
                                     _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                            trait_states = locks_data.get("trait_states")
-                            if trait_states:
-                                current_traits = self.current_state.setdefault("traits", {})
-                                for resource_id, traits in trait_states.items():
-                                    current_traits.setdefault(resource_id, {}).update(traits)
-                            self._last_observe_data_ts = asyncio.get_event_loop().time()
-                            self.transport_url = base_url
-                            return locks_data["yale"]
+                                self._merge_trait_states(locks_data.get("trait_states"))
+                                self._apply_cached_settings_to_update(locks_data)
+                                self._last_observe_data_ts = asyncio.get_event_loop().time()
+                                self.transport_url = base_url
+                                return locks_data["yale"]
                 except asyncio.TimeoutError:
                     _LOGGER.debug("refresh_state timeout after %s seconds", API_TIMEOUT_SECONDS)
                     last_error = TimeoutError(f"refresh_state timed out after {API_TIMEOUT_SECONDS} seconds")
@@ -480,11 +531,8 @@ class NestAPIClient:
                                 self.current_state["structure_id"] = self._structure_id
                                 if old_structure_id != self._structure_id:
                                     _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                            trait_states = locks_data.get("trait_states")
-                            if trait_states:
-                                current_traits = self.current_state.setdefault("traits", {})
-                                for resource_id, traits in trait_states.items():
-                                    current_traits.setdefault(resource_id, {}).update(traits)
+                            self._merge_trait_states(locks_data.get("trait_states"))
+                            self._apply_cached_settings_to_update(locks_data)
                             self.transport_url = base_url
                             self._last_observe_data_ts = current_time
                         # Yield full locks_data including all_traits so coordinator can extract trait data
