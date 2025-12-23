@@ -528,7 +528,6 @@ class NestProtobufHandler:
                 elif "StructureInfoTrait" in descriptor_name:
                     self._apply_structure_info_trait(obj_id, merged_msg, locks_data)
                 elif "DeviceIdentityTrait" in descriptor_name and PROTO_AVAILABLE:
-                    lock_device_ids.add(obj_id)
                     trait_key = f"{obj_id}:{type_url}"
                     all_traits[trait_key] = {
                         "object_id": obj_id,
@@ -542,7 +541,6 @@ class NestProtobufHandler:
                         },
                     }
                 elif "BatteryPowerSourceTrait" in descriptor_name and PROTO_AVAILABLE:
-                    lock_device_ids.add(obj_id)
                     trait_key = f"{obj_id}:{type_url}"
                     all_traits[trait_key] = {
                         "object_id": obj_id,

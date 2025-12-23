@@ -5,7 +5,7 @@ import aiohttp
 import asyncio
 import jwt
 from contextlib import nullcontext
-from google.protobuf import any_pb2
+from google.protobuf import any_pb2, field_mask_pb2
 from .auth import NestAuthenticator
 from .protobuf_handler import NestProtobufHandler
 from .const import (
@@ -820,10 +820,13 @@ class NestAPIClient:
                 return None
             state_proto = weave_security_pb2.BoltLockSettingsTrait()
 
+        mask_paths = []
         if auto_relock_on is not None:
             state_proto.autoRelockOn = bool(auto_relock_on)
+            mask_paths.append("autoRelockOn")
         if auto_relock_duration is not None:
             state_proto.autoRelockDuration.seconds = int(auto_relock_duration)
+            mask_paths.append("autoRelockDuration")
 
         any_state = any_pb2.Any()
         # Match Nest style type_url prefix for compatibility
@@ -836,6 +839,7 @@ class NestAPIClient:
                 requestId=request_id,
             ),
             state=any_state,
+            stateMask=field_mask_pb2.FieldMask(paths=mask_paths) if mask_paths else None,
         )
 
         batch_req = v1_pb2.BatchTraitUpdateStateRequest(requests=[update_req])

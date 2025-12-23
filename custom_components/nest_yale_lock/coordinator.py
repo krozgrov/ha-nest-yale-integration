@@ -168,6 +168,15 @@ class NestCoordinator(DataUpdateCoordinator):
                         all_traits = merged_traits
                     else:
                         all_traits = cached_traits
+                    def _extract_device_traits(device_id: str) -> dict:
+                        device_traits = {}
+                        for trait_key, trait_info in all_traits.items():
+                            if trait_key.startswith(f"{device_id}:"):
+                                trait_name = trait_info.get("type_url", "").split(".")[-1]
+                                if trait_info.get("decoded") and trait_info.get("data"):
+                                    device_traits[trait_name] = trait_info["data"]
+                        return device_traits
+
                     if normalized_update:
                         for device_id, device in normalized_update.items():
                             # Ensure required fields exist even if absent in payload
@@ -179,12 +188,7 @@ class NestCoordinator(DataUpdateCoordinator):
                                 device["bolt_moving"] = False
                             
                             # Extract trait data for this device from all_traits
-                            device_traits = {}
-                            for trait_key, trait_info in all_traits.items():
-                                if trait_key.startswith(f"{device_id}:"):
-                                    trait_name = trait_info.get("type_url", "").split(".")[-1]
-                                    if trait_info.get("decoded") and trait_info.get("data"):
-                                        device_traits[trait_name] = trait_info["data"]
+                            device_traits = _extract_device_traits(device_id)
                             if device_traits:
                                 device["traits"] = device_traits
                                 _LOGGER.info("Added trait data to device %s: %s", device_id, list(device_traits.keys()))
@@ -205,6 +209,27 @@ class NestCoordinator(DataUpdateCoordinator):
                         self._initial_data_event.set()
                         _LOGGER.debug("Applied normalized observer update: %s, current_state user_id: %s",
                                       normalized_update, self.api_client.current_state["user_id"])
+                    elif all_traits:
+                        updated = False
+                        merged_data = {}
+                        for device_id, device in (self.data or {}).items():
+                            if not isinstance(device, dict):
+                                merged_data[device_id] = device
+                                continue
+                            device_traits = _extract_device_traits(device_id)
+                            if device_traits:
+                                merged_device = {**device, "traits": {**device.get("traits", {}), **device_traits}}
+                                merged_data[device_id] = merged_device
+                                updated = True
+                            else:
+                                merged_data[device_id] = device
+                        if updated:
+                            self._empty_refresh_attempts = 0
+                            self._last_good_update = asyncio.get_event_loop().time()
+                            self.async_set_updated_data(merged_data)
+                            _LOGGER.debug("Applied trait-only observer update for %d device(s)", len(merged_data))
+                        else:
+                            self.async_set_updated_data(self.data)
                     else:
                         _LOGGER.debug("Normalized observer update is empty: %s", normalized_update)
                         self._observer_healthy = False  # allow fallback polling if stream yields nothing
