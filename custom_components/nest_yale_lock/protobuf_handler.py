@@ -422,8 +422,15 @@ class NestProtobufHandler:
         if not updates:
             return None
 
-        locks_data = {"yale": {}, "user_id": None, "structure_id": None, "all_traits": {}}
+        locks_data = {
+            "yale": {},
+            "user_id": None,
+            "structure_id": None,
+            "all_traits": {},
+            "trait_states": {},
+        }
         all_traits = {}
+        trait_states = {}
         lock_device_ids = set()
 
         for obj_id, trait_map in updates.items():
@@ -450,6 +457,8 @@ class NestProtobufHandler:
                 if not unpacked:
                     continue
                 type_url = normalized_any.type_url or entry.get("type_url") or ""
+
+                trait_states.setdefault(obj_id, {})[descriptor_name] = trait_msg
 
                 if "BoltLockTrait" in descriptor_name:
                     lock_device_ids.add(obj_id)
@@ -496,6 +505,7 @@ class NestProtobufHandler:
                     }
 
         locks_data["all_traits"] = all_traits
+        locks_data["trait_states"] = trait_states
         for obj_id in lock_device_ids:
             locks_data["yale"].setdefault(
                 obj_id,

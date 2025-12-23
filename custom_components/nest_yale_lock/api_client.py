@@ -356,15 +356,20 @@ class NestAPIClient:
                                     self.current_state["user_id"] = self._user_id
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
-                                if locks_data.get("structure_id"):
-                                    old_structure_id = self._structure_id
-                                    self._structure_id = locks_data["structure_id"]
-                                    self.current_state["structure_id"] = self._structure_id
-                                    if old_structure_id != self._structure_id:
-                                        _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
-                                self._last_observe_data_ts = asyncio.get_event_loop().time()
-                                self.transport_url = base_url
-                                return locks_data["yale"]
+                            if locks_data.get("structure_id"):
+                                old_structure_id = self._structure_id
+                                self._structure_id = locks_data["structure_id"]
+                                self.current_state["structure_id"] = self._structure_id
+                                if old_structure_id != self._structure_id:
+                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                            trait_states = locks_data.get("trait_states")
+                            if trait_states:
+                                current_traits = self.current_state.setdefault("traits", {})
+                                for resource_id, traits in trait_states.items():
+                                    current_traits.setdefault(resource_id, {}).update(traits)
+                            self._last_observe_data_ts = asyncio.get_event_loop().time()
+                            self.transport_url = base_url
+                            return locks_data["yale"]
                 except asyncio.TimeoutError:
                     _LOGGER.debug("refresh_state timeout after %s seconds", API_TIMEOUT_SECONDS)
                     last_error = TimeoutError(f"refresh_state timed out after {API_TIMEOUT_SECONDS} seconds")
@@ -475,6 +480,11 @@ class NestAPIClient:
                                 self.current_state["structure_id"] = self._structure_id
                                 if old_structure_id != self._structure_id:
                                     _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                            trait_states = locks_data.get("trait_states")
+                            if trait_states:
+                                current_traits = self.current_state.setdefault("traits", {})
+                                for resource_id, traits in trait_states.items():
+                                    current_traits.setdefault(resource_id, {}).update(traits)
                             self.transport_url = base_url
                             self._last_observe_data_ts = current_time
                         # Yield full locks_data including all_traits so coordinator can extract trait data
@@ -733,29 +743,35 @@ class NestAPIClient:
             headers["X-nl-user-id"] = str(self._user_id)
 
         # Build the trait state (full trait update, nest_legacy-style).
-        # Prefer cached values to avoid unintentionally resetting settings.
-        cached = {}
-        try:
-            cached = (
-                self.current_state.get("devices", {})
-                .get("locks", {})
-                .get(device_id, {})
-            )
-        except Exception:
+        # Prefer the last observed settings trait to avoid resetting fields.
+        current_traits = self.current_state.get("traits", {}).get(device_id, {})
+        settings_trait = current_traits.get("weave.trait.security.BoltLockSettingsTrait")
+        if settings_trait:
+            state_proto = weave_security_pb2.BoltLockSettingsTrait()
+            state_proto.CopyFrom(settings_trait)
+        else:
             cached = {}
+            try:
+                cached = (
+                    self.current_state.get("devices", {})
+                    .get("locks", {})
+                    .get(device_id, {})
+                )
+            except Exception:
+                cached = {}
 
-        if auto_relock_on is None:
-            auto_relock_on = cached.get("auto_relock_on")
-        if auto_relock_duration is None:
-            auto_relock_duration = cached.get("auto_relock_duration")
-        if auto_relock_on is None and auto_relock_duration is None:
-            _LOGGER.debug(
-                "No auto-relock values available for %s; skipping update",
-                device_id,
-            )
-            return None
+            if auto_relock_on is None:
+                auto_relock_on = cached.get("auto_relock_on")
+            if auto_relock_duration is None:
+                auto_relock_duration = cached.get("auto_relock_duration")
+            if auto_relock_on is None and auto_relock_duration is None:
+                _LOGGER.debug(
+                    "No auto-relock values available for %s; skipping update",
+                    device_id,
+                )
+                return None
+            state_proto = weave_security_pb2.BoltLockSettingsTrait()
 
-        state_proto = weave_security_pb2.BoltLockSettingsTrait()
         if auto_relock_on is not None:
             state_proto.autoRelockOn = bool(auto_relock_on)
         if auto_relock_duration is not None:
@@ -805,6 +821,13 @@ class NestAPIClient:
                     "status_code": 0,
                     "status_message": None,
                 }
+            except Exception:
+                pass
+            try:
+                current_traits = self.current_state.setdefault("traits", {})
+                current_traits.setdefault(device_id, {})[
+                    "weave.trait.security.BoltLockSettingsTrait"
+                ] = state_proto
             except Exception:
                 pass
             return raw
