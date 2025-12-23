@@ -7,7 +7,6 @@ import binascii
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 from .proto.nest.trait import structure_pb2 as nest_structure_pb2
 from .proto.nest import rpc_pb2 as rpc_pb2
-
 _LOGGER = logging.getLogger(__name__)
 
 # Import HomeKit trait decoders
@@ -29,6 +28,31 @@ _LOCK_TRAIT_HINTS = (
     "PincodeInputTrait",
 )
 
+_NEST_TYPE_PREFIX = "type.nestlabs.com/"
+_GOOGLE_TYPE_PREFIX = "type.googleapis.com/"
+
+_V2_STATE_CONFIRMED = 1
+_V2_STATE_ACCEPTED = 2
+
+_USE_STREAMBODY_FALLBACK = False
+
+_V2_TRAIT_CLASS_MAP = {
+    "weave.trait.security.BoltLockTrait": weave_security_pb2.BoltLockTrait,
+    "weave.trait.security.BoltLockSettingsTrait": weave_security_pb2.BoltLockSettingsTrait,
+    "weave.trait.security.BoltLockCapabilitiesTrait": weave_security_pb2.BoltLockCapabilitiesTrait,
+    "weave.trait.security.TamperTrait": weave_security_pb2.TamperTrait,
+    "weave.trait.security.PincodeInputTrait": weave_security_pb2.PincodeInputTrait,
+    "nest.trait.structure.StructureInfoTrait": nest_structure_pb2.StructureInfoTrait,
+}
+
+if PROTO_AVAILABLE:
+    _V2_TRAIT_CLASS_MAP.update(
+        {
+            "weave.trait.description.DeviceIdentityTrait": description_pb2.DeviceIdentityTrait,
+            "weave.trait.power.BatteryPowerSourceTrait": power_pb2.BatteryPowerSourceTrait,
+        }
+    )
+
 
 def _normalize_any_type(any_message: Any) -> Any:
     """Map legacy Nest type URLs onto googleapis prefix so Unpack succeeds."""
@@ -41,6 +65,16 @@ def _normalize_any_type(any_message: Any) -> Any:
         normalized.type_url = type_url.replace("type.nestlabs.com/", "type.googleapis.com/", 1)
         return normalized
     return any_message
+
+
+def _strip_type_prefix(type_url: str) -> str:
+    if not type_url:
+        return ""
+    if type_url.startswith(_NEST_TYPE_PREFIX):
+        return type_url[len(_NEST_TYPE_PREFIX):]
+    if type_url.startswith(_GOOGLE_TYPE_PREFIX):
+        return type_url[len(_GOOGLE_TYPE_PREFIX):]
+    return type_url
 
 
 def _pick_object_id(obj) -> str | None:
@@ -107,6 +141,377 @@ class NestProtobufHandler:
         # Not enough bytes yet to decode the varint; wait for more data.
         _LOGGER.debug("Incomplete varint at pos %s; awaiting additional data", start)
         return None, start
+
+    def _read_varint(self, data: bytes, pos: int):
+        value = 0
+        shift = 0
+        start = pos
+        max_bytes = 10
+        while pos < len(data):
+            byte = data[pos]
+            value |= (byte & 0x7F) << shift
+            pos += 1
+            if not (byte & 0x80):
+                return value, pos
+            shift += 7
+            if shift >= 64 or pos - start >= max_bytes:
+                return None, pos
+        return None, pos
+
+    def _read_length_delimited(self, data: bytes, pos: int):
+        length, pos = self._read_varint(data, pos)
+        if length is None:
+            return None, pos
+        end = pos + length
+        if end > len(data):
+            return None, pos
+        return data[pos:end], end
+
+    def _skip_field(self, data: bytes, pos: int, wire_type: int):
+        if wire_type == 0:
+            _, pos = self._read_varint(data, pos)
+            return pos
+        if wire_type == 1:
+            return min(len(data), pos + 8)
+        if wire_type == 2:
+            length, pos = self._read_varint(data, pos)
+            if length is None:
+                return len(data)
+            return min(len(data), pos + length)
+        if wire_type == 5:
+            return min(len(data), pos + 4)
+        return len(data)
+
+    def _parse_v2_trait_id(self, data: bytes):
+        resource_id = None
+        trait_label = None
+        pos = 0
+        while pos < len(data):
+            tag, pos = self._read_varint(data, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if wire_type != 2:
+                pos = self._skip_field(data, pos, wire_type)
+                continue
+            value, pos = self._read_length_delimited(data, pos)
+            if value is None:
+                break
+            try:
+                decoded = value.decode("utf-8")
+            except Exception:
+                decoded = None
+            if field == 1:
+                resource_id = decoded
+            elif field == 2:
+                trait_label = decoded
+        return resource_id, trait_label
+
+    def _parse_v2_patch_any(self, data: bytes):
+        pos = 0
+        while pos < len(data):
+            tag, pos = self._read_varint(data, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 2:
+                any_bytes, pos = self._read_length_delimited(data, pos)
+                if any_bytes is None:
+                    break
+                any_msg = Any()
+                try:
+                    any_msg.ParseFromString(any_bytes)
+                except DecodeError:
+                    return None
+                return _normalize_any_type(any_msg)
+            pos = self._skip_field(data, pos, wire_type)
+        return None
+
+    def _parse_v2_trait_state(self, data: bytes):
+        resource_id = None
+        trait_label = None
+        state_types = []
+        any_msg = None
+        pos = 0
+        while pos < len(data):
+            tag, pos = self._read_varint(data, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 2:
+                trait_id_bytes, pos = self._read_length_delimited(data, pos)
+                if trait_id_bytes is None:
+                    break
+                resource_id, trait_label = self._parse_v2_trait_id(trait_id_bytes)
+            elif field == 2 and wire_type == 0:
+                value, pos = self._read_varint(data, pos)
+                if value is not None:
+                    state_types.append(int(value))
+            elif field == 2 and wire_type == 2:
+                packed, pos = self._read_length_delimited(data, pos)
+                if packed is None:
+                    break
+                inner_pos = 0
+                while inner_pos < len(packed):
+                    value, inner_pos = self._read_varint(packed, inner_pos)
+                    if value is None:
+                        break
+                    state_types.append(int(value))
+            elif field == 3 and wire_type == 2:
+                patch_bytes, pos = self._read_length_delimited(data, pos)
+                if patch_bytes is None:
+                    break
+                any_msg = self._parse_v2_patch_any(patch_bytes)
+            else:
+                pos = self._skip_field(data, pos, wire_type)
+        return {
+            "resource_id": resource_id,
+            "trait_label": trait_label,
+            "state_types": state_types,
+            "any_msg": any_msg,
+        }
+
+    def _parse_v2_inner(self, data: bytes, updates: dict):
+        pos = 0
+        while pos < len(data):
+            tag, pos = self._read_varint(data, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 3 and wire_type == 2:
+                trait_state_bytes, pos = self._read_length_delimited(data, pos)
+                if trait_state_bytes is None:
+                    break
+                trait_state = self._parse_v2_trait_state(trait_state_bytes)
+                resource_id = trait_state.get("resource_id")
+                any_msg = trait_state.get("any_msg")
+                if not resource_id or not any_msg or not any_msg.type_url:
+                    continue
+                descriptor = _strip_type_prefix(any_msg.type_url)
+                if not descriptor or descriptor not in _V2_TRAIT_CLASS_MAP:
+                    continue
+                state_types = trait_state.get("state_types") or []
+                state_rank = 0
+                if _V2_STATE_ACCEPTED in state_types:
+                    state_rank = _V2_STATE_ACCEPTED
+                elif _V2_STATE_CONFIRMED in state_types:
+                    state_rank = _V2_STATE_CONFIRMED
+                current = updates.get(resource_id, {}).get(descriptor)
+                if current and current["rank"] >= state_rank and state_rank != _V2_STATE_ACCEPTED:
+                    continue
+                updates.setdefault(resource_id, {})[descriptor] = {
+                    "rank": state_rank,
+                    "any_msg": any_msg,
+                    "type_url": any_msg.type_url,
+                }
+                continue
+            pos = self._skip_field(data, pos, wire_type)
+
+    def _parse_v2_observe(self, message: bytes):
+        updates = {}
+        pos = 0
+        while pos < len(message):
+            tag, pos = self._read_varint(message, pos)
+            if tag is None:
+                return None
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 2:
+                inner_bytes, pos = self._read_length_delimited(message, pos)
+                if inner_bytes is None:
+                    return None
+                self._parse_v2_inner(inner_bytes, updates)
+                continue
+            pos = self._skip_field(message, pos, wire_type)
+        return updates
+
+    def _apply_bolt_lock_trait(self, obj_id, bolt_lock, locks_data):
+        # Only publish bolt_locked when the stream explicitly reports LOCKED or UNLOCKED.
+        locked_state = bolt_lock.lockedState
+        bolt_locked_value = None
+        if locked_state == weave_security_pb2.BoltLockTrait.BOLT_LOCKED_STATE_LOCKED:
+            bolt_locked_value = True
+        elif locked_state == weave_security_pb2.BoltLockTrait.BOLT_LOCKED_STATE_UNLOCKED:
+            bolt_locked_value = False
+
+        device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
+        device["device_id"] = obj_id
+        actuator_state = bolt_lock.actuatorState
+        moving_states = {
+            weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_LOCKING,
+            weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_UNLOCKING,
+            weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_MOVING,
+        }
+        device["actuator_state"] = actuator_state
+        device["bolt_moving"] = actuator_state in moving_states
+        if bolt_locked_value is not None:
+            device["bolt_locked"] = bolt_locked_value
+        else:
+            _LOGGER.debug(
+                "Skipping bolt_locked update for %s due to ambiguous lockedState=%s",
+                obj_id,
+                locked_state,
+            )
+        if bolt_lock.boltLockActor.originator.resourceId:
+            locks_data["user_id"] = bolt_lock.boltLockActor.originator.resourceId
+
+        # Capture last action (who/what caused the change).
+        try:
+            method = bolt_lock.boltLockActor.method
+            method_map = {
+                weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_PHYSICAL: "Physical",
+                weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_KEYPAD_PIN: "Keypad",
+                weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_VOICE_ASSISTANT: "Voice Assistant",
+                weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_EXPLICIT: "Remote",
+                weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_IMPLICIT: "Remote",
+                weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_OTHER: "Remote",
+                weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_DELEGATE: "Remote",
+            }
+            device["last_action"] = method_map.get(method, "Other")
+            device["last_action_method"] = int(method)
+        except Exception:
+            pass
+        try:
+            if bolt_lock.HasField("lockedStateLastChangedAt"):
+                ts = bolt_lock.lockedStateLastChangedAt
+                device["last_action_timestamp"] = ts.ToJsonString()
+        except Exception:
+            pass
+        _LOGGER.debug(
+            "Parsed BoltLockTrait for %s: %s, user_id=%s",
+            obj_id,
+            device,
+            locks_data["user_id"],
+        )
+
+    def _apply_bolt_lock_settings_trait(self, obj_id, settings, locks_data):
+        device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
+        device["auto_relock_on"] = bool(getattr(settings, "autoRelockOn", False))
+        duration = getattr(settings, "autoRelockDuration", None)
+        if settings.HasField("autoRelockDuration") and duration is not None:
+            device["auto_relock_duration"] = int(getattr(duration, "seconds", 0) or 0)
+
+    def _apply_bolt_lock_capabilities_trait(self, obj_id, caps, locks_data):
+        device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
+        max_dur = getattr(caps, "maxAutoRelockDuration", None)
+        device["max_auto_relock_duration"] = int(getattr(max_dur, "seconds", 0) or 0) if max_dur else 0
+
+    def _apply_tamper_trait(self, obj_id, tamper, locks_data):
+        device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
+        # tamperState enum: CLEAR=1, TAMPERED=2, UNKNOWN=3 (0=UNSPECIFIED)
+        state_val = int(getattr(tamper, "tamperState", 0) or 0)
+        device["tamper_state"] = state_val
+        device["tamper"] = "Clear" if state_val == 1 else ("Tampered" if state_val == 2 else "Unknown")
+        device["tamper_detected"] = state_val == 2
+
+    def _apply_structure_info_trait(self, obj_id, structure, locks_data):
+        if structure.legacy_id:
+            legacy_id = structure.legacy_id
+            parts = legacy_id.split(".")
+            locks_data["structure_id"] = parts[-1] if len(parts) > 1 else legacy_id
+        elif obj_id.startswith("STRUCTURE_"):
+            locks_data["structure_id"] = obj_id.replace("STRUCTURE_", "")
+        _LOGGER.debug("Parsed StructureInfoTrait for %s: structure_id=%s", obj_id, locks_data["structure_id"])
+
+    def _process_v2_observe(self, message: bytes):
+        updates = self._parse_v2_observe(message)
+        if not updates:
+            return None
+
+        locks_data = {"yale": {}, "user_id": None, "structure_id": None, "all_traits": {}}
+        all_traits = {}
+        lock_device_ids = set()
+
+        for obj_id, trait_map in updates.items():
+            if not obj_id:
+                continue
+            if obj_id.startswith("STRUCTURE_"):
+                locks_data["structure_id"] = obj_id.replace("STRUCTURE_", "")
+            if obj_id.startswith("USER_"):
+                locks_data["user_id"] = obj_id
+
+            for descriptor_name, entry in trait_map.items():
+                trait_cls = _V2_TRAIT_CLASS_MAP.get(descriptor_name)
+                if not trait_cls:
+                    continue
+                any_msg = entry.get("any_msg")
+                if not any_msg:
+                    continue
+                normalized_any = _normalize_any_type(any_msg)
+                trait_msg = trait_cls()
+                try:
+                    unpacked = normalized_any.Unpack(trait_msg)
+                except DecodeError:
+                    continue
+                if not unpacked:
+                    continue
+                type_url = normalized_any.type_url or entry.get("type_url") or ""
+
+                if "BoltLockTrait" in descriptor_name:
+                    lock_device_ids.add(obj_id)
+                    self._apply_bolt_lock_trait(obj_id, trait_msg, locks_data)
+                elif "BoltLockSettingsTrait" in descriptor_name:
+                    lock_device_ids.add(obj_id)
+                    self._apply_bolt_lock_settings_trait(obj_id, trait_msg, locks_data)
+                elif "BoltLockCapabilitiesTrait" in descriptor_name:
+                    lock_device_ids.add(obj_id)
+                    self._apply_bolt_lock_capabilities_trait(obj_id, trait_msg, locks_data)
+                elif "TamperTrait" in descriptor_name:
+                    lock_device_ids.add(obj_id)
+                    self._apply_tamper_trait(obj_id, trait_msg, locks_data)
+                elif "StructureInfoTrait" in descriptor_name:
+                    self._apply_structure_info_trait(obj_id, trait_msg, locks_data)
+                elif "DeviceIdentityTrait" in descriptor_name and PROTO_AVAILABLE:
+                    trait_key = f"{obj_id}:{type_url}"
+                    all_traits[trait_key] = {
+                        "object_id": obj_id,
+                        "type_url": type_url,
+                        "decoded": True,
+                        "data": {
+                            "serial_number": trait_msg.serial_number if trait_msg.serial_number else None,
+                            "firmware_version": trait_msg.fw_version if trait_msg.fw_version else None,
+                            "manufacturer": trait_msg.manufacturer.value if trait_msg.HasField("manufacturer") else None,
+                            "model": trait_msg.model_name.value if trait_msg.HasField("model_name") else None,
+                        },
+                    }
+                elif "BatteryPowerSourceTrait" in descriptor_name and PROTO_AVAILABLE:
+                    trait_key = f"{obj_id}:{type_url}"
+                    all_traits[trait_key] = {
+                        "object_id": obj_id,
+                        "type_url": type_url,
+                        "decoded": True,
+                        "data": {
+                            "battery_level": trait_msg.remaining.remainingPercent.value
+                            if trait_msg.HasField("remaining") and trait_msg.remaining.HasField("remainingPercent")
+                            else None,
+                            "voltage": trait_msg.assessedVoltage.value if trait_msg.HasField("assessedVoltage") else None,
+                            "condition": trait_msg.condition,
+                            "status": trait_msg.status,
+                            "replacement_indicator": trait_msg.replacementIndicator,
+                        },
+                    }
+
+        locks_data["all_traits"] = all_traits
+        for obj_id in lock_device_ids:
+            locks_data["yale"].setdefault(
+                obj_id,
+                {
+                    "device_id": obj_id,
+                    "bolt_locked": True,
+                    "actuator_state": weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_OK,
+                },
+            )
+        if _LOGGER.isEnabledFor(logging.DEBUG) and locks_data.get("yale"):
+            _LOGGER.debug(
+                "Parsed v2 ObserveResponse: locks=%d, traits=%d",
+                len(locks_data["yale"]),
+                sum(len(traits) for traits in updates.values()),
+            )
+        return locks_data
 
     async def _ingest_chunk(self, payload):
         results = []
@@ -247,6 +652,12 @@ class NestProtobufHandler:
         if not message:
             _LOGGER.error("Empty protobuf message received.")
             return {"yale": {}, "user_id": None, "structure_id": None}
+
+        v2_result = self._process_v2_observe(message)
+        if v2_result is not None:
+            return v2_result
+        if not _USE_STREAMBODY_FALLBACK:
+            return {"yale": {}, "user_id": None, "structure_id": None, "all_traits": {}}
 
         locks_data = {"yale": {}, "user_id": None, "structure_id": None, "all_traits": {}}
         all_traits = {}
@@ -429,66 +840,7 @@ class NestProtobufHandler:
                             if not unpacked:
                                 _LOGGER.warning("Unpacking BoltLockTrait failed for %s, skipping", obj_id)
                                 continue
-
-                            # Only publish bolt_locked when the stream explicitly reports LOCKED or UNLOCKED.
-                            # The API can transiently emit UNKNOWN/UNSPECIFIED during reconnects/motion;
-                            # treating those as "unlocked" causes phantom HA state flips.
-                            locked_state = bolt_lock.lockedState
-                            bolt_locked_value = None
-                            if locked_state == weave_security_pb2.BoltLockTrait.BOLT_LOCKED_STATE_LOCKED:
-                                bolt_locked_value = True
-                            elif locked_state == weave_security_pb2.BoltLockTrait.BOLT_LOCKED_STATE_UNLOCKED:
-                                bolt_locked_value = False
-
-                            device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
-                            device["device_id"] = obj_id
-                            actuator_state = bolt_lock.actuatorState
-                            moving_states = {
-                                weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_LOCKING,
-                                weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_UNLOCKING,
-                                weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_MOVING,
-                            }
-                            device["actuator_state"] = actuator_state
-                            device["bolt_moving"] = actuator_state in moving_states
-                            if bolt_locked_value is not None:
-                                device["bolt_locked"] = bolt_locked_value
-                            else:
-                                _LOGGER.debug(
-                                    "Skipping bolt_locked update for %s due to ambiguous lockedState=%s",
-                                    obj_id,
-                                    locked_state,
-                                )
-                            if bolt_lock.boltLockActor.originator.resourceId:
-                                locks_data["user_id"] = bolt_lock.boltLockActor.originator.resourceId
-
-                            # Capture last action (who/what caused the change). This drives the "Last Action" sensor.
-                            try:
-                                method = bolt_lock.boltLockActor.method
-                                method_map = {
-                                    weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_PHYSICAL: "Physical",
-                                    weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_KEYPAD_PIN: "Keypad",
-                                    weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_VOICE_ASSISTANT: "Voice Assistant",
-                                    weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_EXPLICIT: "Remote",
-                                    weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_IMPLICIT: "Remote",
-                                    weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_OTHER: "Remote",
-                                    weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_DELEGATE: "Remote",
-                                }
-                                device["last_action"] = method_map.get(method, "Other")
-                                device["last_action_method"] = int(method)
-                            except Exception:
-                                pass
-                            try:
-                                if bolt_lock.HasField("lockedStateLastChangedAt"):
-                                    ts = bolt_lock.lockedStateLastChangedAt
-                                    device["last_action_timestamp"] = ts.ToJsonString()
-                            except Exception:
-                                pass
-                            _LOGGER.debug(
-                                "Parsed BoltLockTrait for %s: %s, user_id=%s",
-                                obj_id,
-                                device,
-                                locks_data["user_id"],
-                            )
+                            self._apply_bolt_lock_trait(obj_id, bolt_lock, locks_data)
 
                         except DecodeError as err:
                             _LOGGER.error("Failed to decode BoltLockTrait for %s: %s", obj_id, err)
@@ -505,11 +857,7 @@ class NestProtobufHandler:
                             unpacked = property_any.Unpack(settings)
                             if not unpacked:
                                 continue
-                            device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
-                            device["auto_relock_on"] = bool(getattr(settings, "autoRelockOn", False))
-                            duration = getattr(settings, "autoRelockDuration", None)
-                            if settings.HasField("autoRelockDuration") and duration is not None:
-                                device["auto_relock_duration"] = int(getattr(duration, "seconds", 0) or 0)
+                            self._apply_bolt_lock_settings_trait(obj_id, settings, locks_data)
                         except Exception as err:
                             _LOGGER.debug("Failed to decode BoltLockSettingsTrait for %s: %s", obj_id, err)
 
@@ -521,9 +869,7 @@ class NestProtobufHandler:
                             unpacked = property_any.Unpack(caps)
                             if not unpacked:
                                 continue
-                            device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
-                            max_dur = getattr(caps, "maxAutoRelockDuration", None)
-                            device["max_auto_relock_duration"] = int(getattr(max_dur, "seconds", 0) or 0) if max_dur else 0
+                            self._apply_bolt_lock_capabilities_trait(obj_id, caps, locks_data)
                         except Exception as err:
                             _LOGGER.debug("Failed to decode BoltLockCapabilitiesTrait for %s: %s", obj_id, err)
 
@@ -535,12 +881,7 @@ class NestProtobufHandler:
                             unpacked = property_any.Unpack(tamper)
                             if not unpacked:
                                 continue
-                            device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
-                            # tamperState enum: CLEAR=1, TAMPERED=2, UNKNOWN=3 (0=UNSPECIFIED)
-                            state_val = int(getattr(tamper, "tamperState", 0) or 0)
-                            device["tamper_state"] = state_val
-                            device["tamper"] = "Clear" if state_val == 1 else ("Tampered" if state_val == 2 else "Unknown")
-                            device["tamper_detected"] = state_val == 2
+                            self._apply_tamper_trait(obj_id, tamper, locks_data)
                         except Exception as err:
                             _LOGGER.debug("Failed to decode TamperTrait for %s: %s", obj_id, err)
 
@@ -554,13 +895,7 @@ class NestProtobufHandler:
                             if not unpacked:
                                 _LOGGER.warning("Unpacking StructureInfoTrait failed for %s, skipping", obj_id)
                                 continue
-                            if structure.legacy_id:
-                                legacy_id = structure.legacy_id
-                                parts = legacy_id.split(".")
-                                locks_data["structure_id"] = parts[-1] if len(parts) > 1 else legacy_id
-                            elif obj_id.startswith("STRUCTURE_"):
-                                locks_data["structure_id"] = obj_id.replace("STRUCTURE_", "")
-                            _LOGGER.debug("Parsed StructureInfoTrait for %s: structure_id=%s", obj_id, locks_data["structure_id"])
+                            self._apply_structure_info_trait(obj_id, structure, locks_data)
                         except Exception as err:
                             _LOGGER.error("Failed to parse StructureInfoTrait for %s: %s", obj_id, err, exc_info=True)
 

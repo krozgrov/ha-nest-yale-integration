@@ -23,7 +23,6 @@ from .const import (
     API_TIMEOUT_SECONDS,
 )
 from .proto.nestlabs.gateway import v1_pb2
-from .proto.nestlabs.gateway import v2_pb2
 from .proto.nest import rpc_pb2
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -145,8 +144,40 @@ class NestAPIClient:
     def structure_id(self):
         return self._structure_id
 
+    @staticmethod
+    def _encode_varint(value: int) -> bytes:
+        encoded = bytearray()
+        if value < 0:
+            value &= (1 << 64) - 1
+        while True:
+            to_write = value & 0x7F
+            value >>= 7
+            if value:
+                encoded.append(to_write | 0x80)
+            else:
+                encoded.append(to_write)
+                break
+        return bytes(encoded)
+
+    @classmethod
+    def _encode_tag(cls, field_number: int, wire_type: int) -> bytes:
+        return cls._encode_varint((field_number << 3) | wire_type)
+
+    @classmethod
+    def _encode_length_delimited(cls, field_number: int, payload: bytes) -> bytes:
+        return cls._encode_tag(field_number, 2) + cls._encode_varint(len(payload)) + payload
+
+    @classmethod
+    def _encode_string(cls, field_number: int, value: str) -> bytes:
+        return cls._encode_length_delimited(field_number, value.encode("utf-8"))
+
     def _build_observe_payload(self):
-        request = v2_pb2.ObserveRequest(version=2, subscribe=True)
+        # v2 ObserveRequest (legacy format) with ACCEPTED/CONFIRMED state types.
+        # We only set stateTypes and traitTypeParams to keep the payload minimal.
+        payload = bytearray()
+        for state_type in (2, 1):  # ACCEPTED, CONFIRMED
+            payload += self._encode_tag(1, 0)
+            payload += self._encode_varint(state_type)
         trait_names = [
             "nest.trait.user.UserInfoTrait",
             "nest.trait.structure.StructureInfoTrait",
@@ -160,9 +191,9 @@ class NestAPIClient:
             "weave.trait.power.BatteryPowerSourceTrait",    # Battery level, status
         ]
         for trait in trait_names:
-            observe_filter = request.filter.add()
-            observe_filter.trait_type = trait
-        return request.SerializeToString()
+            trait_param = self._encode_string(1, trait)
+            payload += self._encode_length_delimited(3, trait_param)
+        return bytes(payload)
 
     def _get_observe_payload(self):
         return self._observe_payload or self._build_observe_payload()
@@ -311,11 +342,7 @@ class NestAPIClient:
                     ):
                         parsed_messages = await self.protobuf_handler._ingest_chunk(chunk)
                         if not parsed_messages:
-                            legacy_data = await self.protobuf_handler._process_message(chunk)
-                            if legacy_data:
-                                parsed_messages = [legacy_data]
-                            else:
-                                continue
+                            continue
                         for locks_data in parsed_messages:
                             if locks_data.get("parse_failed"):
                                 _LOGGER.debug("refresh_state received partial frame; waiting for more data")
@@ -406,13 +433,7 @@ class NestAPIClient:
                     self.protobuf_handler.reset_stream_state()
                     _LOGGER.info("Observe stream connected to %s", api_url)
                     async for chunk in self.connection.stream(api_url, headers, observe_payload, read_timeout=OBSERVE_IDLE_RESET_SECONDS):
-                        # Legacy path: parse chunk directly first (2025.11.9 behavior)
-                        legacy_data = await self.protobuf_handler._process_message(chunk)
-                        parsed_messages = [legacy_data] if legacy_data else []
-                        # Also try framed ingest in case chunking differs
-                        framed_messages = await self.protobuf_handler._ingest_chunk(chunk)
-                        if framed_messages:
-                            parsed_messages.extend(framed_messages)
+                        parsed_messages = await self.protobuf_handler._ingest_chunk(chunk)
                         if not parsed_messages:
                             continue
 
