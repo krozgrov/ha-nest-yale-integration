@@ -5,7 +5,7 @@ import aiohttp
 import asyncio
 import jwt
 from contextlib import nullcontext
-from google.protobuf import any_pb2, field_mask_pb2
+from google.protobuf import any_pb2
 from .auth import NestAuthenticator
 from .protobuf_handler import NestProtobufHandler
 from .const import (
@@ -674,53 +674,32 @@ class NestAPIClient:
             "User-Agent": USER_AGENT_STRING,
             "X-Accept-Content-Transfer-Encoding": "binary",
             "X-Accept-Response-Streaming": "true",
-            "Accept": "application/x-protobuf",
-            "Accept-Encoding": "gzip, deflate, br",
-            "referer": "https://home.nest.com/",
-            "origin": "https://home.nest.com",
-            "request-id": request_id,
+            "Referer": "https://home.nest.com/",
+            "Origin": "https://home.nest.com",
         }
-
-        # Include structure id when available (matches working test client behavior)
-        effective_structure_id = self._effective_structure_id(structure_id)
-        if not effective_structure_id:
-            try:
-                fetched = await self.fetch_structure_id()
-                if fetched and self._is_legacy_structure_id(fetched):
-                    self._structure_id = fetched
-                    self.current_state["structure_id"] = self._structure_id
-                    effective_structure_id = fetched
-            except Exception as err:
-                _LOGGER.debug("StructureId refresh before command failed: %s", err)
-        if effective_structure_id:
-            headers["X-Nest-Structure-Id"] = effective_structure_id
-            _LOGGER.debug("Using legacy structure_id: %s", effective_structure_id)
-        else:
-            headers.pop("X-Nest-Structure-Id", None)
-            _LOGGER.debug("No legacy structure_id available for command; sending without header")
-        if self._user_id:
-            headers["X-nl-user-id"] = str(self._user_id)
 
         cmd_any = any_pb2.Any()
         cmd_any.type_url = command["command"]["type_url"]
         cmd_any.value = command["command"]["value"] if isinstance(command["command"]["value"], bytes) else command["command"]["value"].SerializeToString()
 
-        request = v1_pb2.ResourceCommandRequest()
-        resource_command = request.resourceCommands.add()
+        resource_command = v1_pb2.ResourceCommand()
         resource_command.command.CopyFrom(cmd_any)
         if command.get("traitLabel"):
             resource_command.traitLabel = command["traitLabel"]
-        # Use the bare device_id (matches 2025.10.18.1 working behavior)
-        request.resourceRequest.resourceId = device_id
-        request.resourceRequest.requestId = request_id
+        request = v1_pb2.SendCommandRequest(
+            resourceRequest=v1_pb2.ResourceRequest(
+                resourceId=device_id,
+                requestId=request_id,
+            ),
+            resourceCommands=[resource_command],
+        )
         encoded_data = request.SerializeToString()
 
         _LOGGER.debug(
-            "Sending command to %s (trait=%s), bytes=%d, structure_id=%s",
+            "Sending command to %s (trait=%s), bytes=%d",
             device_id,
             command.get("command", {}).get("type_url"),
             len(encoded_data),
-            effective_structure_id,
         )
 
         last_error = None
@@ -728,15 +707,6 @@ class NestAPIClient:
 
         def _refresh_command_headers():
             headers["Authorization"] = f"Basic {self.access_token}"
-            active_structure_id = self._effective_structure_id(structure_id)
-            if active_structure_id:
-                headers["X-Nest-Structure-Id"] = active_structure_id
-            else:
-                headers.pop("X-Nest-Structure-Id", None)
-            if self._user_id:
-                headers["X-nl-user-id"] = str(self._user_id)
-            else:
-                headers.pop("X-nl-user-id", None)
 
         _refresh_command_headers()
 
@@ -854,29 +824,9 @@ class NestAPIClient:
             "User-Agent": USER_AGENT_STRING,
             "X-Accept-Content-Transfer-Encoding": "binary",
             "X-Accept-Response-Streaming": "true",
-            "Accept": "application/x-protobuf",
-            "Accept-Encoding": "gzip, deflate, br",
-            "referer": "https://home.nest.com/",
-            "origin": "https://home.nest.com",
-            "request-id": request_id,
+            "Referer": "https://home.nest.com/",
+            "Origin": "https://home.nest.com",
         }
-
-        effective_structure_id = self._effective_structure_id(structure_id)
-        if not effective_structure_id:
-            try:
-                fetched = await self.fetch_structure_id()
-                if fetched and self._is_legacy_structure_id(fetched):
-                    self._structure_id = fetched
-                    self.current_state["structure_id"] = self._structure_id
-                    effective_structure_id = fetched
-            except Exception as err:
-                _LOGGER.debug("StructureId refresh before settings update failed: %s", err)
-        if effective_structure_id:
-            headers["X-Nest-Structure-Id"] = effective_structure_id
-        else:
-            headers.pop("X-Nest-Structure-Id", None)
-        if self._user_id:
-            headers["X-nl-user-id"] = str(self._user_id)
 
         # Build the trait state (full trait update, nest_legacy-style).
         # Prefer the last observed settings trait to avoid resetting fields.
@@ -910,13 +860,10 @@ class NestAPIClient:
 
         if auto_relock_duration is None and auto_relock_on:
             auto_relock_duration = 60
-        mask_paths = []
         if auto_relock_on is not None:
             state_proto.autoRelockOn = bool(auto_relock_on)
-            mask_paths.append("autoRelockOn")
         if auto_relock_duration is not None:
             state_proto.autoRelockDuration.seconds = int(auto_relock_duration)
-            mask_paths.append("autoRelockDuration")
 
         any_state = any_pb2.Any()
         # Match Nest style type_url prefix for compatibility
@@ -929,10 +876,11 @@ class NestAPIClient:
                 requestId=request_id,
             ),
             state=any_state,
-            stateMask=field_mask_pb2.FieldMask(paths=mask_paths) if mask_paths else None,
         )
 
-        batch_req = v1_pb2.BatchTraitUpdateStateRequest(requests=[update_req])
+        batch_req = v1_pb2.BatchUpdateStateRequest(
+            batchUpdateStateRequest=[update_req],
+        )
         encoded = batch_req.SerializeToString()
 
         for base_url in self._candidate_bases():
@@ -1076,9 +1024,8 @@ class NestAPIClient:
         """Parse v1 gateway responses for operation status (preferred over StreamBody when present).
 
         The protobuf API may return:
-        - ResourceCommandResponseFromAPI (wrapper) for SendCommand
-        - ResourceCommandResponse
-        - BatchTraitOperation for BatchUpdateState
+        - SendCommandResponse for SendCommand
+        - BatchUpdateStateResponse for BatchUpdateState
 
         Returns:
             (code, message) if we can confidently determine status, otherwise (None, None)
@@ -1086,44 +1033,26 @@ class NestAPIClient:
         if not response_data:
             return None, None
 
-        # 1) ResourceCommandResponseFromAPI (wrapper)
+        # 1) SendCommandResponse
         try:
-            wrapper = v1_pb2.ResourceCommandResponseFromAPI()
-            wrapper.ParseFromString(response_data)
-            # Heuristic: wrapper has either response(s) or the unknown field populated
-            if getattr(wrapper, "resouceCommandResponse", None) or getattr(wrapper, "unknown", ""):
-                for resp in getattr(wrapper, "resouceCommandResponse", []):
-                    for op in getattr(resp, "traitOperations", []):
-                        status = getattr(op, "status", None)
-                        if status and getattr(status, "code", 0) not in (0, None):
-                            return int(status.code), getattr(status, "message", None)
-                return 0, None
-        except Exception:
-            pass
-
-        # 2) ResourceCommandResponse
-        try:
-            resp = v1_pb2.ResourceCommandResponse()
+            resp = v1_pb2.SendCommandResponse()
             resp.ParseFromString(response_data)
-            # Heuristic: requires at least one trait operation to be meaningful
-            if getattr(resp, "traitOperations", None):
-                for op in getattr(resp, "traitOperations", []):
-                    status = getattr(op, "status", None)
-                    if status and getattr(status, "code", 0) not in (0, None):
-                        return int(status.code), getattr(status, "message", None)
+            if resp.ListFields():
+                status = getattr(resp, "status", None)
+                if status and getattr(status, "code", 0) not in (0, None):
+                    return int(status.code), getattr(status, "message", None)
                 return 0, None
         except Exception:
             pass
 
-        # 3) BatchTraitOperation (BatchUpdateState)
+        # 2) BatchUpdateStateResponse
         try:
-            batch = v1_pb2.BatchTraitOperation()
-            batch.ParseFromString(response_data)
-            if getattr(batch, "traitOperation", None):
-                for op in getattr(batch, "traitOperation", []):
-                    status = getattr(op, "status", None)
-                    if status and getattr(status, "code", 0) not in (0, None):
-                        return int(status.code), getattr(status, "message", None)
+            resp = v1_pb2.BatchUpdateStateResponse()
+            resp.ParseFromString(response_data)
+            if resp.ListFields():
+                status = getattr(resp, "status", None)
+                if status and getattr(status, "code", 0) not in (0, None):
+                    return int(status.code), getattr(status, "message", None)
                 return 0, None
         except Exception:
             pass
