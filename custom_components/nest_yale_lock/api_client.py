@@ -125,7 +125,8 @@ class NestAPIClient:
         self.auth_data = {}
         self.transport_url = None
         self._user_id = None  # Discover dynamically
-        self._structure_id = None  # Discover dynamically
+        self._structure_id = None  # Legacy structure id (preferred for headers)
+        self._structure_id_v2 = None  # UUID-style structure id from v2 observe
         self.current_state = {"devices": {"locks": {}}, "user_id": self._user_id, "structure_id": self._structure_id}
         self._last_observe_data_ts = None
         # Use Home Assistant managed session
@@ -142,7 +143,15 @@ class NestAPIClient:
 
     @property
     def structure_id(self):
-        return self._structure_id
+        return self._structure_id or self._structure_id_v2
+
+    @staticmethod
+    def _is_legacy_structure_id(value: str | None) -> bool:
+        if not isinstance(value, str) or not value:
+            return False
+        if "-" in value:
+            return False
+        return all(ch in "0123456789abcdefABCDEF" for ch in value)
 
     @staticmethod
     def _encode_varint(value: int) -> bytes:
@@ -411,11 +420,24 @@ class NestAPIClient:
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
                             if locks_data.get("structure_id"):
-                                old_structure_id = self._structure_id
-                                self._structure_id = locks_data["structure_id"]
-                                self.current_state["structure_id"] = self._structure_id
-                                if old_structure_id != self._structure_id:
-                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                new_structure_id = locks_data["structure_id"]
+                                if self._is_legacy_structure_id(new_structure_id):
+                                    old_structure_id = self._structure_id
+                                    self._structure_id = new_structure_id
+                                    self.current_state["structure_id"] = self._structure_id
+                                    if old_structure_id != self._structure_id:
+                                        _LOGGER.info(
+                                            "Updated structure_id from stream: %s (was %s)",
+                                            self._structure_id,
+                                            old_structure_id,
+                                        )
+                                elif not self._structure_id:
+                                    self._structure_id_v2 = new_structure_id
+                                    self.current_state["structure_id"] = self._structure_id_v2
+                                    _LOGGER.info(
+                                        "Stored v2 structure_id from stream: %s",
+                                        self._structure_id_v2,
+                                    )
                                 self._merge_trait_states(locks_data.get("trait_states"))
                                 self._apply_cached_settings_to_update(locks_data)
                                 self._last_observe_data_ts = asyncio.get_event_loop().time()
@@ -526,11 +548,24 @@ class NestAPIClient:
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
                             if locks_data.get("structure_id"):
-                                old_structure_id = self._structure_id
-                                self._structure_id = locks_data["structure_id"]
-                                self.current_state["structure_id"] = self._structure_id
-                                if old_structure_id != self._structure_id:
-                                    _LOGGER.info("Updated structure_id from stream: %s (was %s)", self._structure_id, old_structure_id)
+                                new_structure_id = locks_data["structure_id"]
+                                if self._is_legacy_structure_id(new_structure_id):
+                                    old_structure_id = self._structure_id
+                                    self._structure_id = new_structure_id
+                                    self.current_state["structure_id"] = self._structure_id
+                                    if old_structure_id != self._structure_id:
+                                        _LOGGER.info(
+                                            "Updated structure_id from stream: %s (was %s)",
+                                            self._structure_id,
+                                            old_structure_id,
+                                        )
+                                elif not self._structure_id:
+                                    self._structure_id_v2 = new_structure_id
+                                    self.current_state["structure_id"] = self._structure_id_v2
+                                    _LOGGER.info(
+                                        "Stored v2 structure_id from stream: %s",
+                                        self._structure_id_v2,
+                                    )
                             self._merge_trait_states(locks_data.get("trait_states"))
                             self._apply_cached_settings_to_update(locks_data)
                             self.transport_url = base_url
@@ -619,7 +654,7 @@ class NestAPIClient:
         }
 
         # Include structure id when available (matches working test client behavior)
-        effective_structure_id = structure_id or self._structure_id
+        effective_structure_id = structure_id or self._structure_id or self._structure_id_v2
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
             _LOGGER.debug("Using structure_id: %s", effective_structure_id)
@@ -786,7 +821,7 @@ class NestAPIClient:
             "request-id": request_id,
         }
 
-        effective_structure_id = structure_id or self._structure_id
+        effective_structure_id = structure_id or self._structure_id or self._structure_id_v2
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
         if self._user_id:
