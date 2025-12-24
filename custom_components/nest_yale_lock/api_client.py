@@ -127,7 +127,12 @@ class NestAPIClient:
         self._user_id = None  # Discover dynamically
         self._structure_id = None  # Legacy structure id (preferred for headers)
         self._structure_id_v2 = None  # UUID-style structure id from v2 observe
-        self.current_state = {"devices": {"locks": {}}, "user_id": self._user_id, "structure_id": self._structure_id}
+        self.current_state = {
+            "devices": {"locks": {}},
+            "user_id": self._user_id,
+            "structure_id": self._structure_id,
+            "structure_id_v2": self._structure_id_v2,
+        }
         self._last_observe_data_ts = None
         # Use Home Assistant managed session
         self.session = async_get_clientsession(hass)
@@ -143,7 +148,11 @@ class NestAPIClient:
 
     @property
     def structure_id(self):
-        return self._structure_id or self._structure_id_v2
+        return self._structure_id
+
+    @property
+    def structure_id_v2(self):
+        return self._structure_id_v2
 
     @staticmethod
     def _is_legacy_structure_id(value: str | None) -> bool:
@@ -152,6 +161,13 @@ class NestAPIClient:
         if "-" in value:
             return False
         return all(ch in "0123456789abcdefABCDEF" for ch in value)
+
+    def _effective_structure_id(self, requested: str | None = None) -> str | None:
+        if requested and self._is_legacy_structure_id(requested):
+            return requested
+        if self._structure_id:
+            return self._structure_id
+        return None
 
     @staticmethod
     def _encode_varint(value: int) -> bytes:
@@ -345,30 +361,38 @@ class NestAPIClient:
         if not self.access_token:
             _LOGGER.warning("Cannot fetch structure_id without access_token")
             return None
-        target_user = self._user_id or 'self'
-        url = f"https://home.nest.com/api/0.1/user/{target_user}?auth={self.access_token}"
+        targets = ["self", "me"]
+        if self._user_id and self._user_id not in targets:
+            targets.append(self._user_id)
         headers = {
             "User-Agent": USER_AGENT_STRING,
             "Accept": "application/json",
         }
-        async with self.session.get(url, headers=headers) as resp:
-            if resp.status != 200:
-                _LOGGER.debug("StructureId fetch returned status %s; continuing without explicit structure id", resp.status)
-                return None
-            user_data = await resp.json()
-            # Optionally update user_id if available in user_data
-            possible_user_id = user_data.get("userid") or user_data.get("user", {}).get("user_id")
-            if possible_user_id:
-                old_user_id = self._user_id
-                self._user_id = possible_user_id
-                self.current_state["user_id"] = self._user_id
-                if old_user_id != self._user_id:
-                    _LOGGER.info(f"Updated user_id from user_data: {self._user_id} (was {old_user_id})")
-            structures = user_data.get("structures", {})
-            if not structures:
-                _LOGGER.warning("No structures found in user response")
-                return None
-            return next(iter(structures.keys()))
+        for target_user in targets:
+            url = f"https://home.nest.com/api/0.1/user/{target_user}?auth={self.access_token}"
+            async with self.session.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    _LOGGER.debug(
+                        "StructureId fetch returned status %s for %s; trying next target",
+                        resp.status,
+                        target_user,
+                    )
+                    continue
+                user_data = await resp.json()
+                # Optionally update user_id if available in user_data
+                possible_user_id = user_data.get("userid") or user_data.get("user", {}).get("user_id")
+                if possible_user_id:
+                    old_user_id = self._user_id
+                    self._user_id = possible_user_id
+                    self.current_state["user_id"] = self._user_id
+                    if old_user_id != self._user_id:
+                        _LOGGER.info("Updated user_id from user_data: %s (was %s)", self._user_id, old_user_id)
+                structures = user_data.get("structures", {})
+                if not structures:
+                    _LOGGER.warning("No structures found in user response for %s", target_user)
+                    continue
+                return next(iter(structures.keys()))
+        return None
 
     async def refresh_state(self):
         if not self.access_token:
@@ -431,9 +455,11 @@ class NestAPIClient:
                                             self._structure_id,
                                             old_structure_id,
                                         )
-                                elif not self._structure_id:
-                                    self._structure_id_v2 = new_structure_id
-                                    self.current_state["structure_id"] = self._structure_id_v2
+                            if locks_data.get("structure_id_v2"):
+                                new_structure_id_v2 = locks_data["structure_id_v2"]
+                                if new_structure_id_v2 and new_structure_id_v2 != self._structure_id_v2:
+                                    self._structure_id_v2 = new_structure_id_v2
+                                    self.current_state["structure_id_v2"] = self._structure_id_v2
                                     _LOGGER.info(
                                         "Stored v2 structure_id from stream: %s",
                                         self._structure_id_v2,
@@ -559,9 +585,11 @@ class NestAPIClient:
                                             self._structure_id,
                                             old_structure_id,
                                         )
-                                elif not self._structure_id:
-                                    self._structure_id_v2 = new_structure_id
-                                    self.current_state["structure_id"] = self._structure_id_v2
+                            if locks_data.get("structure_id_v2"):
+                                new_structure_id_v2 = locks_data["structure_id_v2"]
+                                if new_structure_id_v2 and new_structure_id_v2 != self._structure_id_v2:
+                                    self._structure_id_v2 = new_structure_id_v2
+                                    self.current_state["structure_id_v2"] = self._structure_id_v2
                                     _LOGGER.info(
                                         "Stored v2 structure_id from stream: %s",
                                         self._structure_id_v2,
@@ -654,10 +682,22 @@ class NestAPIClient:
         }
 
         # Include structure id when available (matches working test client behavior)
-        effective_structure_id = structure_id or self._structure_id or self._structure_id_v2
+        effective_structure_id = self._effective_structure_id(structure_id)
+        if not effective_structure_id:
+            try:
+                fetched = await self.fetch_structure_id()
+                if fetched and self._is_legacy_structure_id(fetched):
+                    self._structure_id = fetched
+                    self.current_state["structure_id"] = self._structure_id
+                    effective_structure_id = fetched
+            except Exception as err:
+                _LOGGER.debug("StructureId refresh before command failed: %s", err)
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
-            _LOGGER.debug("Using structure_id: %s", effective_structure_id)
+            _LOGGER.debug("Using legacy structure_id: %s", effective_structure_id)
+        else:
+            headers.pop("X-Nest-Structure-Id", None)
+            _LOGGER.debug("No legacy structure_id available for command; sending without header")
         if self._user_id:
             headers["X-nl-user-id"] = str(self._user_id)
 
@@ -680,7 +720,7 @@ class NestAPIClient:
             device_id,
             command.get("command", {}).get("type_url"),
             len(encoded_data),
-            self._structure_id,
+            effective_structure_id,
         )
 
         last_error = None
@@ -688,7 +728,7 @@ class NestAPIClient:
 
         def _refresh_command_headers():
             headers["Authorization"] = f"Basic {self.access_token}"
-            active_structure_id = structure_id or self._structure_id
+            active_structure_id = self._effective_structure_id(structure_id)
             if active_structure_id:
                 headers["X-Nest-Structure-Id"] = active_structure_id
             else:
@@ -821,9 +861,20 @@ class NestAPIClient:
             "request-id": request_id,
         }
 
-        effective_structure_id = structure_id or self._structure_id or self._structure_id_v2
+        effective_structure_id = self._effective_structure_id(structure_id)
+        if not effective_structure_id:
+            try:
+                fetched = await self.fetch_structure_id()
+                if fetched and self._is_legacy_structure_id(fetched):
+                    self._structure_id = fetched
+                    self.current_state["structure_id"] = self._structure_id
+                    effective_structure_id = fetched
+            except Exception as err:
+                _LOGGER.debug("StructureId refresh before settings update failed: %s", err)
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
+        else:
+            headers.pop("X-Nest-Structure-Id", None)
         if self._user_id:
             headers["X-nl-user-id"] = str(self._user_id)
 

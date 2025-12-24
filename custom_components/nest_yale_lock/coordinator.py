@@ -170,6 +170,39 @@ class NestCoordinator(DataUpdateCoordinator):
                     _LOGGER.debug("Received observer update: %s", update)
                     normalized_update = update.get("yale", update) if update else {}
                     all_traits = update.get("all_traits", {})
+                    trait_states = update.get("trait_states", {})
+                    lock_trait_markers = (
+                        "BoltLockTrait",
+                        "BoltLockSettingsTrait",
+                        "BoltLockCapabilitiesTrait",
+                        "TamperTrait",
+                        "PincodeInputTrait",
+                    )
+
+                    def _extract_lock_ids_from_traits(states: dict) -> set[str]:
+                        lock_ids: set[str] = set()
+                        for device_id, traits in (states or {}).items():
+                            if not isinstance(traits, dict):
+                                continue
+                            for trait_name in traits.keys():
+                                if any(marker in trait_name for marker in lock_trait_markers):
+                                    lock_ids.add(device_id)
+                                    break
+                        return lock_ids
+
+                    def _is_lock_payload(device: dict) -> bool:
+                        if not isinstance(device, dict):
+                            return False
+                        lock_keys = (
+                            "bolt_locked",
+                            "actuator_state",
+                            "tamper_state",
+                            "auto_relock_on",
+                            "auto_relock_duration",
+                            "max_auto_relock_duration",
+                            "last_action",
+                        )
+                        return any(key in device for key in lock_keys)
                     cached_traits = self.api_client.current_state.get("all_traits", {}) or {}
                     if all_traits:
                         merged_traits = {**cached_traits, **all_traits}
@@ -187,7 +220,23 @@ class NestCoordinator(DataUpdateCoordinator):
                         return device_traits
 
                     if normalized_update:
-                        self._known_lock_ids.update(normalized_update.keys())
+                        lock_ids_from_traits = _extract_lock_ids_from_traits(trait_states)
+                        if lock_ids_from_traits:
+                            self._known_lock_ids.update(lock_ids_from_traits)
+                        if self._known_lock_ids:
+                            normalized_update = {
+                                device_id: device
+                                for device_id, device in normalized_update.items()
+                                if device_id in self._known_lock_ids
+                            }
+                        else:
+                            normalized_update = {
+                                device_id: device
+                                for device_id, device in normalized_update.items()
+                                if _is_lock_payload(device)
+                            }
+                        if normalized_update and not self._known_lock_ids:
+                            self._known_lock_ids.update(normalized_update.keys())
                         for device_id, device in normalized_update.items():
                             # Ensure required fields exist even if absent in payload
                             device.setdefault("device_id", device_id)

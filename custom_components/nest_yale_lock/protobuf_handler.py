@@ -453,8 +453,13 @@ class NestProtobufHandler:
             parts = legacy_id.split(".")
             locks_data["structure_id"] = parts[-1] if len(parts) > 1 else legacy_id
         elif obj_id.startswith("STRUCTURE_"):
-            locks_data["structure_id"] = obj_id.replace("STRUCTURE_", "")
-        _LOGGER.debug("Parsed StructureInfoTrait for %s: structure_id=%s", obj_id, locks_data["structure_id"])
+            locks_data.setdefault("structure_id_v2", obj_id.replace("STRUCTURE_", ""))
+        _LOGGER.debug(
+            "Parsed StructureInfoTrait for %s: structure_id=%s, structure_id_v2=%s",
+            obj_id,
+            locks_data.get("structure_id"),
+            locks_data.get("structure_id_v2"),
+        )
 
     def _process_v2_observe(self, message: bytes):
         updates = self._parse_v2_observe(message)
@@ -465,6 +470,7 @@ class NestProtobufHandler:
             "yale": {},
             "user_id": None,
             "structure_id": None,
+            "structure_id_v2": None,
             "all_traits": {},
             "trait_states": {},
         }
@@ -476,7 +482,7 @@ class NestProtobufHandler:
             if not obj_id:
                 continue
             if obj_id.startswith("STRUCTURE_"):
-                locks_data["structure_id"] = obj_id.replace("STRUCTURE_", "")
+                locks_data.setdefault("structure_id_v2", obj_id.replace("STRUCTURE_", ""))
             if obj_id.startswith("USER_"):
                 locks_data["user_id"] = obj_id
 
