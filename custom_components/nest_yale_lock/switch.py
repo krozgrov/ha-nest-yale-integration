@@ -64,9 +64,13 @@ class NestYaleAutoRelockSwitch(NestYaleEntity, SwitchEntity):
         return None if val is None else bool(val)
 
     async def async_turn_on(self, **kwargs) -> None:
+        duration = self._device_data.get("auto_relock_duration")
+        if duration is None:
+            duration = 60
         await self._coordinator.api_client.update_bolt_lock_settings(
             self._device_id,
             auto_relock_on=True,
+            auto_relock_duration=int(duration),
             structure_id=self._coordinator.api_client.structure_id,
         )
 
@@ -83,4 +87,3 @@ class NestYaleAutoRelockSwitch(NestYaleEntity, SwitchEntity):
             self._device_data.update(new_data)
             self._update_device_info_from_traits()
         self.async_write_ha_state()
-

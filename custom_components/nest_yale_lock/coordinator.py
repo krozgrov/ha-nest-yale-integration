@@ -31,6 +31,7 @@ class NestCoordinator(DataUpdateCoordinator):
         self._watchdog_task: asyncio.Task | None = None
         self._last_recovery_ts: float | None = None
         self._recovery_attempts: int = 0
+        self._known_lock_ids: set[str] = set()
         _LOGGER.debug("Initialized NestCoordinator with initial data: %s", self.data)
 
     async def async_setup(self):
@@ -80,6 +81,12 @@ class NestCoordinator(DataUpdateCoordinator):
                 merged[device_id] = {**prev, **device}
             else:
                 merged[device_id] = device
+        if self._known_lock_ids:
+            merged = {
+                device_id: device
+                for device_id, device in merged.items()
+                if device_id in self._known_lock_ids
+            }
         return merged
 
     def schedule_reload(self, reason: str, delay: float = 0) -> None:
@@ -134,6 +141,8 @@ class NestCoordinator(DataUpdateCoordinator):
                 device.setdefault("device_id", device_id)
                 # Remove bolt_moving from device dict - it's now entity state
                 device.pop("bolt_moving", None)
+            if normalized_data:
+                self._known_lock_ids = set(normalized_data.keys())
             # Keep API client's cache in sync for metadata lookups (name/firmware fallbacks)
             try:
                 self.api_client.current_state["devices"]["locks"].update(normalized_data)
@@ -178,6 +187,7 @@ class NestCoordinator(DataUpdateCoordinator):
                         return device_traits
 
                     if normalized_update:
+                        self._known_lock_ids.update(normalized_update.keys())
                         for device_id, device in normalized_update.items():
                             # Ensure required fields exist even if absent in payload
                             device.setdefault("device_id", device_id)
@@ -223,6 +233,12 @@ class NestCoordinator(DataUpdateCoordinator):
                                 updated = True
                             else:
                                 merged_data[device_id] = device
+                        if self._known_lock_ids:
+                            merged_data = {
+                                device_id: device
+                                for device_id, device in merged_data.items()
+                                if device_id in self._known_lock_ids
+                            }
                         if updated:
                             self._empty_refresh_attempts = 0
                             self._last_good_update = asyncio.get_event_loop().time()

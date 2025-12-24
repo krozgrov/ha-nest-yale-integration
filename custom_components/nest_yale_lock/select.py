@@ -78,6 +78,7 @@ class NestYaleAutoLockDurationSelect(NestYaleEntity, SelectEntity):
             raise ValueError(f"Unsupported auto-lock option: {option}")
         await self._coordinator.api_client.update_bolt_lock_settings(
             self._device_id,
+            auto_relock_on=True,
             auto_relock_duration=_AUTO_LOCK_OPTIONS[option],
             structure_id=self._coordinator.api_client.structure_id,
         )

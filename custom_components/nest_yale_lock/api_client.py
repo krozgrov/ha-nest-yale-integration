@@ -765,6 +765,8 @@ class NestAPIClient:
         """Update BoltLockSettingsTrait via TraitBatchApi/BatchUpdateState."""
         if auto_relock_on is None and auto_relock_duration is None:
             return None
+        if auto_relock_on is None and auto_relock_duration is not None:
+            auto_relock_on = True
 
         # Ensure token/ids are present
         if not self.access_token:
@@ -820,6 +822,8 @@ class NestAPIClient:
                 return None
             state_proto = weave_security_pb2.BoltLockSettingsTrait()
 
+        if auto_relock_duration is None and auto_relock_on:
+            auto_relock_duration = 60
         mask_paths = []
         if auto_relock_on is not None:
             state_proto.autoRelockOn = bool(auto_relock_on)
