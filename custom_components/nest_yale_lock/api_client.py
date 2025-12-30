@@ -824,9 +824,18 @@ class NestAPIClient:
             "User-Agent": USER_AGENT_STRING,
             "X-Accept-Content-Transfer-Encoding": "binary",
             "X-Accept-Response-Streaming": "true",
+            "Accept": "application/x-protobuf",
+            "Accept-Encoding": "gzip, deflate, br",
             "Referer": "https://home.nest.com/",
             "Origin": "https://home.nest.com",
+            "request-id": request_id,
         }
+
+        effective_structure_id = structure_id or self._structure_id or self._structure_id_v2
+        if effective_structure_id:
+            headers["X-Nest-Structure-Id"] = effective_structure_id
+        if self._user_id:
+            headers["X-nl-user-id"] = str(self._user_id)
 
         # Build the trait state (full trait update, nest_legacy-style).
         # Prefer the last observed settings trait to avoid resetting fields.
