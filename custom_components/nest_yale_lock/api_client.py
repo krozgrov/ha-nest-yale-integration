@@ -25,6 +25,7 @@ from .const import (
 from .proto.nestlabs.gateway import v1_pb2
 from .proto.nest import rpc_pb2
 from .proto.weave.trait import security_pb2 as weave_security_pb2
+from .proto.nest.trait import security_pb2 as nest_security_pb2
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 
@@ -208,6 +209,7 @@ class NestAPIClient:
             "nest.trait.structure.StructureInfoTrait",
             "weave.trait.security.BoltLockTrait",
             "weave.trait.security.BoltLockSettingsTrait",
+            "nest.trait.security.EnhancedBoltLockSettingsTrait",
             "weave.trait.security.BoltLockCapabilitiesTrait",
             "weave.trait.security.PincodeInputTrait",
             "weave.trait.security.TamperTrait",
@@ -260,6 +262,16 @@ class NestAPIClient:
                 existing = resource_traits.get(trait_name)
                 resource_traits[trait_name] = self._merge_trait_state(existing, trait_msg)
 
+    def _merge_trait_labels(self, trait_labels: dict | None) -> None:
+        if not trait_labels:
+            return
+        current_labels = self.current_state.setdefault("trait_labels", {})
+        for resource_id, traits in trait_labels.items():
+            resource_labels = current_labels.setdefault(resource_id, {})
+            for trait_name, label in traits.items():
+                if label:
+                    resource_labels[trait_name] = label
+
     def _apply_cached_settings_to_update(self, locks_data: dict) -> None:
         yale = locks_data.get("yale") if isinstance(locks_data, dict) else None
         if not yale:
@@ -273,12 +285,23 @@ class NestAPIClient:
                 fields = {field.name for field, _ in settings.ListFields()}
             except Exception:
                 fields = set()
-            if settings.HasField("autoRelockDuration"):
-                device["auto_relock_duration"] = int(settings.autoRelockDuration.seconds)
-            if "autoRelockOn" in fields:
-                device["auto_relock_on"] = bool(settings.autoRelockOn)
-            elif settings.HasField("autoRelockDuration") and settings.autoRelockDuration.seconds == 0:
-                device["auto_relock_on"] = False
+        if settings.HasField("autoRelockDuration"):
+            device["auto_relock_duration"] = int(settings.autoRelockDuration.seconds)
+        if "autoRelockOn" in fields:
+            device["auto_relock_on"] = bool(settings.autoRelockOn)
+        elif settings.HasField("autoRelockDuration") and settings.autoRelockDuration.seconds == 0:
+            device["auto_relock_on"] = False
+
+        enhanced = trait_cache.get(device_id, {}).get("nest.trait.security.EnhancedBoltLockSettingsTrait")
+        if enhanced:
+            try:
+                enhanced_fields = {field.name for field, _ in enhanced.ListFields()}
+            except Exception:
+                enhanced_fields = set()
+            if enhanced.HasField("autoRelockDuration"):
+                device["auto_relock_duration"] = int(enhanced.autoRelockDuration.seconds)
+            if "autoRelockOn" in enhanced_fields:
+                device["auto_relock_on"] = bool(enhanced.autoRelockOn)
 
     @classmethod
     async def create(cls, hass, issue_token, api_key=None, cookies=None, user_id=None):
@@ -465,6 +488,7 @@ class NestAPIClient:
                                         self._structure_id_v2,
                                     )
                                 self._merge_trait_states(locks_data.get("trait_states"))
+                                self._merge_trait_labels(locks_data.get("trait_labels"))
                                 self._apply_cached_settings_to_update(locks_data)
                                 self._last_observe_data_ts = asyncio.get_event_loop().time()
                                 self.transport_url = base_url
@@ -595,6 +619,7 @@ class NestAPIClient:
                                         self._structure_id_v2,
                                     )
                             self._merge_trait_states(locks_data.get("trait_states"))
+                            self._merge_trait_labels(locks_data.get("trait_labels"))
                             self._apply_cached_settings_to_update(locks_data)
                             self.transport_url = base_url
                             self._last_observe_data_ts = current_time
@@ -878,6 +903,7 @@ class NestAPIClient:
         # Match Nest style type_url prefix for compatibility
         any_state.Pack(state_proto, type_url_prefix="type.nestlabs.com")
 
+        update_requests = []
         update_req = v1_pb2.TraitUpdateStateRequest(
             traitRequest=v1_pb2.TraitRequest(
                 resourceId=device_id,
@@ -886,9 +912,37 @@ class NestAPIClient:
             ),
             state=any_state,
         )
+        update_requests.append(update_req)
+
+        trait_labels = self.current_state.get("trait_labels", {}).get(device_id, {})
+        enhanced_label = trait_labels.get("nest.trait.security.EnhancedBoltLockSettingsTrait")
+        enhanced_trait = current_traits.get("nest.trait.security.EnhancedBoltLockSettingsTrait")
+        if enhanced_label and enhanced_trait:
+            enhanced_state = nest_security_pb2.EnhancedBoltLockSettingsTrait()
+            enhanced_state.CopyFrom(enhanced_trait)
+            if auto_relock_on is not None:
+                enhanced_state.autoRelockOn = bool(auto_relock_on)
+            if auto_relock_duration is not None:
+                enhanced_state.autoRelockDuration.seconds = int(auto_relock_duration)
+            enhanced_any = any_pb2.Any()
+            enhanced_any.Pack(enhanced_state, type_url_prefix="type.nestlabs.com")
+            enhanced_req = v1_pb2.TraitUpdateStateRequest(
+                traitRequest=v1_pb2.TraitRequest(
+                    resourceId=device_id,
+                    traitLabel=enhanced_label,
+                    requestId=str(uuid.uuid4()),
+                ),
+                state=enhanced_any,
+            )
+            update_requests.append(enhanced_req)
+        elif enhanced_trait and not enhanced_label:
+            _LOGGER.debug(
+                "Enhanced bolt lock settings trait label missing for %s; skipping enhanced update",
+                device_id,
+            )
 
         batch_req = v1_pb2.BatchUpdateStateRequest(
-            batchUpdateStateRequest=[update_req],
+            batchUpdateStateRequest=update_requests,
         )
         encoded = batch_req.SerializeToString()
 

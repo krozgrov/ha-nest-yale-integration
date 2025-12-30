@@ -6,6 +6,7 @@ import binascii
 
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 from .proto.nest.trait import structure_pb2 as nest_structure_pb2
+from .proto.nest.trait import security_pb2 as nest_security_pb2
 from .proto.nest import rpc_pb2 as rpc_pb2
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ _V2_TRAIT_CLASS_MAP = {
     "weave.trait.security.BoltLockCapabilitiesTrait": weave_security_pb2.BoltLockCapabilitiesTrait,
     "weave.trait.security.TamperTrait": weave_security_pb2.TamperTrait,
     "weave.trait.security.PincodeInputTrait": weave_security_pb2.PincodeInputTrait,
+    "nest.trait.security.BoltLockSettingsTrait": nest_security_pb2.BoltLockSettingsTrait,
+    "nest.trait.security.EnhancedBoltLockSettingsTrait": nest_security_pb2.EnhancedBoltLockSettingsTrait,
     "nest.trait.structure.StructureInfoTrait": nest_structure_pb2.StructureInfoTrait,
 }
 
@@ -288,6 +291,7 @@ class NestProtobufHandler:
                     break
                 trait_state = self._parse_v2_trait_state(trait_state_bytes)
                 resource_id = trait_state.get("resource_id")
+                trait_label = trait_state.get("trait_label")
                 any_msg = trait_state.get("any_msg")
                 if not resource_id or not any_msg or not any_msg.type_url:
                     continue
@@ -309,17 +313,19 @@ class NestProtobufHandler:
                         if entry.get("rank") == state_rank:
                             trait_entries[idx] = {
                                 "rank": state_rank,
-                                "any_msg": any_msg,
-                                "type_url": any_msg.type_url,
-                            }
-                            replaced = True
-                            break
+                            "any_msg": any_msg,
+                            "type_url": any_msg.type_url,
+                            "trait_label": trait_label,
+                        }
+                        replaced = True
+                        break
                     if replaced:
                         continue
                     trait_entries.append({
                         "rank": state_rank,
                         "any_msg": any_msg,
                         "type_url": any_msg.type_url,
+                        "trait_label": trait_label,
                     })
                 continue
             pos = self._skip_field(data, pos, wire_type)
@@ -479,6 +485,7 @@ class NestProtobufHandler:
         }
         all_traits = {}
         trait_states = {}
+        trait_labels = {}
         lock_device_ids = set()
 
         for obj_id, trait_map in updates.items():
@@ -524,13 +531,20 @@ class NestProtobufHandler:
                 if merged_msg is None:
                     continue
                 type_url = merged_type_url
+                entry_label = None
+                for entry in entries:
+                    if entry.get("trait_label"):
+                        entry_label = entry["trait_label"]
+                        break
+                if entry_label:
+                    trait_labels.setdefault(obj_id, {})[descriptor_name] = entry_label
 
                 trait_states.setdefault(obj_id, {})[descriptor_name] = merged_msg
 
                 if "BoltLockTrait" in descriptor_name:
                     lock_device_ids.add(obj_id)
                     self._apply_bolt_lock_trait(obj_id, merged_msg, locks_data)
-                elif "BoltLockSettingsTrait" in descriptor_name:
+                elif "BoltLockSettingsTrait" in descriptor_name or "EnhancedBoltLockSettingsTrait" in descriptor_name:
                     lock_device_ids.add(obj_id)
                     self._apply_bolt_lock_settings_trait(obj_id, merged_msg, locks_data)
                 elif "BoltLockCapabilitiesTrait" in descriptor_name:
@@ -573,6 +587,7 @@ class NestProtobufHandler:
 
         locks_data["all_traits"] = all_traits
         locks_data["trait_states"] = trait_states
+        locks_data["trait_labels"] = trait_labels
         for obj_id in lock_device_ids:
             locks_data["yale"].setdefault(
                 obj_id,
