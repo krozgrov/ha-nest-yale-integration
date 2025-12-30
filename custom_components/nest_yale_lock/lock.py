@@ -184,7 +184,6 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         request = weave_security_pb2.BoltLockTrait.BoltLockChangeRequest()
         request.state = state
         request.boltLockActor.method = weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_EXPLICIT
-        request.boltLockActor.originator.resourceId = str(self._user_id) if self._user_id else "UNKNOWN_USER_ID"
 
         cmd_any = {
             "traitLabel": "bolt_lock",
