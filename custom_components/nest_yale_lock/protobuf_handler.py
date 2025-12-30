@@ -295,29 +295,32 @@ class NestProtobufHandler:
                 if not descriptor or descriptor not in _V2_TRAIT_CLASS_MAP:
                     continue
                 state_types = trait_state.get("state_types") or []
-                state_rank = 0
+                state_ranks: list[int] = []
                 if _V2_STATE_ACCEPTED in state_types:
-                    state_rank = _V2_STATE_ACCEPTED
-                elif _V2_STATE_CONFIRMED in state_types:
-                    state_rank = _V2_STATE_CONFIRMED
+                    state_ranks.append(_V2_STATE_ACCEPTED)
+                if _V2_STATE_CONFIRMED in state_types:
+                    state_ranks.append(_V2_STATE_CONFIRMED)
+                if not state_ranks:
+                    state_ranks = [0]
                 trait_entries = updates.setdefault(resource_id, {}).setdefault(descriptor, [])
-                replaced = False
-                for idx, entry in enumerate(trait_entries):
-                    if entry.get("rank") == state_rank:
-                        trait_entries[idx] = {
-                            "rank": state_rank,
-                            "any_msg": any_msg,
-                            "type_url": any_msg.type_url,
-                        }
-                        replaced = True
-                        break
-                if replaced:
-                    continue
-                trait_entries.append({
-                    "rank": state_rank,
-                    "any_msg": any_msg,
-                    "type_url": any_msg.type_url,
-                })
+                for state_rank in state_ranks:
+                    replaced = False
+                    for idx, entry in enumerate(trait_entries):
+                        if entry.get("rank") == state_rank:
+                            trait_entries[idx] = {
+                                "rank": state_rank,
+                                "any_msg": any_msg,
+                                "type_url": any_msg.type_url,
+                            }
+                            replaced = True
+                            break
+                    if replaced:
+                        continue
+                    trait_entries.append({
+                        "rank": state_rank,
+                        "any_msg": any_msg,
+                        "type_url": any_msg.type_url,
+                    })
                 continue
             pos = self._skip_field(data, pos, wire_type)
 
@@ -497,7 +500,12 @@ class NestProtobufHandler:
 
                 merged_msg = None
                 merged_type_url = ""
-                for entry in sorted(entries, key=lambda item: item.get("rank", 0)):
+                prefer_confirmed = descriptor_name != "weave.trait.security.BoltLockTrait"
+                for entry in sorted(
+                    entries,
+                    key=lambda item: item.get("rank", 0),
+                    reverse=prefer_confirmed,
+                ):
                     any_msg = entry.get("any_msg")
                     if not any_msg:
                         continue
