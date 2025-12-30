@@ -292,6 +292,17 @@ class NestAPIClient:
         elif settings.HasField("autoRelockDuration") and settings.autoRelockDuration.seconds == 0:
             device["auto_relock_on"] = False
 
+        nest_settings = trait_cache.get(device_id, {}).get("nest.trait.security.BoltLockSettingsTrait")
+        if nest_settings:
+            try:
+                nest_fields = {field.name for field, _ in nest_settings.ListFields()}
+            except Exception:
+                nest_fields = set()
+            if nest_settings.HasField("autoRelockDuration"):
+                device["auto_relock_duration"] = int(nest_settings.autoRelockDuration.seconds)
+            if "autoRelockOn" in nest_fields:
+                device["auto_relock_on"] = bool(nest_settings.autoRelockOn)
+
         enhanced = trait_cache.get(device_id, {}).get("nest.trait.security.EnhancedBoltLockSettingsTrait")
         if enhanced:
             try:
@@ -904,6 +915,7 @@ class NestAPIClient:
         any_state.Pack(state_proto, type_url_prefix="type.nestlabs.com")
 
         update_requests = []
+        used_labels = set()
         update_req = v1_pb2.TraitUpdateStateRequest(
             traitRequest=v1_pb2.TraitRequest(
                 resourceId=device_id,
@@ -913,11 +925,38 @@ class NestAPIClient:
             state=any_state,
         )
         update_requests.append(update_req)
+        used_labels.add("bolt_lock_settings")
 
         trait_labels = self.current_state.get("trait_labels", {}).get(device_id, {})
+        nest_label = trait_labels.get("nest.trait.security.BoltLockSettingsTrait")
+        nest_trait = current_traits.get("nest.trait.security.BoltLockSettingsTrait")
+        if nest_label and nest_trait and nest_label not in used_labels:
+            nest_state = nest_security_pb2.BoltLockSettingsTrait()
+            nest_state.CopyFrom(nest_trait)
+            if auto_relock_on is not None:
+                nest_state.autoRelockOn = bool(auto_relock_on)
+            if auto_relock_duration is not None:
+                nest_state.autoRelockDuration.seconds = int(auto_relock_duration)
+            nest_any = any_pb2.Any()
+            nest_any.Pack(nest_state, type_url_prefix="type.nestlabs.com")
+            nest_req = v1_pb2.TraitUpdateStateRequest(
+                traitRequest=v1_pb2.TraitRequest(
+                    resourceId=device_id,
+                    traitLabel=nest_label,
+                    requestId=str(uuid.uuid4()),
+                ),
+                state=nest_any,
+            )
+            update_requests.append(nest_req)
+            used_labels.add(nest_label)
+        elif nest_trait and not nest_label:
+            _LOGGER.debug(
+                "Nest bolt lock settings trait label missing for %s; skipping nest update",
+                device_id,
+            )
         enhanced_label = trait_labels.get("nest.trait.security.EnhancedBoltLockSettingsTrait")
         enhanced_trait = current_traits.get("nest.trait.security.EnhancedBoltLockSettingsTrait")
-        if enhanced_label and enhanced_trait:
+        if enhanced_label and enhanced_trait and enhanced_label not in used_labels:
             enhanced_state = nest_security_pb2.EnhancedBoltLockSettingsTrait()
             enhanced_state.CopyFrom(enhanced_trait)
             if auto_relock_on is not None:
@@ -935,6 +974,7 @@ class NestAPIClient:
                 state=enhanced_any,
             )
             update_requests.append(enhanced_req)
+            used_labels.add(enhanced_label)
         elif enhanced_trait and not enhanced_label:
             _LOGGER.debug(
                 "Enhanced bolt lock settings trait label missing for %s; skipping enhanced update",
