@@ -293,7 +293,7 @@ class NestAPIClient:
             device["auto_relock_on"] = False
 
         nest_settings = trait_cache.get(device_id, {}).get("nest.trait.security.BoltLockSettingsTrait")
-        if nest_settings:
+        if nest_settings and hasattr(nest_security_pb2, "BoltLockSettingsTrait"):
             try:
                 nest_fields = {field.name for field, _ in nest_settings.ListFields()}
             except Exception:
@@ -930,7 +930,13 @@ class NestAPIClient:
         trait_labels = self.current_state.get("trait_labels", {}).get(device_id, {})
         nest_label = trait_labels.get("nest.trait.security.BoltLockSettingsTrait")
         nest_trait = current_traits.get("nest.trait.security.BoltLockSettingsTrait")
-        if nest_label and nest_trait and nest_label not in used_labels:
+        if not hasattr(nest_security_pb2, "BoltLockSettingsTrait"):
+            if nest_label or nest_trait:
+                _LOGGER.debug(
+                    "Nest bolt lock settings trait not available in protobufs; skipping nest update for %s",
+                    device_id,
+                )
+        elif nest_label and nest_trait and nest_label not in used_labels:
             nest_state = nest_security_pb2.BoltLockSettingsTrait()
             nest_state.CopyFrom(nest_trait)
             if auto_relock_on is not None:

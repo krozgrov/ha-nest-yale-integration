@@ -43,7 +43,6 @@ _V2_TRAIT_CLASS_MAP = {
     "weave.trait.security.BoltLockCapabilitiesTrait": weave_security_pb2.BoltLockCapabilitiesTrait,
     "weave.trait.security.TamperTrait": weave_security_pb2.TamperTrait,
     "weave.trait.security.PincodeInputTrait": weave_security_pb2.PincodeInputTrait,
-    "nest.trait.security.BoltLockSettingsTrait": nest_security_pb2.BoltLockSettingsTrait,
     "nest.trait.security.EnhancedBoltLockSettingsTrait": nest_security_pb2.EnhancedBoltLockSettingsTrait,
     "nest.trait.structure.StructureInfoTrait": nest_structure_pb2.StructureInfoTrait,
 }
