@@ -21,9 +21,9 @@ Prioritized plan (least impactful -> most impactful)
    - Optional debug toggle if needed for troubleshooting.
    - Mild risk: attribute removal may affect existing dashboards.
 
-3) Options flow (optional tuning)
-   - Add options for stale timeout / debug attrs / extra logging.
-   - Medium risk: new config path, but default behavior unchanged.
+3) Options flow (optional tuning) (completed)
+   - Added options for stale timeout and debug attributes.
+   - Default behavior unchanged; options are additive.
 
 4) Reauth flow
    - Raise ConfigEntryAuthFailed on auth/cookie expiration.
