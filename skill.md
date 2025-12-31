@@ -12,6 +12,7 @@ Prioritized plan (least impactful -> most impactful)
    - Add translation keys for switch/sensor/select/binary_sensor.
    - Resolve stale entity registry state after remove/re-add.
    - Respect has_entity_name in base entity so sub-entities don't inherit device name.
+   - Keep device identifiers stable (device_id only) to avoid device/entry splits when serial arrives.
 
 2) Diagnostics-only IDs (remove from state attrs)
    - Move user_id/structure_id to diagnostics only.

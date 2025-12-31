@@ -13,19 +13,6 @@ class NestYaleEntity(CoordinatorEntity):
 
     def __init__(self, coordinator, device_id, device_data):
         """Initialize the base entity."""
-        # Ensure _attr_has_entity_name is set before CoordinatorEntity init so
-        # HA computes name behavior using the class-level intent.
-        entity_has_name = bool(getattr(type(self), "_attr_has_entity_name", False))
-        self._attr_has_entity_name = entity_has_name
-        
-        # Ensure translation_key is available before CoordinatorEntity init
-        # Check if translation_key is already set as class attribute
-        translation_key = getattr(type(self), "_attr_translation_key", None)
-        if entity_has_name and translation_key:
-            # Make sure it's available as instance attribute too
-            self._attr_translation_key = translation_key
-            _LOGGER.debug("Using class-level translation_key=%s for %s", translation_key, self.__class__.__name__)
-        
         super().__init__(coordinator)
         self._coordinator = coordinator
         self._device_id = device_id
@@ -36,31 +23,37 @@ class NestYaleEntity(CoordinatorEntity):
         # entity is fully added.
         self._device_registry_update_pending = False
         
+        # Resolve entity naming/translation attributes after base init so they
+        # are not overwritten by CoordinatorEntity/Entity defaults.
+        entity_has_name = bool(
+            getattr(self, "_attr_has_entity_name", False)
+            or getattr(type(self), "_attr_has_entity_name", False)
+        )
+        self._attr_has_entity_name = entity_has_name
+
+        translation_key = (
+            getattr(self, "_attr_translation_key", None)
+            or getattr(type(self), "_attr_translation_key", None)
+        )
+        if not translation_key:
+            entity_description = getattr(self, "entity_description", None)
+            if entity_description is None:
+                entity_description = getattr(type(self), "entity_description", None)
+            if entity_description and getattr(entity_description, "translation_key", None):
+                translation_key = entity_description.translation_key
+        if translation_key:
+            self._attr_translation_key = translation_key
+
         # Get initial metadata
         metadata = self._coordinator.api_client.get_device_metadata(device_id)
         # Only use the device name as the entity name when the entity does not
         # opt into entity naming (e.g., the lock entity).
         self._attr_name = None if entity_has_name else metadata["name"]
         
-        # Extract translation_key from entity_description if not already set
-        # Check both class and instance for existing translation_key
-        existing_key = getattr(self, "_attr_translation_key", None) or getattr(type(self), "_attr_translation_key", None)
-        if entity_has_name and not existing_key:
-            # Check both instance and class attributes for entity_description
-            entity_description = getattr(self, "entity_description", None)
-            if entity_description is None:
-                # Try getting from class if not on instance
-                entity_description = getattr(type(self), "entity_description", None)
-            if entity_description and hasattr(entity_description, "translation_key") and entity_description.translation_key:
-                # Set as instance attribute (Home Assistant supports both class and instance)
-                self._attr_translation_key = entity_description.translation_key
-                _LOGGER.debug("Extracted translation_key=%s from entity_description for %s", entity_description.translation_key, self.__class__.__name__)
-        
         # Log final state for debugging
         if entity_has_name:
-            final_key = getattr(self, "_attr_translation_key", None)
             _LOGGER.debug("Entity %s: has_entity_name=%s, translation_key=%s, name=%s", 
-                         self.__class__.__name__, entity_has_name, final_key, self._attr_name)
+                         self.__class__.__name__, entity_has_name, translation_key, self._attr_name)
         
         self._device_name = metadata.get("name")
         
@@ -69,17 +62,10 @@ class NestYaleEntity(CoordinatorEntity):
         
     def _setup_device_info(self, metadata):
         """Set up device info from metadata."""
-        # Use serial number as primary identifier if available (from trait data), otherwise use device_id
-        primary_identifier = metadata.get("serial_number") if metadata.get("serial_number") != self._device_id else self._device_id
         self._attr_unique_id = f"{DOMAIN}_{self._device_id}"  # Always use device_id for unique_id (stable)
-        
-        # Device info uses serial number as primary identifier if available
-        if primary_identifier != self._device_id:
-            identifiers = {(DOMAIN, primary_identifier), (DOMAIN, self._device_id)}  # Serial first (primary)
-        else:
-            identifiers = {(DOMAIN, self._device_id)}  # Only device_id if no serial yet
-        
-        # Set serial_number if available (separate from identifiers - this is what shows in Device Info card)
+
+        # Keep identifiers stable: use device_id only and store serial separately.
+        identifiers = {(DOMAIN, self._device_id)}
         serial_number = metadata.get("serial_number") if metadata.get("serial_number") != self._device_id else None
         self._attr_device_info = {
             "identifiers": identifiers,
@@ -132,7 +118,6 @@ class NestYaleEntity(CoordinatorEntity):
             _LOGGER.debug("Entity %s not yet added to hass, skipping device registry update", self._attr_unique_id)
             # Still update _attr_device_info even if not in hass yet
             if new_serial:
-                self._attr_device_info["identifiers"] = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
                 self._attr_device_info["serial_number"] = new_serial
             if new_firmware:
                 self._attr_device_info["sw_version"] = new_firmware
@@ -161,14 +146,6 @@ class NestYaleEntity(CoordinatorEntity):
                 _LOGGER.debug("Found device in registry: id=%s, identifiers=%s, sw_version=%s", 
                              device.id, device.identifiers, device.sw_version)
                 update_kwargs = {}
-                
-                # Update identifiers: use serial as primary, device_id as secondary
-                if new_serial:
-                    new_identifiers = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
-                    current_identifiers = set(device.identifiers)
-                    if current_identifiers != new_identifiers:
-                        update_kwargs["new_identifiers"] = new_identifiers
-                        _LOGGER.info("Updating device identifiers: %s -> %s", current_identifiers, new_identifiers)
 
                 # Ensure a device name is set when HA doesn't have one and the user hasn't overridden it.
                 if self._device_name:
@@ -207,7 +184,6 @@ class NestYaleEntity(CoordinatorEntity):
                 
                 # Always update _attr_device_info to match latest trait data
                 if new_serial:
-                    self._attr_device_info["identifiers"] = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
                     self._attr_device_info["serial_number"] = new_serial
                 if new_firmware:
                     self._attr_device_info["sw_version"] = new_firmware
@@ -220,7 +196,6 @@ class NestYaleEntity(CoordinatorEntity):
                               self._attr_unique_id, self._device_id, new_serial)
                 # Still update _attr_device_info even if device not found in registry
                 if new_serial:
-                    self._attr_device_info["identifiers"] = {(DOMAIN, new_serial), (DOMAIN, self._device_id)}
                     self._attr_device_info["serial_number"] = new_serial
                 if new_firmware:
                     self._attr_device_info["sw_version"] = new_firmware
@@ -271,8 +246,6 @@ class NestYaleEntity(CoordinatorEntity):
                 serial = device_identity["serial_number"]
                 # Set serial_number field (this is what shows in Device Info card per HA docs)
                 device_info["serial_number"] = serial
-                # Also update identifiers
-                device_info["identifiers"] = {(DOMAIN, serial), (DOMAIN, self._device_id)}
                 _LOGGER.debug("device_info property for %s: serial_number=%s, identifiers=%s, sw_version=%s", 
                              self._attr_unique_id, serial, device_info["identifiers"], device_info.get("sw_version"))
             if device_identity.get("manufacturer"):
@@ -291,13 +264,7 @@ class NestYaleEntity(CoordinatorEntity):
         Returns:
             dict: Dictionary of device-level attributes
         """
-        # Get serial number from identifiers (prefer serial number over device_id)
-        identifiers = self._attr_device_info["identifiers"]
-        serial_number = self._device_id  # Default to device_id
-        for domain, identifier in identifiers:
-            if domain == DOMAIN and identifier != self._device_id:
-                serial_number = identifier  # Use non-device_id identifier (should be serial number)
-                break
+        serial_number = self._attr_device_info.get("serial_number") or self._device_id
         
         # Extract trait data from device
         traits = self._device_data.get("traits", {})
