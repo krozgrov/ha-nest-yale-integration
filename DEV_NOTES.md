@@ -7,3 +7,4 @@
 - 2025-12-30: Add EnhancedBoltLockSettingsTrait observation and optional update path to better align Auto-Lock changes with Nest app behavior.
 - 2025-12-30: Guard nest-trait BoltLockSettingsTrait updates because the current nest security proto lacks that message; keep enhanced trait path only.
 - 2025-12-30: Prefer updating EnhancedBoltLockSettingsTrait when available and log per-trait BatchUpdateState statuses to diagnose Nest app Auto-Lock sync failures.
+- 2025-12-30: Update both weave BoltLockSettingsTrait and enhanced bolt lock settings in BatchUpdateState to keep Nest app auto-lock in sync with HA changes.

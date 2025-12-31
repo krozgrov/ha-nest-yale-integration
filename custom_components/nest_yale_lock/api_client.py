@@ -944,18 +944,16 @@ class NestAPIClient:
                 device_id,
             )
 
-        # If enhanced settings are available, prefer updating that only.
-        if not update_requests:
-            update_req = v1_pb2.TraitUpdateStateRequest(
-                traitRequest=v1_pb2.TraitRequest(
-                    resourceId=device_id,
-                    traitLabel="bolt_lock_settings",
-                    requestId=request_id,
-                ),
-                state=any_state,
-            )
-            update_requests.append(update_req)
-            used_labels.add("bolt_lock_settings")
+        update_req = v1_pb2.TraitUpdateStateRequest(
+            traitRequest=v1_pb2.TraitRequest(
+                resourceId=device_id,
+                traitLabel="bolt_lock_settings",
+                requestId=request_id,
+            ),
+            state=any_state,
+        )
+        update_requests.append(update_req)
+        used_labels.add("bolt_lock_settings")
 
         batch_req = v1_pb2.BatchUpdateStateRequest(
             batchUpdateStateRequest=update_requests,
