@@ -4,6 +4,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.const import UNDEFINED
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,10 +37,12 @@ class NestYaleEntity(CoordinatorEntity):
         
         # Resolve entity naming/translation attributes after base init so they
         # are not overwritten by CoordinatorEntity/Entity defaults.
-        entity_has_name = bool(
-            getattr(self, "_attr_has_entity_name", False)
-            or getattr(type(self), "_attr_has_entity_name", False)
-        )
+        attr_has_name = getattr(self, "_attr_has_entity_name", None)
+        if isinstance(attr_has_name, bool):
+            entity_has_name = attr_has_name
+        else:
+            attr_has_name = getattr(type(self), "_attr_has_entity_name", None)
+            entity_has_name = attr_has_name if isinstance(attr_has_name, bool) else False
         self._attr_has_entity_name = entity_has_name
 
         translation_key = None
@@ -108,7 +111,9 @@ class NestYaleEntity(CoordinatorEntity):
             if entry.name is not None:
                 return
             desired_name = self.name
-            if not desired_name:
+            if desired_name is None or desired_name is UNDEFINED or not isinstance(desired_name, str):
+                return
+            if not desired_name.strip():
                 return
             if entry.original_name != desired_name:
                 entity_registry.async_update_entity(

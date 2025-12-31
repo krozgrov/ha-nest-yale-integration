@@ -26,7 +26,7 @@
         "description": "Tune optional behavior without changing defaults.",
         "data": {
           "debug_attributes": "Expose debug attributes (masked IDs)",
-          "stale_state_max_seconds": "Stale state timeout (seconds)"
+          "stale_state_max_seconds": "Mark unavailable after inactivity (seconds)"
         }
       }
     }

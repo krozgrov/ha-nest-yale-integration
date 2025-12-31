@@ -27,12 +27,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.31b40 - Options flow tuning (beta)
+## Pre-release 2025.12.31b41 - Entity naming guard (beta)
 
-- Add options flow for stale state timeout and masked debug attributes
-- Defaults unchanged unless you update integration options
+- Guard entity name normalization against undefined values (prevents “None” names)
+- Clarify stale timeout option label
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.31b40`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.31b41`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 
