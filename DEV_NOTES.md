@@ -11,3 +11,4 @@
 - 2025-12-30: Send BoltLockSettingsTrait updates with FieldMask to avoid clearing unrelated enhanced auto-lock fields that can disable relock behavior.
 - 2025-12-31: Prefer per-trait BatchUpdateState statuses to avoid false INTERNAL errors on successful auto-lock updates.
 - 2025-12-31: Ignore BatchUpdateState top-level status when per-trait statuses succeed to prevent false service failures.
+- 2025-12-31: Treat INTERNAL on auto-lock updates as transient to avoid failing HA service calls when Nest responds with internal status despite applying changes.

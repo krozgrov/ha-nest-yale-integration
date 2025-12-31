@@ -968,6 +968,17 @@ class NestAPIClient:
             status_code, status_msg = self._parse_v1_operation_status(raw)
             if status_code is None:
                 status_code, status_msg = self._parse_command_status(raw)
+            if status_code == GRPC_CODE_INTERNAL:
+                _LOGGER.warning(
+                    "Update bolt_lock_settings returned INTERNAL; treating as transient (code %s): %s",
+                    status_code,
+                    status_msg,
+                )
+                try:
+                    await self.refresh_state()
+                except Exception as err:
+                    _LOGGER.debug("Refresh after INTERNAL error failed: %s", err)
+                return raw
             if status_code not in (None, 0):
                 try:
                     self._last_command_info = {
