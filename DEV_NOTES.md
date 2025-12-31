@@ -24,3 +24,4 @@
 - 2025-12-31: Always set device registry name from metadata (when user hasn’t overridden) so sub-entities don’t appear as “Unnamed device.”
 - 2025-12-31: Use entity descriptions with translation keys so sub-entity names render correctly in HA UI.
 - 2025-12-31: Reapply class-level _attr_has_entity_name after CoordinatorEntity init so sub-entity names use translation-based labels instead of device name.
+- 2025-12-31: Promote entity_description.translation_key to _attr_translation_key for entity-named sub-entities so translations render consistently.

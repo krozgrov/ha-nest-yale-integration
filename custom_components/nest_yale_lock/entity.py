@@ -32,6 +32,10 @@ class NestYaleEntity(CoordinatorEntity):
         entity_has_name = bool(getattr(type(self), "_attr_has_entity_name", False))
         self._attr_has_entity_name = entity_has_name
         self._attr_name = None if entity_has_name else metadata["name"]
+        if entity_has_name and not getattr(self, "_attr_translation_key", None):
+            entity_description = getattr(self, "entity_description", None)
+            if entity_description:
+                self._attr_translation_key = getattr(entity_description, "translation_key", None)
         self._device_name = metadata.get("name")
         
         # Set up device info
