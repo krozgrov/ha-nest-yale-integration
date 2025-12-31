@@ -6,7 +6,6 @@ import asyncio
 import jwt
 from contextlib import nullcontext
 from google.protobuf import any_pb2
-from google.protobuf import field_mask_pb2
 from .auth import NestAuthenticator
 from .protobuf_handler import NestProtobufHandler
 from .const import (
@@ -855,24 +854,7 @@ class NestAPIClient:
             await self.authenticate()
 
         request_id = str(uuid.uuid4())
-        headers = {
-            "Authorization": f"Basic {self.access_token}",
-            "Content-Type": "application/x-protobuf",
-            "User-Agent": USER_AGENT_STRING,
-            "X-Accept-Content-Transfer-Encoding": "binary",
-            "X-Accept-Response-Streaming": "true",
-            "Accept": "application/x-protobuf",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Referer": "https://home.nest.com/",
-            "Origin": "https://home.nest.com",
-            "request-id": request_id,
-        }
-
-        effective_structure_id = self._effective_structure_id(structure_id)
-        if effective_structure_id:
-            headers["X-Nest-Structure-Id"] = effective_structure_id
-        if self._user_id:
-            headers["X-nl-user-id"] = str(self._user_id)
+        headers = self._build_observe_headers()
 
         cached = {}
         try:
@@ -896,53 +878,26 @@ class NestAPIClient:
             return None
 
         state_proto = weave_security_pb2.BoltLockSettingsTrait()
+        existing = (
+            self.current_state.get("traits", {})
+            .get(device_id, {})
+            .get("weave.trait.security.BoltLockSettingsTrait")
+        )
+        if existing:
+            try:
+                state_proto.CopyFrom(existing)
+            except Exception:
+                pass
         if auto_relock_duration is None and auto_relock_on:
             auto_relock_duration = 60
         if auto_relock_on is not None:
             state_proto.autoRelockOn = bool(auto_relock_on)
         if auto_relock_duration is not None:
             state_proto.autoRelockDuration.seconds = int(auto_relock_duration)
-        mask_paths = []
-        if auto_relock_on is not None:
-            mask_paths.append("autoRelockOn")
-        if auto_relock_duration is not None:
-            mask_paths.append("autoRelockDuration")
-        state_mask = field_mask_pb2.FieldMask(paths=mask_paths) if mask_paths else None
 
         any_state = any_pb2.Any()
         # Match Nest style type_url prefix for compatibility
         any_state.Pack(state_proto, type_url_prefix="type.nestlabs.com")
-
-        update_requests = []
-        used_labels = set()
-        current_traits = self.current_state.get("traits", {}).get(device_id, {})
-        trait_labels = self.current_state.get("trait_labels", {}).get(device_id, {})
-        enhanced_label = trait_labels.get("nest.trait.security.EnhancedBoltLockSettingsTrait")
-        enhanced_trait = current_traits.get("nest.trait.security.EnhancedBoltLockSettingsTrait")
-        if enhanced_label and enhanced_label not in used_labels:
-            enhanced_state = nest_security_pb2.EnhancedBoltLockSettingsTrait()
-            if auto_relock_on is not None:
-                enhanced_state.autoRelockOn = bool(auto_relock_on)
-            if auto_relock_duration is not None:
-                enhanced_state.autoRelockDuration.seconds = int(auto_relock_duration)
-            enhanced_any = any_pb2.Any()
-            enhanced_any.Pack(enhanced_state, type_url_prefix="type.nestlabs.com")
-            enhanced_req = v1_pb2.TraitUpdateStateRequest(
-                traitRequest=v1_pb2.TraitRequest(
-                    resourceId=device_id,
-                    traitLabel=enhanced_label,
-                    requestId=str(uuid.uuid4()),
-                ),
-                state=enhanced_any,
-                stateMask=state_mask,
-            )
-            update_requests.append(enhanced_req)
-            used_labels.add(enhanced_label)
-        elif enhanced_trait and not enhanced_label:
-            _LOGGER.debug(
-                "Enhanced bolt lock settings trait label missing for %s; skipping enhanced update",
-                device_id,
-            )
 
         update_req = v1_pb2.TraitUpdateStateRequest(
             traitRequest=v1_pb2.TraitRequest(
@@ -951,13 +906,10 @@ class NestAPIClient:
                 requestId=request_id,
             ),
             state=any_state,
-            stateMask=state_mask,
         )
-        update_requests.append(update_req)
-        used_labels.add("bolt_lock_settings")
 
         batch_req = v1_pb2.BatchUpdateStateRequest(
-            batchUpdateStateRequest=update_requests,
+            batchUpdateStateRequest=[update_req],
         )
         encoded = batch_req.SerializeToString()
 
@@ -1005,14 +957,9 @@ class NestAPIClient:
                 pass
             try:
                 current_traits = self.current_state.setdefault("traits", {})
-                if "bolt_lock_settings" in used_labels:
-                    current_traits.setdefault(device_id, {})[
-                        "weave.trait.security.BoltLockSettingsTrait"
-                    ] = state_proto
-                if enhanced_label and enhanced_trait and enhanced_label in used_labels:
-                    current_traits.setdefault(device_id, {})[
-                        "nest.trait.security.EnhancedBoltLockSettingsTrait"
-                    ] = enhanced_state
+                current_traits.setdefault(device_id, {})[
+                    "weave.trait.security.BoltLockSettingsTrait"
+                ] = state_proto
             except Exception:
                 pass
             return raw
