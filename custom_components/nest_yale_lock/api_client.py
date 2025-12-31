@@ -868,7 +868,7 @@ class NestAPIClient:
             "request-id": request_id,
         }
 
-        effective_structure_id = structure_id or self._structure_id or self._structure_id_v2
+        effective_structure_id = self._effective_structure_id(structure_id)
         if effective_structure_id:
             headers["X-Nest-Structure-Id"] = effective_structure_id
         if self._user_id:
