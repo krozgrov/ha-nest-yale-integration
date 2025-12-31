@@ -48,7 +48,7 @@ async def async_get_config_entry_diagnostics(
         },
         "api": {
             "user_id": _mask(str(getattr(api, "user_id", ""))),
-            "structure_id": str(getattr(api, "structure_id", "")),
+            "structure_id": _mask(str(getattr(api, "structure_id", ""))),
             "transport_url": getattr(api, "transport_url", None),
             "connection_connected": getattr(getattr(api, "connection", None), "connected", None),
             "observe_last_yale_age_seconds": observe_age,
@@ -56,4 +56,3 @@ async def async_get_config_entry_diagnostics(
             "last_command": getattr(api, "_last_command_info", None),
         },
     }
-
