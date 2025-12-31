@@ -6,6 +6,7 @@ import asyncio
 import jwt
 from contextlib import nullcontext
 from google.protobuf import any_pb2
+from google.protobuf import field_mask_pb2
 from .auth import NestAuthenticator
 from .protobuf_handler import NestProtobufHandler
 from .const import (
@@ -873,42 +874,40 @@ class NestAPIClient:
         if self._user_id:
             headers["X-nl-user-id"] = str(self._user_id)
 
-        # Build the trait state (full trait update, nest_legacy-style).
-        # Prefer the last observed settings trait to avoid resetting fields.
-        current_traits = self.current_state.get("traits", {}).get(device_id, {})
-        settings_trait = current_traits.get("weave.trait.security.BoltLockSettingsTrait")
-        if settings_trait:
-            state_proto = weave_security_pb2.BoltLockSettingsTrait()
-            state_proto.CopyFrom(settings_trait)
-        else:
+        cached = {}
+        try:
+            cached = (
+                self.current_state.get("devices", {})
+                .get("locks", {})
+                .get(device_id, {})
+            )
+        except Exception:
             cached = {}
-            try:
-                cached = (
-                    self.current_state.get("devices", {})
-                    .get("locks", {})
-                    .get(device_id, {})
-                )
-            except Exception:
-                cached = {}
 
-            if auto_relock_on is None:
-                auto_relock_on = cached.get("auto_relock_on")
-            if auto_relock_duration is None:
-                auto_relock_duration = cached.get("auto_relock_duration")
-            if auto_relock_on is None and auto_relock_duration is None:
-                _LOGGER.debug(
-                    "No auto-relock values available for %s; skipping update",
-                    device_id,
-                )
-                return None
-            state_proto = weave_security_pb2.BoltLockSettingsTrait()
+        if auto_relock_on is None:
+            auto_relock_on = cached.get("auto_relock_on")
+        if auto_relock_duration is None:
+            auto_relock_duration = cached.get("auto_relock_duration")
+        if auto_relock_on is None and auto_relock_duration is None:
+            _LOGGER.debug(
+                "No auto-relock values available for %s; skipping update",
+                device_id,
+            )
+            return None
 
+        state_proto = weave_security_pb2.BoltLockSettingsTrait()
         if auto_relock_duration is None and auto_relock_on:
             auto_relock_duration = 60
         if auto_relock_on is not None:
             state_proto.autoRelockOn = bool(auto_relock_on)
         if auto_relock_duration is not None:
             state_proto.autoRelockDuration.seconds = int(auto_relock_duration)
+        mask_paths = []
+        if auto_relock_on is not None:
+            mask_paths.append("autoRelockOn")
+        if auto_relock_duration is not None:
+            mask_paths.append("autoRelockDuration")
+        state_mask = field_mask_pb2.FieldMask(paths=mask_paths) if mask_paths else None
 
         any_state = any_pb2.Any()
         # Match Nest style type_url prefix for compatibility
@@ -916,12 +915,12 @@ class NestAPIClient:
 
         update_requests = []
         used_labels = set()
+        current_traits = self.current_state.get("traits", {}).get(device_id, {})
         trait_labels = self.current_state.get("trait_labels", {}).get(device_id, {})
         enhanced_label = trait_labels.get("nest.trait.security.EnhancedBoltLockSettingsTrait")
         enhanced_trait = current_traits.get("nest.trait.security.EnhancedBoltLockSettingsTrait")
-        if enhanced_label and enhanced_trait and enhanced_label not in used_labels:
+        if enhanced_label and enhanced_label not in used_labels:
             enhanced_state = nest_security_pb2.EnhancedBoltLockSettingsTrait()
-            enhanced_state.CopyFrom(enhanced_trait)
             if auto_relock_on is not None:
                 enhanced_state.autoRelockOn = bool(auto_relock_on)
             if auto_relock_duration is not None:
@@ -935,6 +934,7 @@ class NestAPIClient:
                     requestId=str(uuid.uuid4()),
                 ),
                 state=enhanced_any,
+                stateMask=state_mask,
             )
             update_requests.append(enhanced_req)
             used_labels.add(enhanced_label)
@@ -951,6 +951,7 @@ class NestAPIClient:
                 requestId=request_id,
             ),
             state=any_state,
+            stateMask=state_mask,
         )
         update_requests.append(update_req)
         used_labels.add("bolt_lock_settings")
