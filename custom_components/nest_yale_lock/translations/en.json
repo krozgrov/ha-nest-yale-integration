@@ -18,6 +18,30 @@
       "auth_failure": "Authentication failed. Please verify the Issue Token URL and Cookies.",
       "unknown_error": "Unknown error. Check logs for details."
     }
+  },
+  "entity": {
+    "binary_sensor": {
+      "tamper": {
+        "name": "Tamper"
+      }
+    },
+    "select": {
+      "auto_lock_duration": {
+        "name": "Auto-Lock Duration"
+      }
+    },
+    "sensor": {
+      "battery": {
+        "name": "Battery"
+      },
+      "last_action": {
+        "name": "Last Action"
+      }
+    },
+    "switch": {
+      "auto_lock": {
+        "name": "Auto-Lock"
+      }
+    }
   }
 }
-

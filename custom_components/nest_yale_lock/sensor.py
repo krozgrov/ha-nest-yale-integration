@@ -60,20 +60,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 class NestYaleBatterySensor(NestYaleEntity, SensorEntity):
     """Battery sensor for Nest Yale Lock."""
 
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_has_entity_name = True
+    _attr_translation_key = "battery"
+
     def __init__(self, coordinator, device):
         """Initialize the battery sensor."""
         device_id = device.get("device_id")
         if not device_id:
             raise ValueError("device_id is required for battery sensor")
         super().__init__(coordinator, device_id, device)
+        self._attr_name = None
         # Override unique_id to include "battery" prefix
         self._attr_unique_id = f"{DOMAIN}_battery_{device_id}"
-        # Append "Battery" to the name
-        self._attr_name = f"{self._attr_name} Battery"
         self._attr_device_class = SensorDeviceClass.BATTERY
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_native_unit_of_measurement = PERCENTAGE
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
         _LOGGER.debug("Initialized battery sensor for %s", self._attr_unique_id)
 
     @property
@@ -138,13 +140,16 @@ class NestYaleBatterySensor(NestYaleEntity, SensorEntity):
 class NestYaleLastActionSensor(NestYaleEntity, SensorEntity):
     """Last action sensor (Physical/Keypad/Remote/etc)."""
 
+    _attr_has_entity_name = True
+    _attr_translation_key = "last_action"
+
     def __init__(self, coordinator, device):
         device_id = device.get("device_id")
         if not device_id:
             raise ValueError("device_id is required for last action sensor")
         super().__init__(coordinator, device_id, device)
+        self._attr_name = None
         self._attr_unique_id = f"{DOMAIN}_last_action_{device_id}"
-        self._attr_name = "Last Action"
         _LOGGER.debug("Initialized last action sensor for %s", self._attr_unique_id)
 
     @property
@@ -158,4 +163,3 @@ class NestYaleLastActionSensor(NestYaleEntity, SensorEntity):
             self._device_data.update(new_data)
             self._update_device_info_from_traits()
         self.async_write_ha_state()
-

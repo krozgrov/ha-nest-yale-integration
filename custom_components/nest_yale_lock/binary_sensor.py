@@ -53,14 +53,16 @@ class NestYaleTamperBinarySensor(NestYaleEntity, BinarySensorEntity):
 
     _attr_device_class = BinarySensorDeviceClass.TAMPER
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_has_entity_name = True
+    _attr_translation_key = "tamper"
 
     def __init__(self, coordinator, device: dict):
         device_id = device.get("device_id")
         if not device_id:
             raise ValueError("device_id is required for tamper sensor")
         super().__init__(coordinator, device_id, device)
+        self._attr_name = None
         self._attr_unique_id = f"{DOMAIN}_tamper_{device_id}"
-        self._attr_name = "Tamper"
 
     @property
     def is_on(self) -> bool | None:
@@ -76,5 +78,3 @@ class NestYaleTamperBinarySensor(NestYaleEntity, BinarySensorEntity):
             self._device_data.update(new_data)
             self._update_device_info_from_traits()
         self.async_write_ha_state()
-
-

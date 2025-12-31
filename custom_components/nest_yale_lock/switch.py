@@ -49,14 +49,16 @@ class NestYaleAutoRelockSwitch(NestYaleEntity, SwitchEntity):
     """Auto-relock enable/disable."""
 
     _attr_entity_category = EntityCategory.CONFIG
+    _attr_has_entity_name = True
+    _attr_translation_key = "auto_lock"
 
     def __init__(self, coordinator, device: dict):
         device_id = device.get("device_id")
         if not device_id:
             raise ValueError("device_id is required for auto-relock switch")
         super().__init__(coordinator, device_id, device)
+        self._attr_name = None
         self._attr_unique_id = f"{DOMAIN}_auto_relock_{device_id}"
-        self._attr_name = "Auto-Lock"
 
     @property
     def is_on(self) -> bool | None:

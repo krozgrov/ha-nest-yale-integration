@@ -56,15 +56,17 @@ class NestYaleAutoLockDurationSelect(NestYaleEntity, SelectEntity):
     """Auto-lock duration presets."""
 
     _attr_entity_category = EntityCategory.CONFIG
+    _attr_has_entity_name = True
     _attr_options = list(_AUTO_LOCK_OPTIONS.keys())
+    _attr_translation_key = "auto_lock_duration"
 
     def __init__(self, coordinator, device: dict):
         device_id = device.get("device_id")
         if not device_id:
             raise ValueError("device_id is required for auto-lock duration select")
         super().__init__(coordinator, device_id, device)
+        self._attr_name = None
         self._attr_unique_id = f"{DOMAIN}_auto_lock_duration_{device_id}"
-        self._attr_name = "Auto-Lock Duration"
 
     @property
     def current_option(self) -> str | None:
