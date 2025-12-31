@@ -1117,11 +1117,16 @@ class NestAPIClient:
         if not response_data:
             return None, None
 
-        # 1) SendCommandResponse
+        # 1) BatchUpdateStateResponse
         try:
-            resp = v1_pb2.SendCommandResponse()
+            resp = v1_pb2.BatchUpdateStateResponse()
             resp.ParseFromString(response_data)
             if resp.ListFields():
+                for op_group in resp.batchUpdateStateResponse:
+                    for operation in op_group.traitOperations:
+                        status = getattr(operation, "status", None)
+                        if status and getattr(status, "code", 0) not in (0, None):
+                            return int(status.code), getattr(status, "message", None)
                 status = getattr(resp, "status", None)
                 if status and getattr(status, "code", 0) not in (0, None):
                     return int(status.code), getattr(status, "message", None)
@@ -1129,9 +1134,9 @@ class NestAPIClient:
         except Exception:
             pass
 
-        # 2) BatchUpdateStateResponse
+        # 2) SendCommandResponse
         try:
-            resp = v1_pb2.BatchUpdateStateResponse()
+            resp = v1_pb2.SendCommandResponse()
             resp.ParseFromString(response_data)
             if resp.ListFields():
                 status = getattr(resp, "status", None)
