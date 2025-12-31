@@ -47,6 +47,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
 class NestYaleLock(NestYaleEntity, LockEntity):
     """Representation of a Nest Yale Lock."""
+
+    _attr_has_entity_name = False
     
     def __init__(self, coordinator, device):
         """Initialize the lock entity."""
@@ -55,7 +57,6 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         # Store internal state as entity attributes, not in device dict
         self._bolt_moving = False
         self._bolt_moving_to: bool | None = None
-        self._attr_has_entity_name = False
         self._attr_should_poll = False
         self._state: LockState | None = None
         # Note: user_id and structure_id are now accessed via _get_device_attributes() in base class

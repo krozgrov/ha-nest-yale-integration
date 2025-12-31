@@ -25,7 +25,10 @@ class NestYaleEntity(CoordinatorEntity):
         
         # Get initial metadata
         metadata = self._coordinator.api_client.get_device_metadata(device_id)
-        self._attr_name = metadata["name"]
+        # Only use the device name as the entity name when the entity does not
+        # opt into entity naming (e.g., the lock entity).
+        entity_has_name = bool(getattr(self, "_attr_has_entity_name", False))
+        self._attr_name = None if entity_has_name else metadata["name"]
         
         # Set up device info
         self._setup_device_info(metadata)
@@ -296,4 +299,3 @@ class NestYaleEntity(CoordinatorEntity):
                 attrs["model"] = device_identity["model"]
         
         return attrs
-
