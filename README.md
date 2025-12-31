@@ -27,13 +27,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.31b39 - Entity naming + diagnostics privacy (beta)
+## Pre-release 2025.12.31b40 - Options flow tuning (beta)
 
-- Entity names now use HA translations (no hardcoded labels)
-- user_id/structure_id removed from state attributes; diagnostics now mask both IDs
-- Lock entity registry serialization fix to prevent missing lock entity
+- Add options flow for stale state timeout and masked debug attributes
+- Defaults unchanged unless you update integration options
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.31b39`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.31b40`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 
