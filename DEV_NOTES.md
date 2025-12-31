@@ -12,3 +12,4 @@
 - 2025-12-31: Prefer per-trait BatchUpdateState statuses to avoid false INTERNAL errors on successful auto-lock updates.
 - 2025-12-31: Ignore BatchUpdateState top-level status when per-trait statuses succeed to prevent false service failures.
 - 2025-12-31: Treat INTERNAL on auto-lock updates as transient to avoid failing HA service calls when Nest responds with internal status despite applying changes.
+- 2025-12-31: Treat UUID-style structure IDs from StructureInfoTrait legacy_id as v2 IDs so update requests include X-Nest-Structure-Id.

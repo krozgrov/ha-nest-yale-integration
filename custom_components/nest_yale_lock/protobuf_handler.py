@@ -459,7 +459,11 @@ class NestProtobufHandler:
         if structure.legacy_id:
             legacy_id = structure.legacy_id
             parts = legacy_id.split(".")
-            locks_data["structure_id"] = parts[-1] if len(parts) > 1 else legacy_id
+            resolved = parts[-1] if len(parts) > 1 else legacy_id
+            if "-" in resolved:
+                locks_data["structure_id_v2"] = resolved
+            else:
+                locks_data["structure_id"] = resolved
         elif obj_id.startswith("STRUCTURE_"):
             locks_data.setdefault("structure_id_v2", obj_id.replace("STRUCTURE_", ""))
         _LOGGER.debug(
