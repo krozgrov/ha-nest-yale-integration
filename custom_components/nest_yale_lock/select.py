@@ -71,7 +71,6 @@ class NestYaleAutoLockDurationSelect(NestYaleEntity, SelectEntity):
         if not device_id:
             raise ValueError("device_id is required for auto-lock duration select")
         super().__init__(coordinator, device_id, device)
-        self._attr_name = None
         self._attr_unique_id = f"{DOMAIN}_auto_lock_duration_{device_id}"
 
     @property

@@ -17,6 +17,15 @@ class NestYaleEntity(CoordinatorEntity):
         # HA computes name behavior using the class-level intent.
         entity_has_name = bool(getattr(type(self), "_attr_has_entity_name", False))
         self._attr_has_entity_name = entity_has_name
+        
+        # Ensure translation_key is available before CoordinatorEntity init
+        # Check if translation_key is already set as class attribute
+        translation_key = getattr(type(self), "_attr_translation_key", None)
+        if entity_has_name and translation_key:
+            # Make sure it's available as instance attribute too
+            self._attr_translation_key = translation_key
+            _LOGGER.debug("Using class-level translation_key=%s for %s", translation_key, self.__class__.__name__)
+        
         super().__init__(coordinator)
         self._coordinator = coordinator
         self._device_id = device_id
@@ -32,9 +41,10 @@ class NestYaleEntity(CoordinatorEntity):
         # Only use the device name as the entity name when the entity does not
         # opt into entity naming (e.g., the lock entity).
         self._attr_name = None if entity_has_name else metadata["name"]
+        
         # Extract translation_key from entity_description if not already set
         # Check both class and instance for existing translation_key
-        existing_key = getattr(type(self), "_attr_translation_key", None) or getattr(self, "_attr_translation_key", None)
+        existing_key = getattr(self, "_attr_translation_key", None) or getattr(type(self), "_attr_translation_key", None)
         if entity_has_name and not existing_key:
             # Check both instance and class attributes for entity_description
             entity_description = getattr(self, "entity_description", None)
@@ -44,7 +54,14 @@ class NestYaleEntity(CoordinatorEntity):
             if entity_description and hasattr(entity_description, "translation_key") and entity_description.translation_key:
                 # Set as instance attribute (Home Assistant supports both class and instance)
                 self._attr_translation_key = entity_description.translation_key
-                _LOGGER.debug("Set translation_key=%s for entity %s", entity_description.translation_key, self.__class__.__name__)
+                _LOGGER.debug("Extracted translation_key=%s from entity_description for %s", entity_description.translation_key, self.__class__.__name__)
+        
+        # Log final state for debugging
+        if entity_has_name:
+            final_key = getattr(self, "_attr_translation_key", None)
+            _LOGGER.debug("Entity %s: has_entity_name=%s, translation_key=%s, name=%s", 
+                         self.__class__.__name__, entity_has_name, final_key, self._attr_name)
+        
         self._device_name = metadata.get("name")
         
         # Set up device info

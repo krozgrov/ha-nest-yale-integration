@@ -85,7 +85,6 @@ class NestYaleBatterySensor(NestYaleEntity, SensorEntity):
         if not device_id:
             raise ValueError("device_id is required for battery sensor")
         super().__init__(coordinator, device_id, device)
-        self._attr_name = None
         # Override unique_id to include "battery" prefix
         self._attr_unique_id = f"{DOMAIN}_battery_{device_id}"
         self._attr_device_class = SensorDeviceClass.BATTERY
@@ -164,7 +163,6 @@ class NestYaleLastActionSensor(NestYaleEntity, SensorEntity):
         if not device_id:
             raise ValueError("device_id is required for last action sensor")
         super().__init__(coordinator, device_id, device)
-        self._attr_name = None
         self._attr_unique_id = f"{DOMAIN}_last_action_{device_id}"
         _LOGGER.debug("Initialized last action sensor for %s", self._attr_unique_id)
 

@@ -68,7 +68,6 @@ class NestYaleTamperBinarySensor(NestYaleEntity, BinarySensorEntity):
         if not device_id:
             raise ValueError("device_id is required for tamper sensor")
         super().__init__(coordinator, device_id, device)
-        self._attr_name = None
         self._attr_unique_id = f"{DOMAIN}_tamper_{device_id}"
 
     @property
