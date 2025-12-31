@@ -32,10 +32,19 @@ class NestYaleEntity(CoordinatorEntity):
         # Only use the device name as the entity name when the entity does not
         # opt into entity naming (e.g., the lock entity).
         self._attr_name = None if entity_has_name else metadata["name"]
-        if entity_has_name and not getattr(self, "_attr_translation_key", None):
+        # Extract translation_key from entity_description if not already set
+        # Check both class and instance for existing translation_key
+        existing_key = getattr(type(self), "_attr_translation_key", None) or getattr(self, "_attr_translation_key", None)
+        if entity_has_name and not existing_key:
+            # Check both instance and class attributes for entity_description
             entity_description = getattr(self, "entity_description", None)
-            if entity_description:
-                self._attr_translation_key = getattr(entity_description, "translation_key", None)
+            if entity_description is None:
+                # Try getting from class if not on instance
+                entity_description = getattr(type(self), "entity_description", None)
+            if entity_description and hasattr(entity_description, "translation_key") and entity_description.translation_key:
+                # Set as instance attribute (Home Assistant supports both class and instance)
+                self._attr_translation_key = entity_description.translation_key
+                _LOGGER.debug("Set translation_key=%s for entity %s", entity_description.translation_key, self.__class__.__name__)
         self._device_name = metadata.get("name")
         
         # Set up device info

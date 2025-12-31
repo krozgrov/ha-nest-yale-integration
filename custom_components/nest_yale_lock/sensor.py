@@ -76,6 +76,7 @@ class NestYaleBatterySensor(NestYaleEntity, SensorEntity):
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_has_entity_name = True
+    _attr_translation_key = "battery"
     entity_description = BATTERY_SENSOR_DESC
 
     def __init__(self, coordinator, device):
@@ -155,6 +156,7 @@ class NestYaleLastActionSensor(NestYaleEntity, SensorEntity):
     """Last action sensor (Physical/Keypad/Remote/etc)."""
 
     _attr_has_entity_name = True
+    _attr_translation_key = "last_action"
     entity_description = LAST_ACTION_SENSOR_DESC
 
     def __init__(self, coordinator, device):

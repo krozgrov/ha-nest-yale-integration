@@ -60,6 +60,7 @@ class NestYaleTamperBinarySensor(NestYaleEntity, BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.TAMPER
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_has_entity_name = True
+    _attr_translation_key = "tamper"
     entity_description = TAMPER_SENSOR_DESC
 
     def __init__(self, coordinator, device: dict):

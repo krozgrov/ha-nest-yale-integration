@@ -62,6 +62,7 @@ class NestYaleAutoLockDurationSelect(NestYaleEntity, SelectEntity):
 
     _attr_entity_category = EntityCategory.CONFIG
     _attr_has_entity_name = True
+    _attr_translation_key = "auto_lock_duration"
     _attr_options = list(_AUTO_LOCK_OPTIONS.keys())
     entity_description = AUTO_LOCK_DURATION_DESC
 
