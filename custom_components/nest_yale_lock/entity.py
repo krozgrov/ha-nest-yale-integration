@@ -26,8 +26,11 @@ class NestYaleEntity(CoordinatorEntity):
         # Get initial metadata
         metadata = self._coordinator.api_client.get_device_metadata(device_id)
         # Only use the device name as the entity name when the entity does not
-        # opt into entity naming (e.g., the lock entity).
-        entity_has_name = bool(getattr(self, "_attr_has_entity_name", False))
+        # opt into entity naming (e.g., the lock entity). CoordinatorEntity sets
+        # _attr_has_entity_name on the instance, so read the class-level intent
+        # and reapply it here before computing the default name.
+        entity_has_name = bool(getattr(type(self), "_attr_has_entity_name", False))
+        self._attr_has_entity_name = entity_has_name
         self._attr_name = None if entity_has_name else metadata["name"]
         self._device_name = metadata.get("name")
         
