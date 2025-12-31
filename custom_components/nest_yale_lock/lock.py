@@ -113,7 +113,7 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         # Build attributes in logical order:
         # 1. Bolt Moving (lock-specific)
         # 2. Battery info (all battery-related attributes grouped)
-        # 3-7. Device-level attributes (from base class)
+        # 3-5. Device-level attributes (from base class)
         
         # 1. Bolt Moving - lock-specific attribute
         attrs = {
@@ -144,7 +144,7 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                 attrs["battery_replacement_indicator"] = battery_trait["replacement_indicator"]
         
         # Reorder to match requested order:
-        # 1. Bolt Moving, 2. Battery info, 3. Structure ID, 4. Device ID, 5. User ID, 6. Firmware, 7. Serial Number
+        # 1. Bolt Moving, 2. Battery info, 3. Device ID, 4. Firmware, 5. Serial Number
         ordered_attrs = {
             "bolt_moving": attrs.pop("bolt_moving"),
         }
@@ -156,7 +156,7 @@ class NestYaleLock(NestYaleEntity, LockEntity):
                 ordered_attrs[key] = attrs.pop(key)
         
         # Add remaining device-level attributes in order
-        for key in ["structure_id", "device_id", "user_id", "firmware_revision", "serial_number"]:
+        for key in ["device_id", "firmware_revision", "serial_number"]:
             if key in attrs:
                 ordered_attrs[key] = attrs.pop(key)
         

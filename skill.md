@@ -8,7 +8,7 @@ Constraints
 - Keep changes small and reversible.
 
 Prioritized plan (least impactful -> most impactful)
-1) Localization + entity names via translations (in progress)
+1) Localization + entity names via translations (completed)
    - Add translation keys for switch/sensor/select/binary_sensor.
    - Resolve stale entity registry state after remove/re-add.
    - Avoid setting _attr_name for entity-named entities (HA skips translations when _attr_name exists).
@@ -16,7 +16,7 @@ Prioritized plan (least impactful -> most impactful)
    - Guard translation_key assignment so only string values are stored (prevents registry serialization errors).
    - Keep device identifiers stable (device_id only) to avoid device/entry splits when serial arrives.
 
-2) Diagnostics-only IDs (remove from state attrs)
+2) Diagnostics-only IDs (remove from state attrs) (in progress)
    - Move user_id/structure_id to diagnostics only.
    - Optional debug toggle if needed for troubleshooting.
    - Mild risk: attribute removal may affect existing dashboards.

@@ -332,20 +332,13 @@ class NestYaleEntity(CoordinatorEntity):
         else:
             firmware_revision = self._attr_device_info.get("sw_version", "unknown")
         
-        # Get user_id and structure_id from coordinator
-        user_id = self._coordinator.api_client.user_id
-        structure_id = self._coordinator.api_client.structure_id
-        
-        # Return device-level attributes in logical order:
-        # 3. Structure ID
-        # 4. Device ID
-        # 5. User ID
-        # 6. Firmware
-        # 7. Serial Number
+        # Return device-level attributes in logical order.
+        # Sensitive identifiers (user_id/structure_id) are diagnostics-only.
+        # 3. Device ID
+        # 4. Firmware
+        # 5. Serial Number
         attrs = {
-            "structure_id": structure_id,
             "device_id": self._device_id,
-            "user_id": user_id,
             "firmware_revision": firmware_revision,
             "serial_number": serial_number,
         }
