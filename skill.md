@@ -8,9 +8,9 @@ Constraints
 - Keep changes small and reversible.
 
 Prioritized plan (least impactful -> most impactful)
-1) Localization + entity names via translations (done)
+1) Localization + entity names via translations (in progress)
    - Add translation keys for switch/sensor/select/binary_sensor.
-   - Entity names now come from translations (no behavior change).
+   - Resolve stale entity registry state after remove/re-add.
 
 2) Diagnostics-only IDs (remove from state attrs)
    - Move user_id/structure_id to diagnostics only.

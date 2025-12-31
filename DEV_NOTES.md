@@ -19,3 +19,4 @@
 - 2025-12-31: Add enhanced auto-lock update (separate request, no field mask) while retaining weave update to keep Nest app and lock behavior in sync.
 - 2025-12-31: Treat missing autoRelockOn in settings traits as false to stop HA auto-lock switches from flipping back on after disable.
 - 2025-12-31: Use translation keys for entity names so UI labels are localized and avoid hardcoded English.
+- 2025-12-31: Reset per-entry added entity trackers on setup to avoid stale rediscovery state after remove/re-add.

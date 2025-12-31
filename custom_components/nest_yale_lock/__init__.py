@@ -55,17 +55,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     hass.data[DOMAIN].setdefault("entities", [])
-    # Track added entities per entry to allow clean re-add without restart
-    hass.data[DOMAIN].setdefault("added_lock_ids", {})
-    hass.data[DOMAIN]["added_lock_ids"].setdefault(entry.entry_id, set())
-    hass.data[DOMAIN].setdefault("added_sensor_ids", {})
-    hass.data[DOMAIN]["added_sensor_ids"].setdefault(entry.entry_id, set())
-    hass.data[DOMAIN].setdefault("added_binary_sensor_ids", {})
-    hass.data[DOMAIN]["added_binary_sensor_ids"].setdefault(entry.entry_id, set())
-    hass.data[DOMAIN].setdefault("added_switch_ids", {})
-    hass.data[DOMAIN]["added_switch_ids"].setdefault(entry.entry_id, set())
-    hass.data[DOMAIN].setdefault("added_select_ids", {})
-    hass.data[DOMAIN]["added_select_ids"].setdefault(entry.entry_id, set())
+    # Reset per-entry added ids on setup to avoid stale rediscovery state.
+    added_map = hass.data[DOMAIN].setdefault("added_lock_ids", {})
+    added_map[entry.entry_id] = set()
+    added_map = hass.data[DOMAIN].setdefault("added_sensor_ids", {})
+    added_map[entry.entry_id] = set()
+    added_map = hass.data[DOMAIN].setdefault("added_binary_sensor_ids", {})
+    added_map[entry.entry_id] = set()
+    added_map = hass.data[DOMAIN].setdefault("added_switch_ids", {})
+    added_map[entry.entry_id] = set()
+    added_map = hass.data[DOMAIN].setdefault("added_select_ids", {})
+    added_map[entry.entry_id] = set()
 
     _LOGGER.debug("Forwarding setup to platforms: %s", PLATFORMS)
     try:
