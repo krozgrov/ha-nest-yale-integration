@@ -16,7 +16,7 @@ Prioritized plan (least impactful -> most impactful)
    - Guard translation_key assignment so only string values are stored (prevents registry serialization errors).
    - Keep device identifiers stable (device_id only) to avoid device/entry splits when serial arrives.
 
-2) Diagnostics-only IDs (remove from state attrs) (in progress)
+2) Diagnostics-only IDs (remove from state attrs) (completed)
    - Move user_id/structure_id to diagnostics only.
    - Optional debug toggle if needed for troubleshooting.
    - Mild risk: attribute removal may affect existing dashboards.
