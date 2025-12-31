@@ -11,7 +11,8 @@ Prioritized plan (least impactful -> most impactful)
 1) Localization + entity names via translations (in progress)
    - Add translation keys for switch/sensor/select/binary_sensor.
    - Resolve stale entity registry state after remove/re-add.
-   - Respect has_entity_name in base entity so sub-entities don't inherit device name.
+   - Avoid setting _attr_name for entity-named entities (HA skips translations when _attr_name exists).
+   - Ensure registry name normalization runs after add to correct old original_name values.
    - Keep device identifiers stable (device_id only) to avoid device/entry splits when serial arrives.
 
 2) Diagnostics-only IDs (remove from state attrs)

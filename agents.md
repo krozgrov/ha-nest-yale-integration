@@ -513,13 +513,17 @@ This repository uses HACS for testing and validation prior to stable release.
 
 21.1 Version Format
 
-For testing, pre-releases, and SDLC branches, AI agents must use the following date-based version format:
+For testing and pre-releases, AI agents must use the following date-based version format:
+
+{YYYY}.{MM}.{DD}b{N}
+
+Stable releases drop the `b` suffix and use:
 
 {YYYY}.{MM}.{DD}
 
 Examples:
-	•	2025.01.14
-	•	2025.03.02
+	•	2025.12.31b36 (pre-release)
+	•	2025.12.31 (stable)
 
 This format:
 	•	Makes test builds easy to identify

@@ -3,6 +3,7 @@ import logging
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,19 +47,69 @@ class NestYaleEntity(CoordinatorEntity):
 
         # Get initial metadata
         metadata = self._coordinator.api_client.get_device_metadata(device_id)
-        # Only use the device name as the entity name when the entity does not
-        # opt into entity naming (e.g., the lock entity).
-        self._attr_name = None if entity_has_name else metadata["name"]
+        # Only set _attr_name for entities that opt out of entity naming.
+        # Home Assistant skips translations when _attr_name is present.
+        if not entity_has_name:
+            self._attr_name = metadata["name"]
         
         # Log final state for debugging
         if entity_has_name:
-            _LOGGER.debug("Entity %s: has_entity_name=%s, translation_key=%s, name=%s", 
-                         self.__class__.__name__, entity_has_name, translation_key, self._attr_name)
+            _LOGGER.debug(
+                "Entity %s: has_entity_name=%s, translation_key=%s, name=%s",
+                self.__class__.__name__,
+                entity_has_name,
+                translation_key,
+                getattr(self, "_attr_name", None),
+            )
         
         self._device_name = metadata.get("name")
         
         # Set up device info
         self._setup_device_info(metadata)
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()
+        # If we saw trait data early, retry registry update now that hass is available.
+        if not self._device_info_updated or self._device_registry_update_pending:
+            self._update_device_info_from_traits()
+        # Ensure entity registry original_name reflects translated entity naming.
+        self._ensure_entity_registry_name()
+
+    def _ensure_entity_registry_name(self) -> None:
+        """Normalize entity registry names for entity-named sub-entities."""
+        if not getattr(self, "_attr_has_entity_name", False):
+            return
+        if not self.hass:
+            return
+        try:
+            entity_registry = er.async_get(self.hass)
+            entry = entity_registry.async_get(self.entity_id)
+            if not entry:
+                return
+            # Respect user overrides.
+            if entry.name is not None:
+                return
+            desired_name = self.name
+            if not desired_name:
+                return
+            if entry.original_name != desired_name:
+                entity_registry.async_update_entity(
+                    self.entity_id,
+                    original_name=desired_name,
+                )
+                _LOGGER.info(
+                    "Updated entity registry name for %s: %s -> %s",
+                    self.entity_id,
+                    entry.original_name,
+                    desired_name,
+                )
+        except Exception as err:
+            _LOGGER.debug(
+                "Failed to update entity registry name for %s: %s",
+                self.entity_id,
+                err,
+            )
         
     def _setup_device_info(self, metadata):
         """Set up device info from metadata."""
@@ -222,13 +273,6 @@ class NestYaleEntity(CoordinatorEntity):
         
         self._device_info_updated = True
         self._device_registry_update_pending = False
-
-    async def async_added_to_hass(self) -> None:
-        """Run when entity is added to Home Assistant."""
-        await super().async_added_to_hass()
-        # If we saw trait data early, retry registry update now that hass is available.
-        if not self._device_info_updated or self._device_registry_update_pending:
-            self._update_device_info_from_traits()
 
     @property
     def device_info(self) -> DeviceInfo:
