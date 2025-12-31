@@ -13,6 +13,10 @@ class NestYaleEntity(CoordinatorEntity):
 
     def __init__(self, coordinator, device_id, device_data):
         """Initialize the base entity."""
+        # Ensure _attr_has_entity_name is set before CoordinatorEntity init so
+        # HA computes name behavior using the class-level intent.
+        entity_has_name = bool(getattr(type(self), "_attr_has_entity_name", False))
+        self._attr_has_entity_name = entity_has_name
         super().__init__(coordinator)
         self._coordinator = coordinator
         self._device_id = device_id
@@ -26,11 +30,7 @@ class NestYaleEntity(CoordinatorEntity):
         # Get initial metadata
         metadata = self._coordinator.api_client.get_device_metadata(device_id)
         # Only use the device name as the entity name when the entity does not
-        # opt into entity naming (e.g., the lock entity). CoordinatorEntity sets
-        # _attr_has_entity_name on the instance, so read the class-level intent
-        # and reapply it here before computing the default name.
-        entity_has_name = bool(getattr(type(self), "_attr_has_entity_name", False))
-        self._attr_has_entity_name = entity_has_name
+        # opt into entity naming (e.g., the lock entity).
         self._attr_name = None if entity_has_name else metadata["name"]
         if entity_has_name and not getattr(self, "_attr_translation_key", None):
             entity_description = getattr(self, "entity_description", None)
