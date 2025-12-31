@@ -19,6 +19,18 @@
       "unknown_error": "Unknown error. Check logs for details."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Nest Yale options",
+        "description": "Tune optional behavior without changing defaults.",
+        "data": {
+          "debug_attributes": "Expose debug attributes (masked IDs)",
+          "stale_state_max_seconds": "Stale state timeout (seconds)"
+        }
+      }
+    }
+  },
   "entity": {
     "binary_sensor": {
       "tamper": {

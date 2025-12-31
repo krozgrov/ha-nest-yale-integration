@@ -44,6 +44,8 @@ OBSERVE_IDLE_RESET_SECONDS = 600  # Force reconnect if stream idle this long (10
 CONNECT_FAILURE_RESET_THRESHOLD = 3  # Recreate session after N consecutive connect errors
 # Keep entities available during reconnects for this long after last good update
 STALE_STATE_MAX_SECONDS = 900  # 15 minutes
+DEFAULT_DEBUG_ATTRIBUTES = False
+DEFAULT_STALE_STATE_MAX_SECONDS = STALE_STATE_MAX_SECONDS
 
 # REST API Endpoints (from nest-endpoints.js)
 URL_NEST_AUTH = "https://{api_hostname}/session"
@@ -69,6 +71,8 @@ DOMAIN = "nest_yale_lock"
 PLATFORMS = ["lock", "sensor", "binary_sensor", "switch", "select"]
 CONF_ISSUE_TOKEN = "issue_token"
 CONF_COOKIES = "cookies"
+CONF_DEBUG_ATTRIBUTES = "debug_attributes"
+CONF_STALE_STATE_MAX_SECONDS = "stale_state_max_seconds"
 # Update interval for coordinator fallback polling (observe stream is primary)
 # Set to 10 minutes since we rely on push-based observe stream for real-time updates
 UPDATE_INTERVAL_SECONDS = timedelta(minutes=10)  # Use timedelta for DataUpdateCoordinator

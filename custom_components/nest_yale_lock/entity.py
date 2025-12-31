@@ -9,6 +9,16 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 
+def _mask_debug_value(value):
+    """Return a masked identifier string for debug attributes."""
+    if not value:
+        return None
+    text = str(value)
+    if len(text) <= 8:
+        return "***"
+    return f"{text[:4]}***{text[-4:]}"
+
+
 class NestYaleEntity(CoordinatorEntity):
     """Base entity class for Nest Yale devices."""
 
@@ -349,5 +359,15 @@ class NestYaleEntity(CoordinatorEntity):
                 attrs["manufacturer"] = device_identity["manufacturer"]
             if device_identity.get("model"):
                 attrs["model"] = device_identity["model"]
-        
+
+        if getattr(self._coordinator, "debug_attributes_enabled", False):
+            user_id = _mask_debug_value(getattr(self._coordinator.api_client, "user_id", None))
+            structure_id = _mask_debug_value(
+                getattr(self._coordinator.api_client, "structure_id", None)
+            )
+            if user_id:
+                attrs["debug_user_id"] = user_id
+            if structure_id:
+                attrs["debug_structure_id"] = structure_id
+
         return attrs

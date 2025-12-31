@@ -5,7 +5,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers import config_validation as cv
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from .const import DOMAIN, PLATFORMS
+from .const import (
+    DOMAIN,
+    PLATFORMS,
+    CONF_DEBUG_ATTRIBUTES,
+    CONF_STALE_STATE_MAX_SECONDS,
+    DEFAULT_DEBUG_ATTRIBUTES,
+    DEFAULT_STALE_STATE_MAX_SECONDS,
+)
 from .api_client import NestAPIClient
 from .coordinator import NestCoordinator
 
@@ -18,6 +25,12 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Nest Yale component."""
     _LOGGER.debug("Starting async_setup for Nest Yale component")
     return True
+
+
+async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle config entry updates (e.g., options)."""
+    _LOGGER.debug("Reloading entry %s after options update", entry.entry_id)
+    await hass.config_entries.async_reload(entry.entry_id)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Nest Yale Lock from a config entry."""
@@ -37,6 +50,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         conn = await NestAPIClient.create(hass, issue_token, None, cookies)
         _LOGGER.debug("Creating NestCoordinator")
         coordinator = NestCoordinator(hass, conn, entry.entry_id)
+        options = entry.options
+        coordinator._stale_max_seconds = options.get(
+            CONF_STALE_STATE_MAX_SECONDS, DEFAULT_STALE_STATE_MAX_SECONDS
+        )
+        coordinator.debug_attributes_enabled = bool(
+            options.get(CONF_DEBUG_ATTRIBUTES, DEFAULT_DEBUG_ATTRIBUTES)
+        )
         _LOGGER.debug("Setting up coordinator")
         await coordinator.async_setup()
         # Best-effort initial refresh without blocking startup
@@ -54,6 +74,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady(f"Failed to initialize: {e}") from e
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     hass.data[DOMAIN].setdefault("entities", [])
     # Reset per-entry added ids on setup to avoid stale rediscovery state.
     added_map = hass.data[DOMAIN].setdefault("added_lock_ids", {})
