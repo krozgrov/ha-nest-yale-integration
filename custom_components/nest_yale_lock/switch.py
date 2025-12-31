@@ -1,7 +1,7 @@
 """Switch entities for Nest Yale Lock."""
 import logging
 
-from homeassistant.components.switch import SwitchEntity
+from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
@@ -11,6 +11,11 @@ from .const import DOMAIN
 from .entity import NestYaleEntity
 
 _LOGGER = logging.getLogger(__name__)
+
+AUTO_LOCK_SWITCH_DESC = SwitchEntityDescription(
+    key="auto_lock",
+    translation_key="auto_lock",
+)
 
 
 async def async_setup_entry(
@@ -50,7 +55,7 @@ class NestYaleAutoRelockSwitch(NestYaleEntity, SwitchEntity):
 
     _attr_entity_category = EntityCategory.CONFIG
     _attr_has_entity_name = True
-    _attr_translation_key = "auto_lock"
+    entity_description = AUTO_LOCK_SWITCH_DESC
 
     def __init__(self, coordinator, device: dict):
         device_id = device.get("device_id")

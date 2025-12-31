@@ -4,6 +4,7 @@ import logging
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorDeviceClass,
+    BinarySensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -14,6 +15,11 @@ from .const import DOMAIN
 from .entity import NestYaleEntity
 
 _LOGGER = logging.getLogger(__name__)
+
+TAMPER_SENSOR_DESC = BinarySensorEntityDescription(
+    key="tamper",
+    translation_key="tamper",
+)
 
 
 async def async_setup_entry(
@@ -54,7 +60,7 @@ class NestYaleTamperBinarySensor(NestYaleEntity, BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.TAMPER
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_has_entity_name = True
-    _attr_translation_key = "tamper"
+    entity_description = TAMPER_SENSOR_DESC
 
     def __init__(self, coordinator, device: dict):
         device_id = device.get("device_id")

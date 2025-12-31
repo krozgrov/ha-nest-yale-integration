@@ -22,3 +22,4 @@
 - 2025-12-31: Reset per-entry added entity trackers on setup to avoid stale rediscovery state after remove/re-add.
 - 2025-12-31: Only apply device metadata name to entities that opt out of entity naming so sub-entities use translated labels.
 - 2025-12-31: Always set device registry name from metadata (when user hasn’t overridden) so sub-entities don’t appear as “Unnamed device.”
+- 2025-12-31: Use entity descriptions with translation keys so sub-entity names render correctly in HA UI.

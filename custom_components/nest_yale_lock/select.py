@@ -1,7 +1,7 @@
 """Select entities for Nest Yale Lock."""
 import logging
 
-from homeassistant.components.select import SelectEntity
+from homeassistant.components.select import SelectEntity, SelectEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
@@ -18,6 +18,11 @@ _AUTO_LOCK_OPTIONS = {
     "5 minutes": 300,
 }
 _AUTO_LOCK_OPTIONS_BY_SECONDS = {value: key for key, value in _AUTO_LOCK_OPTIONS.items()}
+
+AUTO_LOCK_DURATION_DESC = SelectEntityDescription(
+    key="auto_lock_duration",
+    translation_key="auto_lock_duration",
+)
 
 
 async def async_setup_entry(
@@ -58,7 +63,7 @@ class NestYaleAutoLockDurationSelect(NestYaleEntity, SelectEntity):
     _attr_entity_category = EntityCategory.CONFIG
     _attr_has_entity_name = True
     _attr_options = list(_AUTO_LOCK_OPTIONS.keys())
-    _attr_translation_key = "auto_lock_duration"
+    entity_description = AUTO_LOCK_DURATION_DESC
 
     def __init__(self, coordinator, device: dict):
         device_id = device.get("device_id")

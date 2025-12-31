@@ -1,6 +1,11 @@
 """Battery sensor for Nest Yale Lock."""
 import logging
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorEntity,
+    SensorDeviceClass,
+    SensorStateClass,
+    SensorEntityDescription,
+)
 from homeassistant.const import PERCENTAGE
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -10,6 +15,15 @@ from .const import DOMAIN
 from .entity import NestYaleEntity
 
 _LOGGER = logging.getLogger(__name__)
+
+BATTERY_SENSOR_DESC = SensorEntityDescription(
+    key="battery",
+    translation_key="battery",
+)
+LAST_ACTION_SENSOR_DESC = SensorEntityDescription(
+    key="last_action",
+    translation_key="last_action",
+)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
@@ -62,7 +76,7 @@ class NestYaleBatterySensor(NestYaleEntity, SensorEntity):
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_has_entity_name = True
-    _attr_translation_key = "battery"
+    entity_description = BATTERY_SENSOR_DESC
 
     def __init__(self, coordinator, device):
         """Initialize the battery sensor."""
@@ -141,7 +155,7 @@ class NestYaleLastActionSensor(NestYaleEntity, SensorEntity):
     """Last action sensor (Physical/Keypad/Remote/etc)."""
 
     _attr_has_entity_name = True
-    _attr_translation_key = "last_action"
+    entity_description = LAST_ACTION_SENSOR_DESC
 
     def __init__(self, coordinator, device):
         device_id = device.get("device_id")
