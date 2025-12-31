@@ -432,11 +432,7 @@ class NestProtobufHandler:
 
     def _apply_bolt_lock_settings_trait(self, obj_id, settings, locks_data):
         device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
-        try:
-            present_fields = {field.name for field, _ in settings.ListFields()}
-        except Exception:
-            present_fields = set()
-        if "autoRelockOn" in present_fields:
+        if hasattr(settings, "autoRelockOn"):
             device["auto_relock_on"] = bool(getattr(settings, "autoRelockOn", False))
         duration = getattr(settings, "autoRelockDuration", None)
         if settings.HasField("autoRelockDuration") and duration is not None:

@@ -281,38 +281,23 @@ class NestAPIClient:
             settings = trait_cache.get(device_id, {}).get("weave.trait.security.BoltLockSettingsTrait")
             if not settings:
                 continue
-            try:
-                fields = {field.name for field, _ in settings.ListFields()}
-            except Exception:
-                fields = set()
-        if settings.HasField("autoRelockDuration"):
-            device["auto_relock_duration"] = int(settings.autoRelockDuration.seconds)
-        if "autoRelockOn" in fields:
-            device["auto_relock_on"] = bool(settings.autoRelockOn)
-        elif settings.HasField("autoRelockDuration") and settings.autoRelockDuration.seconds == 0:
-            device["auto_relock_on"] = False
+            if settings.HasField("autoRelockDuration"):
+                device["auto_relock_duration"] = int(settings.autoRelockDuration.seconds)
+            if hasattr(settings, "autoRelockOn"):
+                device["auto_relock_on"] = bool(settings.autoRelockOn)
+            nest_settings = trait_cache.get(device_id, {}).get("nest.trait.security.BoltLockSettingsTrait")
+            if nest_settings and hasattr(nest_security_pb2, "BoltLockSettingsTrait"):
+                if nest_settings.HasField("autoRelockDuration"):
+                    device["auto_relock_duration"] = int(nest_settings.autoRelockDuration.seconds)
+                if hasattr(nest_settings, "autoRelockOn"):
+                    device["auto_relock_on"] = bool(nest_settings.autoRelockOn)
 
-        nest_settings = trait_cache.get(device_id, {}).get("nest.trait.security.BoltLockSettingsTrait")
-        if nest_settings and hasattr(nest_security_pb2, "BoltLockSettingsTrait"):
-            try:
-                nest_fields = {field.name for field, _ in nest_settings.ListFields()}
-            except Exception:
-                nest_fields = set()
-            if nest_settings.HasField("autoRelockDuration"):
-                device["auto_relock_duration"] = int(nest_settings.autoRelockDuration.seconds)
-            if "autoRelockOn" in nest_fields:
-                device["auto_relock_on"] = bool(nest_settings.autoRelockOn)
-
-        enhanced = trait_cache.get(device_id, {}).get("nest.trait.security.EnhancedBoltLockSettingsTrait")
-        if enhanced:
-            try:
-                enhanced_fields = {field.name for field, _ in enhanced.ListFields()}
-            except Exception:
-                enhanced_fields = set()
-            if enhanced.HasField("autoRelockDuration"):
-                device["auto_relock_duration"] = int(enhanced.autoRelockDuration.seconds)
-            if "autoRelockOn" in enhanced_fields:
-                device["auto_relock_on"] = bool(enhanced.autoRelockOn)
+            enhanced = trait_cache.get(device_id, {}).get("nest.trait.security.EnhancedBoltLockSettingsTrait")
+            if enhanced:
+                if enhanced.HasField("autoRelockDuration"):
+                    device["auto_relock_duration"] = int(enhanced.autoRelockDuration.seconds)
+                if hasattr(enhanced, "autoRelockOn"):
+                    device["auto_relock_on"] = bool(enhanced.autoRelockOn)
 
     @classmethod
     async def create(cls, hass, issue_token, api_key=None, cookies=None, user_id=None):
