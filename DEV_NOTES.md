@@ -26,3 +26,5 @@
 - 2025-12-31: Reapply class-level _attr_has_entity_name after CoordinatorEntity init so sub-entity names use translation-based labels instead of device name.
 - 2025-12-31: Promote entity_description.translation_key to _attr_translation_key for entity-named sub-entities so translations render consistently.
 - 2025-12-31: Set _attr_has_entity_name before CoordinatorEntity init so HA computes entity names with translation behavior.
+- 2025-12-31: Explicitly set _attr_translation_key as class attributes in all entity classes (sensor, binary_sensor, switch, select) to ensure Home Assistant properly applies translations from strings.json.
+- 2025-12-31: Improve translation key extraction in base entity class to check both instance and class attributes for entity_description, ensuring translation keys are properly extracted and applied.
