@@ -573,4 +573,24 @@ Before promoting a pre-release to stable, AI agents must confirm:
 
 ⸻
 
+21.6 Documentation Maintenance for Releases
+
+AI agents must ensure the following documentation files are updated with each pre-release and stable release:
+
+Required updates:
+	•	DEV_NOTES.md – Record architectural decisions, behavioral changes, and rationale for changes included in the release
+	•	skill.md – Update the prioritized plan to reflect completed items and current status
+	•	agents.md – Update this file if release processes or rules change
+	•	Related project documentation – If changes affect related projects (e.g., yalenestlocktest/README.md), update those files as well
+
+Documentation updates must:
+	•	Be committed alongside code changes or in the same release cycle
+	•	Reflect the actual state of the codebase at the time of release
+	•	Preserve historical context and decision rationale
+	•	Be reviewed as part of the release process
+
+This ensures continuity across development sessions and maintains accurate project documentation for contributors and maintainers.
+
+⸻
+
 This section is mandatory for all Home Assistant integrations distributed or tested via HACS.
