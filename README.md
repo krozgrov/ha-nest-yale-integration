@@ -27,12 +27,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.31b41 - Entity naming guard (beta)
+## Pre-release 2025.12.31b42 - HA 2025.12 compatibility (beta)
 
-- Guard entity name normalization against undefined values (prevents “None” names)
-- Clarify stale timeout option label
+- Skip entity name normalization when the translated name is not a string
+- Fix compatibility with Home Assistant 2025.12 (no UNDEFINED import)
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.31b41`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.31b42`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 

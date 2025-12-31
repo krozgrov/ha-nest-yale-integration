@@ -4,7 +4,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.const import UNDEFINED
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -111,9 +110,7 @@ class NestYaleEntity(CoordinatorEntity):
             if entry.name is not None:
                 return
             desired_name = self.name
-            if desired_name is None or desired_name is UNDEFINED or not isinstance(desired_name, str):
-                return
-            if not desired_name.strip():
+            if not isinstance(desired_name, str) or not desired_name.strip():
                 return
             if entry.original_name != desired_name:
                 entity_registry.async_update_entity(
