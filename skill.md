@@ -33,3 +33,6 @@ Prioritized plan (least impactful -> most impactful)
 Validation approach
 - Manual HA test after each step.
 - Keep pre-releases for each step to isolate regressions.
+
+Status updates
+- 2025-12-31: No plan changes; b42 includes HA 2025.12 compatibility fix for entity naming guard.

@@ -34,3 +34,4 @@
 - 2025-12-31: Remove user_id/structure_id from state attributes and keep them in diagnostics-only output.
 - 2025-12-31: Mask structure_id in diagnostics alongside user_id to align with HA privacy guidance.
 - 2025-12-31: Add an options flow to tune stale state timeout and expose masked debug identifiers when explicitly enabled.
+- 2025-12-31: Avoid importing UNDEFINED (missing in HA 2025.12) and skip registry name normalization when the computed name is not a non-empty string to prevent entity registry serialization errors.
