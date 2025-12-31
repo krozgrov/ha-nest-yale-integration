@@ -916,50 +916,7 @@ class NestAPIClient:
 
         update_requests = []
         used_labels = set()
-        update_req = v1_pb2.TraitUpdateStateRequest(
-            traitRequest=v1_pb2.TraitRequest(
-                resourceId=device_id,
-                traitLabel="bolt_lock_settings",
-                requestId=request_id,
-            ),
-            state=any_state,
-        )
-        update_requests.append(update_req)
-        used_labels.add("bolt_lock_settings")
-
         trait_labels = self.current_state.get("trait_labels", {}).get(device_id, {})
-        nest_label = trait_labels.get("nest.trait.security.BoltLockSettingsTrait")
-        nest_trait = current_traits.get("nest.trait.security.BoltLockSettingsTrait")
-        if not hasattr(nest_security_pb2, "BoltLockSettingsTrait"):
-            if nest_label or nest_trait:
-                _LOGGER.debug(
-                    "Nest bolt lock settings trait not available in protobufs; skipping nest update for %s",
-                    device_id,
-                )
-        elif nest_label and nest_trait and nest_label not in used_labels:
-            nest_state = nest_security_pb2.BoltLockSettingsTrait()
-            nest_state.CopyFrom(nest_trait)
-            if auto_relock_on is not None:
-                nest_state.autoRelockOn = bool(auto_relock_on)
-            if auto_relock_duration is not None:
-                nest_state.autoRelockDuration.seconds = int(auto_relock_duration)
-            nest_any = any_pb2.Any()
-            nest_any.Pack(nest_state, type_url_prefix="type.nestlabs.com")
-            nest_req = v1_pb2.TraitUpdateStateRequest(
-                traitRequest=v1_pb2.TraitRequest(
-                    resourceId=device_id,
-                    traitLabel=nest_label,
-                    requestId=str(uuid.uuid4()),
-                ),
-                state=nest_any,
-            )
-            update_requests.append(nest_req)
-            used_labels.add(nest_label)
-        elif nest_trait and not nest_label:
-            _LOGGER.debug(
-                "Nest bolt lock settings trait label missing for %s; skipping nest update",
-                device_id,
-            )
         enhanced_label = trait_labels.get("nest.trait.security.EnhancedBoltLockSettingsTrait")
         enhanced_trait = current_traits.get("nest.trait.security.EnhancedBoltLockSettingsTrait")
         if enhanced_label and enhanced_trait and enhanced_label not in used_labels:
@@ -987,6 +944,19 @@ class NestAPIClient:
                 device_id,
             )
 
+        # If enhanced settings are available, prefer updating that only.
+        if not update_requests:
+            update_req = v1_pb2.TraitUpdateStateRequest(
+                traitRequest=v1_pb2.TraitRequest(
+                    resourceId=device_id,
+                    traitLabel="bolt_lock_settings",
+                    requestId=request_id,
+                ),
+                state=any_state,
+            )
+            update_requests.append(update_req)
+            used_labels.add("bolt_lock_settings")
+
         batch_req = v1_pb2.BatchUpdateStateRequest(
             batchUpdateStateRequest=update_requests,
         )
@@ -995,6 +965,7 @@ class NestAPIClient:
         for base_url in self._candidate_bases():
             api_url = f"{base_url}{ENDPOINT_UPDATE}"
             raw = await self.connection.post(api_url, headers, encoded, read_timeout=API_TIMEOUT_SECONDS)
+            self._log_batch_update_details(raw)
             status_code, status_msg = self._parse_v1_operation_status(raw)
             if status_code is None:
                 status_code, status_msg = self._parse_command_status(raw)
@@ -1024,9 +995,14 @@ class NestAPIClient:
                 pass
             try:
                 current_traits = self.current_state.setdefault("traits", {})
-                current_traits.setdefault(device_id, {})[
-                    "weave.trait.security.BoltLockSettingsTrait"
-                ] = state_proto
+                if "bolt_lock_settings" in used_labels:
+                    current_traits.setdefault(device_id, {})[
+                        "weave.trait.security.BoltLockSettingsTrait"
+                    ] = state_proto
+                if enhanced_label and enhanced_trait and enhanced_label in used_labels:
+                    current_traits.setdefault(device_id, {})[
+                        "nest.trait.security.EnhancedBoltLockSettingsTrait"
+                    ] = enhanced_state
             except Exception:
                 pass
             return raw
@@ -1167,6 +1143,30 @@ class NestAPIClient:
             pass
 
         return None, None
+
+    def _log_batch_update_details(self, response_data: bytes) -> None:
+        if not response_data:
+            return
+        try:
+            resp = v1_pb2.BatchUpdateStateResponse()
+            resp.ParseFromString(response_data)
+        except Exception:
+            return
+        if not resp.ListFields():
+            return
+        for op_group in resp.batchUpdateStateResponse:
+            for operation in op_group.traitOperations:
+                trait_req = getattr(operation, "traitRequest", None)
+                status = getattr(operation, "status", None)
+                if not trait_req or not status:
+                    continue
+                _LOGGER.debug(
+                    "BatchUpdateState trait=%s resource=%s status=%s msg=%s",
+                    getattr(trait_req, "traitLabel", None),
+                    getattr(trait_req, "resourceId", None),
+                    getattr(status, "code", None),
+                    getattr(status, "message", None),
+                )
 
     async def _recover_after_internal_error(self):
         """Reset session and reauthenticate after an INTERNAL gRPC error."""
