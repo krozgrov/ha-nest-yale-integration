@@ -18,7 +18,8 @@ A lot of effort is going into this integration. So if you can afford it and want
 - Manual lock / unlock commands
 - Battery level sensor entity with percentage display
 - Serial number, firmware, and device information in Device Info card
-- Device attributes (battery status, device ID, structure ID, etc.) 
+- Device attributes (battery status, device ID, firmware, serial, etc.)
+- Translated entity names (no hardcoded English labels)
 
 ## Status
 
@@ -26,16 +27,13 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.18b3 - Reliability + Diagnostics (beta)
+## Pre-release 2025.12.31b39 - Entity naming + diagnostics privacy (beta)
 
-- Reliability improvements:
-  - Watchdog to recover from stale updates (force a fallback refresh; reload only as a last resort)
-  - Merge partial observe updates so traits/settings don’t get dropped between frames
-  - Improved response parsing for commands/settings updates (prefer gateway v1 operation status when present)
-- Better diagnostics: include stream health + last command info in HA diagnostics download
-- Log cleanup: stop dumping huge StreamBody payloads; log a compact summary instead
+- Entity names now use HA translations (no hardcoded labels)
+- user_id/structure_id removed from state attributes; diagnostics now mask both IDs
+- Lock entity registry serialization fix to prevent missing lock entity
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.18b3`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.31b39`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 
