@@ -1122,11 +1122,15 @@ class NestAPIClient:
             resp = v1_pb2.BatchUpdateStateResponse()
             resp.ParseFromString(response_data)
             if resp.ListFields():
+                saw_trait_status = False
                 for op_group in resp.batchUpdateStateResponse:
                     for operation in op_group.traitOperations:
+                        saw_trait_status = True
                         status = getattr(operation, "status", None)
                         if status and getattr(status, "code", 0) not in (0, None):
                             return int(status.code), getattr(status, "message", None)
+                if saw_trait_status:
+                    return 0, None
                 status = getattr(resp, "status", None)
                 if status and getattr(status, "code", 0) not in (0, None):
                     return int(status.code), getattr(status, "message", None)
