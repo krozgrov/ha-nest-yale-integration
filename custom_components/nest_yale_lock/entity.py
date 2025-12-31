@@ -32,18 +32,25 @@ class NestYaleEntity(CoordinatorEntity):
         )
         self._attr_has_entity_name = entity_has_name
 
-        translation_key = (
-            getattr(self, "_attr_translation_key", None)
-            or getattr(type(self), "_attr_translation_key", None)
-        )
-        if not translation_key:
-            entity_description = getattr(self, "entity_description", None)
-            if entity_description is None:
-                entity_description = getattr(type(self), "entity_description", None)
-            if entity_description and getattr(entity_description, "translation_key", None):
-                translation_key = entity_description.translation_key
-        if translation_key:
-            self._attr_translation_key = translation_key
+        translation_key = None
+        if entity_has_name:
+            candidate = getattr(self, "_attr_translation_key", None)
+            if isinstance(candidate, str):
+                translation_key = candidate
+            if translation_key is None:
+                candidate = getattr(type(self), "_attr_translation_key", None)
+                if isinstance(candidate, str):
+                    translation_key = candidate
+            if translation_key is None:
+                entity_description = getattr(self, "entity_description", None)
+                if entity_description is None:
+                    entity_description = getattr(type(self), "entity_description", None)
+                if entity_description:
+                    candidate = getattr(entity_description, "translation_key", None)
+                    if isinstance(candidate, str):
+                        translation_key = candidate
+            if translation_key:
+                self._attr_translation_key = translation_key
 
         # Get initial metadata
         metadata = self._coordinator.api_client.get_device_metadata(device_id)

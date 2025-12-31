@@ -13,6 +13,7 @@ Prioritized plan (least impactful -> most impactful)
    - Resolve stale entity registry state after remove/re-add.
    - Avoid setting _attr_name for entity-named entities (HA skips translations when _attr_name exists).
    - Ensure registry name normalization runs after add to correct old original_name values.
+   - Guard translation_key assignment so only string values are stored (prevents registry serialization errors).
    - Keep device identifiers stable (device_id only) to avoid device/entry splits when serial arrives.
 
 2) Diagnostics-only IDs (remove from state attrs)

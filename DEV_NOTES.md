@@ -30,3 +30,4 @@
 - 2025-12-31: Improve translation key extraction in base entity class to check both instance and class attributes for entity_description, ensuring translation keys are properly extracted and applied.
 - 2025-12-31: Keep device registry identifiers stable (device_id only) and store serial_number separately to prevent duplicate/orphaned devices when trait data arrives.
 - 2025-12-31: Do not set _attr_name for entity-named sub-entities because HA’s name resolver skips translations when _attr_name exists; ensure registry name normalization runs by keeping a single async_added_to_hass.
+- 2025-12-31: Only assign _attr_translation_key for entity-named entities when the value is a string to avoid property-object serialization errors that can drop the lock entity.
