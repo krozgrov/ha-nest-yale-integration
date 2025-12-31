@@ -29,6 +29,7 @@ class NestYaleEntity(CoordinatorEntity):
         # opt into entity naming (e.g., the lock entity).
         entity_has_name = bool(getattr(self, "_attr_has_entity_name", False))
         self._attr_name = None if entity_has_name else metadata["name"]
+        self._device_name = metadata.get("name")
         
         # Set up device info
         self._setup_device_info(metadata)
@@ -51,7 +52,7 @@ class NestYaleEntity(CoordinatorEntity):
             "identifiers": identifiers,
             "manufacturer": "Nest",
             "model": "Nest x Yale Lock",
-            "name": self._attr_name,
+            "name": self._device_name,
             "sw_version": metadata["firmware_revision"],
         }
         if serial_number:
@@ -135,6 +136,13 @@ class NestYaleEntity(CoordinatorEntity):
                     if current_identifiers != new_identifiers:
                         update_kwargs["new_identifiers"] = new_identifiers
                         _LOGGER.info("Updating device identifiers: %s -> %s", current_identifiers, new_identifiers)
+
+                # Ensure a device name is set when HA doesn't have one and the user hasn't overridden it.
+                if self._device_name:
+                    device_name_by_user = getattr(device, "name_by_user", None)
+                    if not device_name_by_user and not device.name:
+                        update_kwargs["name"] = self._device_name
+                        _LOGGER.info("Setting device name: %s", self._device_name)
                 
                 # Always update firmware if we have it from trait data
                 if new_firmware:
