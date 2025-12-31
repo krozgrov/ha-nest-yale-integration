@@ -846,9 +846,6 @@ class NestAPIClient:
         """Update BoltLockSettingsTrait via TraitBatchApi/BatchUpdateState."""
         if auto_relock_on is None and auto_relock_duration is None:
             return None
-        if auto_relock_on is None and auto_relock_duration is not None:
-            auto_relock_on = True
-
         # Ensure token/ids are present
         if not self.access_token:
             await self.authenticate()
@@ -899,6 +896,75 @@ class NestAPIClient:
         # Match Nest style type_url prefix for compatibility
         any_state.Pack(state_proto, type_url_prefix="type.nestlabs.com")
 
+        async def _post_update(update_request, trait_name):
+            batch_req = v1_pb2.BatchUpdateStateRequest(
+                batchUpdateStateRequest=[update_request],
+            )
+            encoded = batch_req.SerializeToString()
+            for base_url in self._candidate_bases():
+                api_url = f"{base_url}{ENDPOINT_UPDATE}"
+                raw = await self.connection.post(
+                    api_url, headers, encoded, read_timeout=API_TIMEOUT_SECONDS
+                )
+                self._log_batch_update_details(raw)
+                status_code, status_msg = self._parse_v1_operation_status(raw)
+                if status_code is None:
+                    status_code, status_msg = self._parse_command_status(raw)
+                if status_code == GRPC_CODE_INTERNAL:
+                    _LOGGER.warning(
+                        "Update %s returned INTERNAL; treating as transient (code %s): %s",
+                        trait_name,
+                        status_code,
+                        status_msg,
+                    )
+                    try:
+                        await self.refresh_state()
+                    except Exception as err:
+                        _LOGGER.debug("Refresh after INTERNAL error failed: %s", err)
+                    return raw, False
+                if status_code not in (None, 0):
+                    raise RuntimeError(
+                        f"Update {trait_name} failed (code {status_code}): {status_msg or 'Unknown error'}"
+                    )
+                return raw, True
+            raise RuntimeError("No valid gRPC endpoint available for BatchUpdateState")
+
+        current_traits = self.current_state.get("traits", {}).get(device_id, {})
+        trait_labels = self.current_state.get("trait_labels", {}).get(device_id, {})
+        enhanced_label = trait_labels.get("nest.trait.security.EnhancedBoltLockSettingsTrait")
+        enhanced_existing = current_traits.get("nest.trait.security.EnhancedBoltLockSettingsTrait")
+        enhanced_state = None
+        if enhanced_label and enhanced_existing:
+            enhanced_state = nest_security_pb2.EnhancedBoltLockSettingsTrait()
+            try:
+                enhanced_state.CopyFrom(enhanced_existing)
+            except Exception:
+                pass
+            if auto_relock_on is not None:
+                enhanced_state.autoRelockOn = bool(auto_relock_on)
+            if auto_relock_duration is not None:
+                enhanced_state.autoRelockDuration.seconds = int(auto_relock_duration)
+            enhanced_any = any_pb2.Any()
+            enhanced_any.Pack(enhanced_state, type_url_prefix="type.nestlabs.com")
+            enhanced_req = v1_pb2.TraitUpdateStateRequest(
+                traitRequest=v1_pb2.TraitRequest(
+                    resourceId=device_id,
+                    traitLabel=enhanced_label,
+                    requestId=str(uuid.uuid4()),
+                ),
+                state=enhanced_any,
+            )
+            try:
+                await _post_update(enhanced_req, "enhanced_bolt_lock_settings")
+                try:
+                    self.current_state.setdefault("traits", {}).setdefault(device_id, {})[
+                        "nest.trait.security.EnhancedBoltLockSettingsTrait"
+                    ] = enhanced_state
+                except Exception:
+                    pass
+            except Exception as err:
+                _LOGGER.warning("Enhanced auto-lock update failed: %s", err)
+
         update_req = v1_pb2.TraitUpdateStateRequest(
             traitRequest=v1_pb2.TraitRequest(
                 resourceId=device_id,
@@ -908,43 +974,8 @@ class NestAPIClient:
             state=any_state,
         )
 
-        batch_req = v1_pb2.BatchUpdateStateRequest(
-            batchUpdateStateRequest=[update_req],
-        )
-        encoded = batch_req.SerializeToString()
-
-        for base_url in self._candidate_bases():
-            api_url = f"{base_url}{ENDPOINT_UPDATE}"
-            raw = await self.connection.post(api_url, headers, encoded, read_timeout=API_TIMEOUT_SECONDS)
-            self._log_batch_update_details(raw)
-            status_code, status_msg = self._parse_v1_operation_status(raw)
-            if status_code is None:
-                status_code, status_msg = self._parse_command_status(raw)
-            if status_code == GRPC_CODE_INTERNAL:
-                _LOGGER.warning(
-                    "Update bolt_lock_settings returned INTERNAL; treating as transient (code %s): %s",
-                    status_code,
-                    status_msg,
-                )
-                try:
-                    await self.refresh_state()
-                except Exception as err:
-                    _LOGGER.debug("Refresh after INTERNAL error failed: %s", err)
-                return raw
-            if status_code not in (None, 0):
-                try:
-                    self._last_command_info = {
-                        "ts": asyncio.get_event_loop().time(),
-                        "device_id": device_id,
-                        "type_url": "weave.trait.security.BoltLockSettingsTrait",
-                        "status_code": int(status_code) if status_code is not None else None,
-                        "status_message": status_msg,
-                    }
-                except Exception:
-                    pass
-                raise RuntimeError(
-                    f"Update bolt_lock_settings failed (code {status_code}): {status_msg or 'Unknown error'}"
-                )
+        raw, success = await _post_update(update_req, "bolt_lock_settings")
+        if success:
             try:
                 self._last_command_info = {
                     "ts": asyncio.get_event_loop().time(),
@@ -962,8 +993,7 @@ class NestAPIClient:
                 ] = state_proto
             except Exception:
                 pass
-            return raw
-        raise RuntimeError("No valid gRPC endpoint available for BatchUpdateState")
+        return raw
 
     async def close(self):
         if self.connection and self.connection.connected:

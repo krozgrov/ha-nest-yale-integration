@@ -16,3 +16,4 @@
 - 2025-12-31: Preserve legacy STRUCTURE_ hex IDs alongside v2 UUIDs so BatchUpdateState headers use the legacy structure id (avoids INTERNAL errors).
 - 2025-12-31: Fix STRUCTURE_ parsing to overwrite default None so legacy structure ids actually persist for headers.
 - 2025-12-31: Revert auto-lock updates to legacy-only BoltLockSettingsTrait (no enhanced trait, no field mask, no extra headers) to match nest_legacy and avoid INTERNAL errors.
+- 2025-12-31: Add enhanced auto-lock update (separate request, no field mask) while retaining weave update to keep Nest app and lock behavior in sync.
