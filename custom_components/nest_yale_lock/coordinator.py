@@ -2,6 +2,7 @@
 import logging
 import asyncio
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import DOMAIN, UPDATE_INTERVAL_SECONDS, STALE_STATE_MAX_SECONDS
 
@@ -154,6 +155,13 @@ class NestCoordinator(DataUpdateCoordinator):
                 self._last_good_update = asyncio.get_event_loop().time()
             _LOGGER.debug("Normalized data from refresh_state: %s", normalized_data)
             return normalized_data
+        except ConfigEntryAuthFailed as err:
+            _LOGGER.warning("Authentication failed during refresh_state: %s", err)
+            if self.entry_id:
+                entry = self.hass.config_entries.async_get_entry(self.entry_id)
+                if entry:
+                    self.hass.config_entries.async_start_reauth(entry)
+            raise
         except Exception as e:
             _LOGGER.error("Failed to update data: %s", e, exc_info=True)
             return self.data
@@ -312,6 +320,14 @@ class NestCoordinator(DataUpdateCoordinator):
                     _LOGGER.debug("Observer update received but is empty.")
                     self._observer_healthy = False  # allow fallback polling if stream yields nothing
                     self.async_set_updated_data(self.data)
+        except ConfigEntryAuthFailed as err:
+            _LOGGER.warning("Authentication failed in observe stream: %s", err)
+            self._observer_healthy = False
+            if self.entry_id:
+                entry = self.hass.config_entries.async_get_entry(self.entry_id)
+                if entry:
+                    self.hass.config_entries.async_start_reauth(entry)
+            return
         except Exception as e:
             _LOGGER.error("Observer failed: %s", e, exc_info=True)
             self._observer_healthy = False  # Mark as unhealthy on failure

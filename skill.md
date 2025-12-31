@@ -25,7 +25,7 @@ Prioritized plan (least impactful -> most impactful)
    - Added options for stale timeout and debug attributes.
    - Default behavior unchanged; options are additive.
 
-4) Reauth flow
+4) Reauth flow (completed)
    - Raise ConfigEntryAuthFailed on auth/cookie expiration.
    - Add reauth step to config flow.
    - Higher risk: impacts setup path and user flows.
@@ -36,3 +36,4 @@ Validation approach
 
 Status updates
 - 2025-12-31: No plan changes; b42 includes HA 2025.12 compatibility fix for entity naming guard.
+- 2025-12-31: Completed reauth flow and prepared for b43 pre-release.

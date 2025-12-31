@@ -9,10 +9,20 @@
           "issue_token": "Issue Token URL",
           "cookies": "Cookies"
         }
+      },
+      "reauth": {
+        "title": "Reconnect Google Nest x Yale",
+        "description": "Your Nest session expired. Paste a new Issue Token URL and Cookies.",
+        "data": {
+          "issue_token": "Issue Token URL",
+          "cookies": "Cookies"
+        }
       }
     },
     "abort": {
-      "single_instance_allowed": "Only a single configuration of Google Nest x Yale is allowed."
+      "single_instance_allowed": "Only a single configuration of Google Nest x Yale is allowed.",
+      "reauth_successful": "Reauthentication successful.",
+      "unknown_error": "Unknown error. Check logs for details."
     },
     "error": {
       "auth_failure": "Authentication failed. Please verify the Issue Token URL and Cookies.",

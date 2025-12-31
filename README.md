@@ -27,12 +27,12 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.31b42 - HA 2025.12 compatibility (beta)
+## Pre-release 2025.12.31b43 - Reauth flow (beta)
 
-- Skip entity name normalization when the translated name is not a string
-- Fix compatibility with Home Assistant 2025.12 (no UNDEFINED import)
+- Trigger Home Assistant reauthentication when Nest cookies expire
+- Prompt for fresh Issue Token URL and Cookies instead of failing setup
 
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.31b42`.
+> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.31b43`.
 
 ## Release 2025.12.17 - Stability + Faster Setup
 

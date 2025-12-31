@@ -4,7 +4,7 @@ import asyncio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers import config_validation as cv
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady, ConfigEntryAuthFailed
 from .const import (
     DOMAIN,
     PLATFORMS,
@@ -47,7 +47,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     try:
         _LOGGER.debug("Creating NestAPIClient")
-        conn = await NestAPIClient.create(hass, issue_token, None, cookies)
+        conn = await NestAPIClient.create(
+            hass,
+            issue_token,
+            None,
+            cookies,
+            auth_failure_raises=True,
+        )
         _LOGGER.debug("Creating NestCoordinator")
         coordinator = NestCoordinator(hass, conn, entry.entry_id)
         options = entry.options
@@ -69,6 +75,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.debug("Coordinator setup complete, initial data: %s", coordinator.data)
         if not coordinator.data:
             _LOGGER.warning("Initial data still empty; waiting for observer updates (entities will use last-known state)")
+    except ConfigEntryAuthFailed as err:
+        _LOGGER.warning("Authentication failed for entry %s: %s", entry.entry_id, err)
+        raise
     except Exception as e:
         _LOGGER.error("Failed to initialize API client or coordinator: %s", e, exc_info=True)
         raise ConfigEntryNotReady(f"Failed to initialize: {e}") from e

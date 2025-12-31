@@ -27,6 +27,7 @@ from .proto.nest import rpc_pb2
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 from .proto.nest.trait import security_pb2 as nest_security_pb2
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.exceptions import ConfigEntryAuthFailed
 
 
 def _normalize_base(url):
@@ -118,7 +119,7 @@ class ConnectionShim:
         _LOGGER.debug("ConnectionShim closed (session managed by HA)")
 
 class NestAPIClient:
-    def __init__(self, hass, issue_token, api_key, cookies):
+    def __init__(self, hass, issue_token, api_key, cookies, auth_failure_raises=False):
         self.hass = hass
         self.authenticator = NestAuthenticator(issue_token, api_key, cookies)
         self.protobuf_handler = NestProtobufHandler()
@@ -141,6 +142,7 @@ class NestAPIClient:
         self._observe_payload = self._build_observe_payload()
         self._connect_failures = 0
         self._reauth_task = None
+        self._auth_failure_raises = bool(auth_failure_raises)
         _LOGGER.debug("NestAPIClient initialized with session")
 
     @property
@@ -300,9 +302,23 @@ class NestAPIClient:
                     device["auto_relock_on"] = bool(enhanced.autoRelockOn)
 
     @classmethod
-    async def create(cls, hass, issue_token, api_key=None, cookies=None, user_id=None):
+    async def create(
+        cls,
+        hass,
+        issue_token,
+        api_key=None,
+        cookies=None,
+        user_id=None,
+        auth_failure_raises=False,
+    ):
         _LOGGER.debug("Entering create")
-        instance = cls(hass, issue_token, api_key, cookies)
+        instance = cls(
+            hass,
+            issue_token,
+            api_key,
+            cookies,
+            auth_failure_raises=auth_failure_raises,
+        )
         await instance.async_setup()
         return instance
 
@@ -330,15 +346,18 @@ class NestAPIClient:
             if not self.auth_data or "access_token" not in self.auth_data:
                 # Check if the error was due to cookie expiration
                 error_msg = "Invalid authentication data received"
-                if hasattr(self.authenticator, '_last_error') and self.authenticator._last_error:
-                    if "Cookie expired" in str(self.authenticator._last_error):
-                        error_msg = str(self.authenticator._last_error)
-                    elif "USER_LOGGED_OUT" in str(self.authenticator._last_error):
-                        error_msg = (
-                            "Cookie expired: Your Google session has expired. "
-                            "Please re-obtain your cookies from the browser. "
-                            "See the integration documentation for instructions."
-                        )
+                auth_failure = False
+                last_error = getattr(self.authenticator, "_last_error", None)
+                if last_error:
+                    last_error_msg = str(last_error)
+                    if "Cookie expired" in last_error_msg or "USER_LOGGED_OUT" in last_error_msg:
+                        error_msg = last_error_msg
+                        auth_failure = True
+                    elif isinstance(last_error, ValueError):
+                        error_msg = last_error_msg
+                        auth_failure = True
+                if auth_failure and self._auth_failure_raises:
+                    raise ConfigEntryAuthFailed(error_msg)
                 raise ValueError(error_msg)
             self.access_token = self.auth_data["access_token"]
             self.transport_url = self.auth_data.get("urls", {}).get("transport_url")
@@ -372,7 +391,18 @@ class NestAPIClient:
             self._schedule_reauth()
         except Exception as e:
             _LOGGER.error(f"Authentication failed: {e}", exc_info=True)
+            if isinstance(e, ConfigEntryAuthFailed):
+                await self.close()
+                raise
+            error_msg = str(e)
+            auth_failure = False
+            if isinstance(e, ValueError) and (
+                "Cookie expired" in error_msg or "USER_LOGGED_OUT" in error_msg
+            ):
+                auth_failure = True
             await self.close()
+            if auth_failure and self._auth_failure_raises:
+                raise ConfigEntryAuthFailed(error_msg) from e
             raise
 
     async def fetch_structure_id(self):
@@ -492,6 +522,25 @@ class NestAPIClient:
                 except asyncio.TimeoutError:
                     _LOGGER.debug("refresh_state timeout after %s seconds", API_TIMEOUT_SECONDS)
                     last_error = TimeoutError(f"refresh_state timed out after {API_TIMEOUT_SECONDS} seconds")
+                except ConfigEntryAuthFailed:
+                    raise
+                except aiohttp.ClientResponseError as err:
+                    last_error = err
+                    if err.status in (401, 403):
+                        _LOGGER.info(
+                            "refresh_state got %s; reauthenticating and retrying",
+                            err.status,
+                        )
+                        try:
+                            await self.authenticate()
+                        except ConfigEntryAuthFailed:
+                            raise
+                        except Exception as auth_err:
+                            _LOGGER.warning(
+                                "Reauthentication failed during refresh_state: %s",
+                                auth_err,
+                            )
+                        continue
                 except Exception as err:
                     last_error = err
                     _LOGGER.error("Refresh state failed via %s: %s", api_url, err, exc_info=True)
@@ -577,7 +626,10 @@ class NestAPIClient:
                                 _LOGGER.warning("Observe stream reported authentication failure, triggering re-auth")
                                 self.connection.connected = False
                                 self.access_token = None
-                                await self.authenticate()
+                                try:
+                                    await self.authenticate()
+                                except ConfigEntryAuthFailed:
+                                    raise
                                 # Rebuild headers with new token before reconnecting
                                 headers = self._build_observe_headers()
                                 _LOGGER.info("Re-authenticated, reconnecting observe stream with new token")
@@ -650,6 +702,8 @@ class NestAPIClient:
                             await self.authenticate()
                             # Rebuild headers with new token
                             headers = self._build_observe_headers()
+                        except ConfigEntryAuthFailed:
+                            raise
                         except Exception:
                             _LOGGER.warning("Reauthentication failed during observe; will backoff and retry")
                         self.connection.connected = False
@@ -784,7 +838,10 @@ class NestAPIClient:
                 except aiohttp.ClientResponseError as cre:
                     if cre.status in (401, 403) and not reauthed:
                         _LOGGER.info("Command got %s; reauthenticating and retrying", cre.status)
-                        await self.authenticate()
+                        try:
+                            await self.authenticate()
+                        except ConfigEntryAuthFailed:
+                            raise
                         # Rebuild headers with new token
                         _refresh_command_headers()
                         reauthed = True
@@ -888,9 +945,27 @@ class NestAPIClient:
             encoded = batch_req.SerializeToString()
             for base_url in self._candidate_bases():
                 api_url = f"{base_url}{ENDPOINT_UPDATE}"
-                raw = await self.connection.post(
-                    api_url, headers, encoded, read_timeout=API_TIMEOUT_SECONDS
-                )
+                reauthed = False
+                while True:
+                    try:
+                        raw = await self.connection.post(
+                            api_url, headers, encoded, read_timeout=API_TIMEOUT_SECONDS
+                        )
+                        break
+                    except aiohttp.ClientResponseError as err:
+                        if err.status in (401, 403) and not reauthed:
+                            _LOGGER.info(
+                                "BatchUpdateState got %s; reauthenticating and retrying",
+                                err.status,
+                            )
+                            try:
+                                await self.authenticate()
+                            except ConfigEntryAuthFailed:
+                                raise
+                            headers.update(self._build_observe_headers())
+                            reauthed = True
+                            continue
+                        raise
                 self._log_batch_update_details(raw)
                 status_code, status_msg = self._parse_v1_operation_status(raw)
                 if status_code is None:

@@ -54,6 +54,37 @@ class NestYaleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors
         )
 
+    async def async_step_reauth(self, user_input=None):
+        """Handle re-authentication when credentials expire."""
+        errors = {}
+        entry_id = self.context.get("entry_id")
+        reauth_entry = self.hass.config_entries.async_get_entry(entry_id) if entry_id else None
+        if not reauth_entry:
+            _LOGGER.error("Reauth requested but no entry found (entry_id=%s)", entry_id)
+            return self.async_abort(reason="unknown_error")
+
+        if user_input is not None:
+            try:
+                await self._validate_credentials(user_input)
+                self.hass.config_entries.async_update_entry(
+                    reauth_entry,
+                    data={**reauth_entry.data, **user_input},
+                )
+                await self.hass.config_entries.async_reload(reauth_entry.entry_id)
+                return self.async_abort(reason="reauth_successful")
+            except ValueError as err:
+                _LOGGER.error("Invalid credentials during reauth: %s", err)
+                errors["base"] = "auth_failure"
+            except Exception as err:
+                _LOGGER.error("Unexpected reauth error: %s", err)
+                errors["base"] = "unknown_error"
+
+        return self.async_show_form(
+            step_id="reauth",
+            data_schema=self._get_schema(),
+            errors=errors,
+        )
+
     async def _validate_credentials(self, user_input):
         """Validate API credentials asynchronously."""
         api_client = NestAPIClient(
