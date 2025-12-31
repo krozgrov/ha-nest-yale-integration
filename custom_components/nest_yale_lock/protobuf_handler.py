@@ -468,9 +468,11 @@ class NestProtobufHandler:
         if obj_id.startswith("STRUCTURE_"):
             resolved = obj_id.replace("STRUCTURE_", "")
             if "-" in resolved:
-                locks_data.setdefault("structure_id_v2", resolved)
+                if not locks_data.get("structure_id_v2"):
+                    locks_data["structure_id_v2"] = resolved
             else:
-                locks_data.setdefault("structure_id", resolved)
+                if not locks_data.get("structure_id"):
+                    locks_data["structure_id"] = resolved
         _LOGGER.debug(
             "Parsed StructureInfoTrait for %s: structure_id=%s, structure_id_v2=%s",
             obj_id,
@@ -502,9 +504,11 @@ class NestProtobufHandler:
             if obj_id.startswith("STRUCTURE_"):
                 resolved = obj_id.replace("STRUCTURE_", "")
                 if "-" in resolved:
-                    locks_data.setdefault("structure_id_v2", resolved)
+                    if not locks_data.get("structure_id_v2"):
+                        locks_data["structure_id_v2"] = resolved
                 else:
-                    locks_data.setdefault("structure_id", resolved)
+                    if not locks_data.get("structure_id"):
+                        locks_data["structure_id"] = resolved
             if obj_id.startswith("USER_"):
                 locks_data["user_id"] = obj_id
 
