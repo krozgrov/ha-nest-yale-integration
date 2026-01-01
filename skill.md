@@ -36,6 +36,8 @@ Prioritized plan (least impactful -> most impactful)
    - Consolidate entity coordinator update boilerplate in the base class.
    - Simplify device_info update flow to reduce duplication and branching.
    - Consolidate battery trait parsing to a shared helper to avoid drift.
+   - Reduce INFO log noise for routine trait updates; keep verbose logs at DEBUG.
+   - Add last command status to diagnostics-only output for easier troubleshooting.
    - Risk: medium (refactor-heavy; must preserve entity/state behavior).
 
 Validation approach
@@ -53,3 +55,4 @@ Status updates
 - 2026-01-01: Added base entity coordinator update helper to reduce per-entity boilerplate.
 - 2026-01-01: Centralized battery trait parsing helpers for lock attributes and the battery sensor.
 - 2026-01-01: Simplified device_info update flow with shared helpers to reduce branching.
+- 2026-01-01: Queued log-noise reduction and diagnostics enhancement for the next refactor step.

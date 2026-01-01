@@ -45,3 +45,4 @@
 - 2026-01-01: Add a base entity helper for coordinator updates to reduce duplicate update boilerplate across entity platforms.
 - 2026-01-01: Centralize battery trait parsing helpers to keep lock attributes and battery sensor values aligned.
 - 2026-01-01: Simplify device_info updates with shared helpers to reduce branching while preserving registry update behavior.
+- 2026-01-01: Queue log-level tweak for routine trait updates and diagnostics-only last command status to reduce log noise and aid troubleshooting.
