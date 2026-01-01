@@ -52,3 +52,4 @@ Status updates
 - 2026-01-01: Deduplicated trait filtering/extraction helpers in coordinator; observer and fallback paths now share the same logic.
 - 2026-01-01: Added base entity coordinator update helper to reduce per-entity boilerplate.
 - 2026-01-01: Centralized battery trait parsing helpers for lock attributes and the battery sensor.
+- 2026-01-01: Simplified device_info update flow with shared helpers to reduce branching.

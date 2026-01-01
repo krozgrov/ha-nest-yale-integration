@@ -185,6 +185,61 @@ class NestYaleEntity(CoordinatorEntity):
             return None
         return self._battery_level_to_percent(battery_trait.get("battery_level"))
 
+    def _apply_device_identity_to_attr_info(
+        self,
+        new_serial,
+        new_firmware,
+        new_manufacturer,
+        new_model,
+        *,
+        include_serial: bool,
+    ) -> None:
+        if include_serial and new_serial:
+            self._attr_device_info["serial_number"] = new_serial
+        if new_firmware:
+            self._attr_device_info["sw_version"] = new_firmware
+        if new_manufacturer:
+            self._attr_device_info["manufacturer"] = new_manufacturer
+        if new_model:
+            self._attr_device_info["model"] = new_model
+
+    def _build_device_registry_updates(
+        self,
+        device,
+        new_serial,
+        new_firmware,
+        new_manufacturer,
+        new_model,
+    ) -> dict:
+        update_kwargs: dict = {}
+        if self._device_name:
+            device_name_by_user = getattr(device, "name_by_user", None)
+            if not device_name_by_user and not device.name:
+                update_kwargs["name"] = self._device_name
+                _LOGGER.info("Setting device name: %s", self._device_name)
+
+        if new_firmware:
+            if device.sw_version != new_firmware:
+                update_kwargs["sw_version"] = new_firmware
+                _LOGGER.info("Updating device firmware: %s -> %s", device.sw_version, new_firmware)
+            elif device.sw_version is None or device.sw_version == "unknown":
+                update_kwargs["sw_version"] = new_firmware
+                _LOGGER.info("Setting device firmware: %s (was unknown)", new_firmware)
+
+        if new_manufacturer and device.manufacturer != new_manufacturer:
+            update_kwargs["manufacturer"] = new_manufacturer
+            _LOGGER.info("Updating device manufacturer: %s -> %s", device.manufacturer, new_manufacturer)
+
+        if new_model and device.model != new_model:
+            update_kwargs["model"] = new_model
+            _LOGGER.info("Updating device model: %s -> %s", device.model, new_model)
+
+        if new_serial and device.serial_number != new_serial:
+            update_kwargs["serial_number"] = new_serial
+            _LOGGER.info("Updating device serial_number: %s -> %s", device.serial_number, new_serial)
+
+        return update_kwargs
+
     def _update_device_info_from_traits(self):
         """Update device_info when trait data arrives."""
         if self._device_info_updated:
@@ -206,13 +261,13 @@ class NestYaleEntity(CoordinatorEntity):
         if not (new_serial or new_firmware):
             return
         
-        # Update _attr_device_info
-        if new_firmware:
-            self._attr_device_info["sw_version"] = new_firmware
-        if new_manufacturer:
-            self._attr_device_info["manufacturer"] = new_manufacturer
-        if new_model:
-            self._attr_device_info["model"] = new_model
+        self._apply_device_identity_to_attr_info(
+            new_serial,
+            new_firmware,
+            new_manufacturer,
+            new_model,
+            include_serial=False,
+        )
         
         _LOGGER.info("Updated device_info for %s with trait data: serial=%s, fw=%s", 
                    self._attr_unique_id, new_serial, new_firmware)
@@ -221,15 +276,13 @@ class NestYaleEntity(CoordinatorEntity):
         # Only update registry if entity has been added to hass (self.hass is available)
         if not hasattr(self, 'hass') or self.hass is None:
             _LOGGER.debug("Entity %s not yet added to hass, skipping device registry update", self._attr_unique_id)
-            # Still update _attr_device_info even if not in hass yet
-            if new_serial:
-                self._attr_device_info["serial_number"] = new_serial
-            if new_firmware:
-                self._attr_device_info["sw_version"] = new_firmware
-            if new_manufacturer:
-                self._attr_device_info["manufacturer"] = new_manufacturer
-            if new_model:
-                self._attr_device_info["model"] = new_model
+            self._apply_device_identity_to_attr_info(
+                new_serial,
+                new_firmware,
+                new_manufacturer,
+                new_model,
+                include_serial=True,
+            )
             # IMPORTANT: don't mark as "updated" yet — we still need to update the
             # device registry once the entity is added to HA, otherwise firmware/
             # serial can remain "unknown" in the Device Info card.
@@ -250,78 +303,48 @@ class NestYaleEntity(CoordinatorEntity):
             if device:
                 _LOGGER.debug("Found device in registry: id=%s, identifiers=%s, sw_version=%s", 
                              device.id, device.identifiers, device.sw_version)
-                update_kwargs = {}
-
-                # Ensure a device name is set when HA doesn't have one and the user hasn't overridden it.
-                if self._device_name:
-                    device_name_by_user = getattr(device, "name_by_user", None)
-                    if not device_name_by_user and not device.name:
-                        update_kwargs["name"] = self._device_name
-                        _LOGGER.info("Setting device name: %s", self._device_name)
-                
-                # Always update firmware if we have it from trait data
-                if new_firmware:
-                    if device.sw_version != new_firmware:
-                        update_kwargs["sw_version"] = new_firmware
-                        _LOGGER.info("Updating device firmware: %s -> %s", device.sw_version, new_firmware)
-                    elif device.sw_version is None or device.sw_version == "unknown":
-                        update_kwargs["sw_version"] = new_firmware
-                        _LOGGER.info("Setting device firmware: %s (was unknown)", new_firmware)
-                
-                if new_manufacturer and device.manufacturer != new_manufacturer:
-                    update_kwargs["manufacturer"] = new_manufacturer
-                    _LOGGER.info("Updating device manufacturer: %s -> %s", device.manufacturer, new_manufacturer)
-                
-                if new_model and device.model != new_model:
-                    update_kwargs["model"] = new_model
-                    _LOGGER.info("Updating device model: %s -> %s", device.model, new_model)
-                
-                # Update serial_number field (this is what shows in Device Info card per HA docs)
-                if new_serial and device.serial_number != new_serial:
-                    update_kwargs["serial_number"] = new_serial
-                    _LOGGER.info("Updating device serial_number: %s -> %s", device.serial_number, new_serial)
-                
+                update_kwargs = self._build_device_registry_updates(
+                    device,
+                    new_serial,
+                    new_firmware,
+                    new_manufacturer,
+                    new_model,
+                )
                 if update_kwargs:
                     device_registry.async_update_device(device.id, **update_kwargs)
                     _LOGGER.info("✅ Successfully updated device registry for %s: %s", self._attr_unique_id, update_kwargs)
                 else:
                     _LOGGER.debug("No device registry updates needed for %s (already up to date)", self._attr_unique_id)
                 
-                # Always update _attr_device_info to match latest trait data
-                if new_serial:
-                    self._attr_device_info["serial_number"] = new_serial
-                if new_firmware:
-                    self._attr_device_info["sw_version"] = new_firmware
-                if new_manufacturer:
-                    self._attr_device_info["manufacturer"] = new_manufacturer
-                if new_model:
-                    self._attr_device_info["model"] = new_model
+                self._apply_device_identity_to_attr_info(
+                    new_serial,
+                    new_firmware,
+                    new_manufacturer,
+                    new_model,
+                    include_serial=True,
+                )
             else:
                 _LOGGER.warning("Could not find device in registry for %s (device_id=%s, serial=%s). Device may not be registered yet.", 
                               self._attr_unique_id, self._device_id, new_serial)
-                # Still update _attr_device_info even if device not found in registry
-                if new_serial:
-                    self._attr_device_info["serial_number"] = new_serial
-                if new_firmware:
-                    self._attr_device_info["sw_version"] = new_firmware
-                if new_manufacturer:
-                    self._attr_device_info["manufacturer"] = new_manufacturer
-                if new_model:
-                    self._attr_device_info["model"] = new_model
+                self._apply_device_identity_to_attr_info(
+                    new_serial,
+                    new_firmware,
+                    new_manufacturer,
+                    new_model,
+                    include_serial=True,
+                )
                 # Retry on next update (or when entity is fully registered).
                 self._device_registry_update_pending = True
                 return
         except Exception as e:
             _LOGGER.error("Error updating device registry for %s: %s", self._attr_unique_id, e, exc_info=True)
-            # Still update _attr_device_info even if registry update fails
-            if new_serial:
-                self._attr_device_info["serial_number"] = new_serial
-            if new_firmware:
-                self._attr_device_info["sw_version"] = new_firmware
-            if new_manufacturer:
-                self._attr_device_info["manufacturer"] = new_manufacturer
-            if new_model:
-                self._attr_device_info["model"] = new_model
+            self._apply_device_identity_to_attr_info(
+                new_serial,
+                new_firmware,
+                new_manufacturer,
+                new_model,
+                include_serial=True,
+            )
             self._device_registry_update_pending = True
             return
         
