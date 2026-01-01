@@ -89,11 +89,15 @@ class NestYaleEntity(CoordinatorEntity):
     async def async_added_to_hass(self) -> None:
         """Run when entity is added to Home Assistant."""
         await super().async_added_to_hass()
+        latest = self._coordinator.data.get(self._device_id)
+        if isinstance(latest, dict):
+            self._device_data.update(latest)
         # If we saw trait data early, retry registry update now that hass is available.
         if not self._device_info_updated or self._device_registry_update_pending:
             self._update_device_info_from_traits()
         # Ensure entity registry original_name reflects translated entity naming.
         self._ensure_entity_registry_name()
+        self.async_write_ha_state()
 
     def _ensure_entity_registry_name(self) -> None:
         """Normalize entity registry names for entity-named sub-entities."""

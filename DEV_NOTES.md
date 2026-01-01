@@ -37,3 +37,4 @@
 - 2025-12-31: Avoid importing UNDEFINED (missing in HA 2025.12) and skip registry name normalization when the computed name is not a non-empty string to prevent entity registry serialization errors.
 - 2025-12-31: Add reauth flow by raising ConfigEntryAuthFailed on cookie/auth expiration and starting reauth from coordinator when authentication fails.
 - 2025-12-31: Filter cached trait data to lock-only device IDs plus structure/user traits to reduce unrelated device metadata bleed-through in HA UI/logs.
+- 2025-12-31: Sync latest coordinator device data when entities are added so battery/traits don’t stay unknown until the next update.
