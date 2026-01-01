@@ -30,7 +30,7 @@ Prioritized plan (least impactful -> most impactful)
    - Add reauth step to config flow.
    - Higher risk: impacts setup path and user flows.
 
-5) Code health review follow-ups (pending)
+5) Code health review follow-ups (completed)
    - Unify trait filtering/extraction helpers used by observer + fallback paths.
    - Fix trait key mismatch in metadata lookup so cached DeviceIdentityTrait is used consistently.
    - Consolidate entity coordinator update boilerplate in the base class.
@@ -55,5 +55,5 @@ Status updates
 - 2026-01-01: Added base entity coordinator update helper to reduce per-entity boilerplate.
 - 2026-01-01: Centralized battery trait parsing helpers for lock attributes and the battery sensor.
 - 2026-01-01: Simplified device_info update flow with shared helpers to reduce branching.
-- 2026-01-01: Queued log-noise reduction and diagnostics enhancement for the next refactor step.
 - 2026-01-01: Reduced routine trait update logs to DEBUG and added last-command status to diagnostics output.
+- 2026-01-01: Completed code health review follow-ups for refactor readiness.

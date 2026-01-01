@@ -30,10 +30,11 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Release 2026.01.01 - Trait cache on fallback refresh (latest stable)
+## Release 2026.01.02 - Code health refactors + diagnostics (latest stable)
 
-- Preserve and merge trait data during fallback refresh so battery/firmware do not show `unknown` after restarts
-- Includes reauth flow and options support from recent pre-releases
+- Deduplicated coordinator trait handling and entity update boilerplate
+- Centralized battery parsing and simplified device_info updates
+- Diagnostics now include last command status; routine trait updates log at DEBUG
 
 ## Release 2025.12.17 - Stability + Faster Setup
 
