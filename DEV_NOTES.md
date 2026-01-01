@@ -41,3 +41,4 @@
 - 2025-12-31: Merge cached trait data into fallback refreshes and persist all_traits from refresh_state to avoid firmware/battery showing unknown until a new observer update.
 - 2026-01-01: Capture code health review findings (trait key mismatch in metadata lookup, duplicated trait filtering/extraction helpers, repeated entity update boilerplate, complex device_info update flow) to guide refactors without changing runtime behavior yet.
 - 2026-01-01: Begin code health work by making DeviceIdentityTrait metadata lookup tolerant of type_url key variations.
+- 2026-01-01: Deduplicate coordinator trait filtering/extraction helpers to keep observer and fallback paths in sync.

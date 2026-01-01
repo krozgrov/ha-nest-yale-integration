@@ -116,6 +116,35 @@ class NestCoordinator(DataUpdateCoordinator):
 
         self._reload_task = self.hass.loop.create_task(_do_reload())
 
+    @staticmethod
+    def _filter_traits_for_locks(traits: dict, lock_ids: set[str]) -> dict:
+        if not traits or not lock_ids:
+            return traits
+        filtered: dict = {}
+        for trait_key, trait_info in traits.items():
+            if not isinstance(trait_info, dict):
+                filtered[trait_key] = trait_info
+                continue
+            object_id = trait_info.get("object_id")
+            if object_id in lock_ids:
+                filtered[trait_key] = trait_info
+                continue
+            if isinstance(object_id, str) and (
+                object_id.startswith("STRUCTURE_") or object_id.startswith("USER_")
+            ):
+                filtered[trait_key] = trait_info
+        return filtered
+
+    @staticmethod
+    def _extract_device_traits(device_id: str, traits: dict) -> dict:
+        device_traits = {}
+        for trait_key, trait_info in traits.items():
+            if trait_key.startswith(f"{device_id}:"):
+                trait_name = trait_info.get("type_url", "").split(".")[-1]
+                if trait_info.get("decoded") and trait_info.get("data"):
+                    device_traits[trait_name] = trait_info["data"]
+        return device_traits
+
     async def _async_update_data(self):
         """Fetch data from API client (fallback only when observe stream is unhealthy)."""
         # If observer claims healthy but we still have no data, force a fallback once
@@ -147,39 +176,12 @@ class NestCoordinator(DataUpdateCoordinator):
             if normalized_data:
                 all_traits = self.api_client.current_state.get("all_traits", {}) or {}
 
-                def _filter_traits_for_locks(traits: dict, lock_ids: set[str]) -> dict:
-                    if not traits or not lock_ids:
-                        return traits
-                    filtered: dict = {}
-                    for trait_key, trait_info in traits.items():
-                        if not isinstance(trait_info, dict):
-                            filtered[trait_key] = trait_info
-                            continue
-                        object_id = trait_info.get("object_id")
-                        if object_id in lock_ids:
-                            filtered[trait_key] = trait_info
-                            continue
-                        if isinstance(object_id, str) and (
-                            object_id.startswith("STRUCTURE_") or object_id.startswith("USER_")
-                        ):
-                            filtered[trait_key] = trait_info
-                    return filtered
-
-                def _extract_device_traits(device_id: str, traits: dict) -> dict:
-                    device_traits = {}
-                    for trait_key, trait_info in traits.items():
-                        if trait_key.startswith(f"{device_id}:"):
-                            trait_name = trait_info.get("type_url", "").split(".")[-1]
-                            if trait_info.get("decoded") and trait_info.get("data"):
-                                device_traits[trait_name] = trait_info["data"]
-                    return device_traits
-
                 if all_traits:
                     if self._known_lock_ids:
-                        all_traits = _filter_traits_for_locks(all_traits, self._known_lock_ids)
+                        all_traits = self._filter_traits_for_locks(all_traits, self._known_lock_ids)
                         self.api_client.current_state["all_traits"] = all_traits
                     for device_id, device in normalized_data.items():
-                        device_traits = _extract_device_traits(device_id, all_traits)
+                        device_traits = self._extract_device_traits(device_id, all_traits)
                         if device_traits:
                             device["traits"] = {**device.get("traits", {}), **device_traits}
             # Keep API client's cache in sync for metadata lookups (name/firmware fallbacks)
@@ -251,23 +253,6 @@ class NestCoordinator(DataUpdateCoordinator):
                         )
                         return any(key in device for key in lock_keys)
 
-                    def _filter_traits_for_locks(traits: dict, lock_ids: set[str]) -> dict:
-                        if not traits or not lock_ids:
-                            return traits
-                        filtered: dict = {}
-                        for trait_key, trait_info in traits.items():
-                            if not isinstance(trait_info, dict):
-                                filtered[trait_key] = trait_info
-                                continue
-                            object_id = trait_info.get("object_id")
-                            if object_id in lock_ids:
-                                filtered[trait_key] = trait_info
-                                continue
-                            if isinstance(object_id, str) and (
-                                object_id.startswith("STRUCTURE_") or object_id.startswith("USER_")
-                            ):
-                                filtered[trait_key] = trait_info
-                        return filtered
                     cached_traits = self.api_client.current_state.get("all_traits", {}) or {}
                     if all_traits:
                         merged_traits = {**cached_traits, **all_traits}
@@ -275,14 +260,6 @@ class NestCoordinator(DataUpdateCoordinator):
                         all_traits = merged_traits
                     else:
                         all_traits = cached_traits
-                    def _extract_device_traits(device_id: str) -> dict:
-                        device_traits = {}
-                        for trait_key, trait_info in all_traits.items():
-                            if trait_key.startswith(f"{device_id}:"):
-                                trait_name = trait_info.get("type_url", "").split(".")[-1]
-                                if trait_info.get("decoded") and trait_info.get("data"):
-                                    device_traits[trait_name] = trait_info["data"]
-                        return device_traits
 
                     if normalized_update:
                         lock_ids_from_traits = _extract_lock_ids_from_traits(trait_states)
@@ -303,7 +280,7 @@ class NestCoordinator(DataUpdateCoordinator):
                         if normalized_update and not self._known_lock_ids:
                             self._known_lock_ids.update(normalized_update.keys())
                         if self._known_lock_ids:
-                            all_traits = _filter_traits_for_locks(all_traits, self._known_lock_ids)
+                            all_traits = self._filter_traits_for_locks(all_traits, self._known_lock_ids)
                         for device_id, device in normalized_update.items():
                             # Ensure required fields exist even if absent in payload
                             device.setdefault("device_id", device_id)
@@ -323,7 +300,7 @@ class NestCoordinator(DataUpdateCoordinator):
                                         device.pop(key, None)
                             
                             # Extract trait data for this device from all_traits
-                            device_traits = _extract_device_traits(device_id)
+                            device_traits = self._extract_device_traits(device_id, all_traits)
                             if device_traits:
                                 device["traits"] = device_traits
                                 _LOGGER.info("Added trait data to device %s: %s", device_id, list(device_traits.keys()))
@@ -346,7 +323,7 @@ class NestCoordinator(DataUpdateCoordinator):
                                       normalized_update, self.api_client.current_state["user_id"])
                     elif all_traits:
                         if self._known_lock_ids:
-                            all_traits = _filter_traits_for_locks(all_traits, self._known_lock_ids)
+                            all_traits = self._filter_traits_for_locks(all_traits, self._known_lock_ids)
                             self.api_client.current_state["all_traits"] = all_traits
                         updated = False
                         merged_data = {}
@@ -354,7 +331,7 @@ class NestCoordinator(DataUpdateCoordinator):
                             if not isinstance(device, dict):
                                 merged_data[device_id] = device
                                 continue
-                            device_traits = _extract_device_traits(device_id)
+                            device_traits = self._extract_device_traits(device_id, all_traits)
                             if device_traits:
                                 merged_device = {**device, "traits": {**device.get("traits", {}), **device_traits}}
                                 merged_data[device_id] = merged_device
