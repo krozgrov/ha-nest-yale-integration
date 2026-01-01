@@ -37,3 +37,4 @@ Validation approach
 Status updates
 - 2025-12-31: No plan changes; b42 includes HA 2025.12 compatibility fix for entity naming guard.
 - 2025-12-31: Completed reauth flow and prepared for b43 pre-release.
+- 2025-12-31: Filter trait cache to lock-only devices plus structure/user metadata to reduce unrelated device bleed-through.

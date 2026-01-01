@@ -211,6 +211,24 @@ class NestCoordinator(DataUpdateCoordinator):
                             "last_action",
                         )
                         return any(key in device for key in lock_keys)
+
+                    def _filter_traits_for_locks(traits: dict, lock_ids: set[str]) -> dict:
+                        if not traits or not lock_ids:
+                            return traits
+                        filtered: dict = {}
+                        for trait_key, trait_info in traits.items():
+                            if not isinstance(trait_info, dict):
+                                filtered[trait_key] = trait_info
+                                continue
+                            object_id = trait_info.get("object_id")
+                            if object_id in lock_ids:
+                                filtered[trait_key] = trait_info
+                                continue
+                            if isinstance(object_id, str) and (
+                                object_id.startswith("STRUCTURE_") or object_id.startswith("USER_")
+                            ):
+                                filtered[trait_key] = trait_info
+                        return filtered
                     cached_traits = self.api_client.current_state.get("all_traits", {}) or {}
                     if all_traits:
                         merged_traits = {**cached_traits, **all_traits}
@@ -245,6 +263,8 @@ class NestCoordinator(DataUpdateCoordinator):
                             }
                         if normalized_update and not self._known_lock_ids:
                             self._known_lock_ids.update(normalized_update.keys())
+                        if self._known_lock_ids:
+                            all_traits = _filter_traits_for_locks(all_traits, self._known_lock_ids)
                         for device_id, device in normalized_update.items():
                             # Ensure required fields exist even if absent in payload
                             device.setdefault("device_id", device_id)
@@ -286,6 +306,9 @@ class NestCoordinator(DataUpdateCoordinator):
                         _LOGGER.debug("Applied normalized observer update: %s, current_state user_id: %s",
                                       normalized_update, self.api_client.current_state["user_id"])
                     elif all_traits:
+                        if self._known_lock_ids:
+                            all_traits = _filter_traits_for_locks(all_traits, self._known_lock_ids)
+                            self.api_client.current_state["all_traits"] = all_traits
                         updated = False
                         merged_data = {}
                         for device_id, device in (self.data or {}).items():
