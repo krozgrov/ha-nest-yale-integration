@@ -39,7 +39,6 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 ## Known Limitations
 
 - Logs may show `DecodeError in StreamBody: Error parsing message with type 'nest.rpc.StreamBody'` due to incomplete protobuf decoding. This is **harmless** and does not affect functionality.
-- Additional message types beyond the basic lock trait are unmapped, limiting advanced diagnostics and telemetry.
 - API response formats and authentication flows may change, potentially causing breaking updates.
 
 ## Installation
@@ -91,21 +90,6 @@ After onboarding:
 - `lock.unlock`
 service calls.
  - Verify entities: Battery sensor, Last Action sensor, Tamper binary sensor, Auto-Lock switch, Auto-Lock Duration select.
-
-## Community Help Needed
-
-This project is open to contributions from the community.  
-If you have experience with:
-
-- Protocol Buffers (Protobuf)
-
-Your input would be incredibly valuable!
-
-You can contribute by:
-
-- Submitting pull requests
-- Opening issues with logs or analysis
-- Reverse engineering additional messages and formats
 
 ## License
 
