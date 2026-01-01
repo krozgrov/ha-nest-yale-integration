@@ -38,3 +38,4 @@
 - 2025-12-31: Add reauth flow by raising ConfigEntryAuthFailed on cookie/auth expiration and starting reauth from coordinator when authentication fails.
 - 2025-12-31: Filter cached trait data to lock-only device IDs plus structure/user traits to reduce unrelated device metadata bleed-through in HA UI/logs.
 - 2025-12-31: Sync latest coordinator device data when entities are added so battery/traits don’t stay unknown until the next update.
+- 2025-12-31: Merge cached trait data into fallback refreshes and persist all_traits from refresh_state to avoid firmware/battery showing unknown until a new observer update.

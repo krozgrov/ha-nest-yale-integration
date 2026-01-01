@@ -144,6 +144,44 @@ class NestCoordinator(DataUpdateCoordinator):
                 device.pop("bolt_moving", None)
             if normalized_data:
                 self._known_lock_ids = set(normalized_data.keys())
+            if normalized_data:
+                all_traits = self.api_client.current_state.get("all_traits", {}) or {}
+
+                def _filter_traits_for_locks(traits: dict, lock_ids: set[str]) -> dict:
+                    if not traits or not lock_ids:
+                        return traits
+                    filtered: dict = {}
+                    for trait_key, trait_info in traits.items():
+                        if not isinstance(trait_info, dict):
+                            filtered[trait_key] = trait_info
+                            continue
+                        object_id = trait_info.get("object_id")
+                        if object_id in lock_ids:
+                            filtered[trait_key] = trait_info
+                            continue
+                        if isinstance(object_id, str) and (
+                            object_id.startswith("STRUCTURE_") or object_id.startswith("USER_")
+                        ):
+                            filtered[trait_key] = trait_info
+                    return filtered
+
+                def _extract_device_traits(device_id: str, traits: dict) -> dict:
+                    device_traits = {}
+                    for trait_key, trait_info in traits.items():
+                        if trait_key.startswith(f"{device_id}:"):
+                            trait_name = trait_info.get("type_url", "").split(".")[-1]
+                            if trait_info.get("decoded") and trait_info.get("data"):
+                                device_traits[trait_name] = trait_info["data"]
+                    return device_traits
+
+                if all_traits:
+                    if self._known_lock_ids:
+                        all_traits = _filter_traits_for_locks(all_traits, self._known_lock_ids)
+                        self.api_client.current_state["all_traits"] = all_traits
+                    for device_id, device in normalized_data.items():
+                        device_traits = _extract_device_traits(device_id, all_traits)
+                        if device_traits:
+                            device["traits"] = {**device.get("traits", {}), **device_traits}
             # Keep API client's cache in sync for metadata lookups (name/firmware fallbacks)
             try:
                 self.api_client.current_state["devices"]["locks"].update(normalized_data)
@@ -153,8 +191,9 @@ class NestCoordinator(DataUpdateCoordinator):
                 self._initial_data_event.set()
                 self._empty_refresh_attempts = 0
                 self._last_good_update = asyncio.get_event_loop().time()
-            _LOGGER.debug("Normalized data from refresh_state: %s", normalized_data)
-            return normalized_data
+            merged = self._merge_device_update(normalized_data) if normalized_data else self.data
+            _LOGGER.debug("Normalized data from refresh_state: %s", merged)
+            return merged
         except ConfigEntryAuthFailed as err:
             _LOGGER.warning("Authentication failed during refresh_state: %s", err)
             if self.entry_id:

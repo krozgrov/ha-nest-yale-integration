@@ -492,6 +492,10 @@ class NestAPIClient:
                                     self.current_state["user_id"] = self._user_id
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                            if locks_data.get("all_traits"):
+                                current_traits = self.current_state.get("all_traits", {}) or {}
+                                merged_traits = {**current_traits, **locks_data["all_traits"]}
+                                self.current_state["all_traits"] = merged_traits
                             if locks_data.get("structure_id"):
                                 new_structure_id = locks_data["structure_id"]
                                 if self._is_legacy_structure_id(new_structure_id):

@@ -197,11 +197,74 @@ This file is not a changelog or task list. It exists solely to preserve intent a
 
 13.2 Distribution & Packaging Awareness
 
-AI agents must assume that control and context files such as agents.md and DEV_NOTES.md:
+AI agents must assume that control and context files such as agents.md, DEV_NOTES.md, and skills.md:
 •	Are intentionally committed for development and AI guidance
 •	Are excluded from distribution artifacts (e.g., HACS, release archives)
+•	Are listed as export-ignore in .gitattributes
 
 Agents must not rely on these files being present at runtime or in end-user environments.
+
+⸻
+
+13.3 Required AI Control Files
+
+The following files are required in all AI‑assisted projects in this repository:
+	•	agents.md — defines AI behavioral and engineering guardrails
+	•	DEV_NOTES.md — preserves design intent, decisions, and rationale
+	•	skills.md — tracks planned capabilities, backlog items, and execution readiness
+
+These files exist to:
+	•	Provide stable context across sessions, contributors, and tools
+	•	Prevent hallucination‑driven redesign or drift
+	•	Support consistent execution and delivery discipline
+
+They must be version‑controlled but excluded from distribution packages.
+
+⸻
+
+13.4 Skills Planning & Execution Discipline
+
+skills.md tracks planned features, enhancements, and future work.
+
+For every planned item, AI agents must:
+	•	Define a clear description of the goal or capability
+	•	Provide an ordered execution outline before implementation
+	•	Call out architectural, migration, or UX risk areas
+	•	Identify test and validation expectations
+
+Work must not begin until the outline exists.
+
+The outline should be:
+	•	Lightweight but actionable
+	•	Written for future contributors and AI agents
+	•	Updated if execution details materially change
+
+This ensures that planned work is:
+	•	Deliberate
+	•	Traceable
+	•	Reviewable before impact occurs
+
+⸻
+
+13.5 AI Self‑Evaluation & Reward Tracking (Experimental Guidance)
+
+To encourage quality and intentional delivery, AI agents may use the control files (agents.md, DEV_NOTES.md, and skills.md) to:
+	•	Track completion of planned tasks
+	•	Assess whether objectives were delivered as defined
+	•	Note when scope deviates from the plan
+
+When a planned task is delivered successfully and aligned with its outline, the agent should:
+	•	Record success in skills.md
+	•	Reinforce patterns that led to success
+
+When tasks are missed, incomplete, or misaligned with the plan, the agent should:
+	•	Record the miss
+	•	Identify failure causes (ambiguity, oversight, design constraints, etc.)
+	•	Reduce its internal confidence score for the pattern used
+
+This is a reflection mechanism only, not a runtime feature.
+
+Human reviewers remain the final source of truth.
 
 ⸻
 
@@ -513,17 +576,13 @@ This repository uses HACS for testing and validation prior to stable release.
 
 21.1 Version Format
 
-For testing and pre-releases, AI agents must use the following date-based version format:
-
-{YYYY}.{MM}.{DD}b{N}
-
-Stable releases drop the `b` suffix and use:
+For testing, pre-releases, and SDLC branches, AI agents must use the following date-based version format:
 
 {YYYY}.{MM}.{DD}
 
 Examples:
-	•	2025.12.31b36 (pre-release)
-	•	2025.12.31 (stable)
+	•	2025.01.14
+	•	2025.03.02
 
 This format:
 	•	Makes test builds easy to identify
@@ -534,12 +593,33 @@ This format:
 
 21.2 Pre-Releases in HACS
 
+(superseded by 21.2A for GitHub/HACS workflows — retained for historical reference)
+
 AI agents must:
 	•	Mark test builds as pre-releases in HACS
 	•	Avoid publishing experimental or SDLC builds as stable releases
 	•	Ensure pre-releases are clearly distinguishable from stable versions
 
 Pre-releases are the primary mechanism for functional and regression testing.
+
+⸻
+
+21.2A GitHub Release & Tagging Requirements for HACS
+
+To support HACS testing and deployment, every pre-release must:
+	•	Be tagged in GitHub using the required format YYYY.MM.DDbN
+	•	Be published as a GitHub pre-release
+	•	Be created from the current active development branch
+	•	Represent the actual commit intended for validation
+
+Sequence numbering must:
+	•	Start at b1 for the first beta that day
+	•	Increment by 1 per additional pre-release on the same day
+
+These tags must exist so they can be downloaded via HACS.
+
+Stable releases must use the matching format without the beta suffix:
+	•	YYYY.MM.DD
 
 ⸻
 
@@ -574,26 +654,6 @@ Before promoting a pre-release to stable, AI agents must confirm:
 	•	No unresolved breaking changes
 	•	Migration impacts (if any) are documented
 	•	The changelog reflects cumulative changes since last stable
-
-⸻
-
-21.6 Documentation Maintenance for Releases
-
-AI agents must ensure the following documentation files are updated with each pre-release and stable release:
-
-Required updates:
-	•	DEV_NOTES.md – Record architectural decisions, behavioral changes, and rationale for changes included in the release
-	•	skill.md – Update the prioritized plan to reflect completed items and current status
-	•	agents.md – Update this file if release processes or rules change
-	•	Related project documentation – If changes affect related projects (e.g., yalenestlocktest/README.md), update those files as well
-
-Documentation updates must:
-	•	Be committed alongside code changes or in the same release cycle
-	•	Reflect the actual state of the codebase at the time of release
-	•	Preserve historical context and decision rationale
-	•	Be reviewed as part of the release process
-
-This ensures continuity across development sessions and maintains accurate project documentation for contributors and maintainers.
 
 ⸻
 
