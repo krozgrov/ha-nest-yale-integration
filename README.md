@@ -36,18 +36,6 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 - Centralized battery parsing and simplified device_info updates
 - Diagnostics now include last command status; routine trait updates log at DEBUG
 
-## Release 2025.12.17 - Stability + Faster Setup
-
-- Faster “Add Integration” by keeping config-flow credential validation token-only (avoid blocking on long streaming refresh during auth).
-- More reliable metadata: firmware/serial/battery populate correctly after onboarding.
-- Fewer state glitches:
-  - Preserve `bolt_moving` from observer updates with a safe default so optimistic clear happens promptly when the stream reports the actuator is no longer moving.
-  - Ignore ambiguous `BoltLockTrait.lockedState` values (UNKNOWN/UNSPECIFIED) to prevent phantom locked/unlocked flips.
-  - Reduce log noise: only log “Lock state changed …” when the locked state actually changes; log optimistic moving clears separately.
-
-> To update via HACS: download version `2025.12.17` and restart Home Assistant.
-
-
 ## Known Limitations
 
 - Logs may show `DecodeError in StreamBody: Error parsing message with type 'nest.rpc.StreamBody'` due to incomplete protobuf decoding. This is **harmless** and does not affect functionality.
