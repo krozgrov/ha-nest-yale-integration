@@ -46,3 +46,4 @@
 - 2026-01-01: Centralize battery trait parsing helpers to keep lock attributes and battery sensor values aligned.
 - 2026-01-01: Simplify device_info updates with shared helpers to reduce branching while preserving registry update behavior.
 - 2026-01-01: Queue log-level tweak for routine trait updates and diagnostics-only last command status to reduce log noise and aid troubleshooting.
+- 2026-01-01: Lower routine trait update logging to DEBUG and expose last command status in diagnostics output.

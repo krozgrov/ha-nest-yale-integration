@@ -56,3 +56,4 @@ Status updates
 - 2026-01-01: Centralized battery trait parsing helpers for lock attributes and the battery sensor.
 - 2026-01-01: Simplified device_info update flow with shared helpers to reduce branching.
 - 2026-01-01: Queued log-noise reduction and diagnostics enhancement for the next refactor step.
+- 2026-01-01: Reduced routine trait update logs to DEBUG and added last-command status to diagnostics output.

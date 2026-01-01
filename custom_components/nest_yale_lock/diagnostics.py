@@ -22,6 +22,13 @@ async def async_get_config_entry_diagnostics(
     data = coordinator.data if coordinator else {}
     api = coordinator.api_client if coordinator else None
     age = coordinator.last_good_update_age() if coordinator and hasattr(coordinator, "last_good_update_age") else None
+    last_command = getattr(api, "_last_command_info", None)
+    last_command_status = None
+    if isinstance(last_command, dict):
+        last_command_status = {
+            "status_code": last_command.get("status_code"),
+            "status_message": last_command.get("status_message"),
+        }
 
     # Compute observe age in seconds when possible
     observe_age = None
@@ -53,6 +60,7 @@ async def async_get_config_entry_diagnostics(
             "connection_connected": getattr(getattr(api, "connection", None), "connected", None),
             "observe_last_yale_age_seconds": observe_age,
             "access_token_present": bool(getattr(api, "access_token", None)),
-            "last_command": getattr(api, "_last_command_info", None),
+            "last_command": last_command,
+            "last_command_status": last_command_status,
         },
     }

@@ -303,7 +303,11 @@ class NestCoordinator(DataUpdateCoordinator):
                             device_traits = self._extract_device_traits(device_id, all_traits)
                             if device_traits:
                                 device["traits"] = device_traits
-                                _LOGGER.info("Added trait data to device %s: %s", device_id, list(device_traits.keys()))
+                                _LOGGER.debug(
+                                    "Added trait data to device %s: %s",
+                                    device_id,
+                                    list(device_traits.keys()),
+                                )
                             else:
                                 _LOGGER.debug("No trait data found for device %s in all_traits (keys: %s)", device_id, list(all_traits.keys())[:5])
                         
