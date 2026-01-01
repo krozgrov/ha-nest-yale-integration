@@ -50,3 +50,4 @@ Status updates
 - 2026-01-01: Code health review captured follow-up refactors for duplication and trait metadata alignment; pending decision.
 - 2026-01-01: Started code health work; fixed DeviceIdentityTrait metadata lookup to handle type_url key variations.
 - 2026-01-01: Deduplicated trait filtering/extraction helpers in coordinator; observer and fallback paths now share the same logic.
+- 2026-01-01: Added base entity coordinator update helper to reduce per-entity boilerplate.

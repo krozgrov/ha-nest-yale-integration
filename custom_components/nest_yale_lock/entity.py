@@ -154,6 +154,15 @@ class NestYaleEntity(CoordinatorEntity):
         _LOGGER.debug("Initial device_info for %s: identifiers=%s, serial_number=%s, sw_version=%s", 
                      self._attr_unique_id, identifiers, serial_number, metadata["firmware_revision"])
 
+    def _apply_coordinator_update(self) -> dict | None:
+        """Apply the latest coordinator device data and update trait-derived metadata."""
+        new_data = self._coordinator.data.get(self._device_id)
+        if new_data:
+            self._device_data.update(new_data)
+            self._update_device_info_from_traits()
+            return new_data
+        return None
+
     def _update_device_info_from_traits(self):
         """Update device_info when trait data arrives."""
         if self._device_info_updated:

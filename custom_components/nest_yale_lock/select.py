@@ -91,8 +91,5 @@ class NestYaleAutoLockDurationSelect(NestYaleEntity, SelectEntity):
         )
 
     def _handle_coordinator_update(self) -> None:
-        new_data = self._coordinator.data.get(self._device_id)
-        if new_data:
-            self._device_data.update(new_data)
-            self._update_device_info_from_traits()
+        self._apply_coordinator_update()
         self.async_write_ha_state()

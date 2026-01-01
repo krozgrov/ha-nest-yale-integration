@@ -42,3 +42,4 @@
 - 2026-01-01: Capture code health review findings (trait key mismatch in metadata lookup, duplicated trait filtering/extraction helpers, repeated entity update boilerplate, complex device_info update flow) to guide refactors without changing runtime behavior yet.
 - 2026-01-01: Begin code health work by making DeviceIdentityTrait metadata lookup tolerant of type_url key variations.
 - 2026-01-01: Deduplicate coordinator trait filtering/extraction helpers to keep observer and fallback paths in sync.
+- 2026-01-01: Add a base entity helper for coordinator updates to reduce duplicate update boilerplate across entity platforms.
