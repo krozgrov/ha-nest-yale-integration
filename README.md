@@ -14,25 +14,26 @@ A lot of effort is going into this integration. So if you can afford it and want
 
 ## Features
 
-- Real-time Yale lock state via Nest Observe stream
+- Real-time Yale lock state via Nest Observe stream (with fallback refresh)
 - Manual lock / unlock commands
-- Battery level sensor entity with percentage display
-- Serial number, firmware, and device information in Device Info card
-- Device attributes (battery status, device ID, firmware, serial, etc.)
+- Battery level sensor with percentage display
+- Last action sensor (Physical/Keypad/Remote, etc.)
+- Auto-Lock switch and Auto-Lock duration selector
+- Tamper binary sensor
+- Serial number and firmware shown in the Device Info card
+- Options: stale state timeout + masked debug attributes
 - Translated entity names (no hardcoded English labels)
 
 ## Status
 
-Core lock and unlock commands work reliably, and state updates are handled via an Observe stream with automatic reconnection and authentication renewal.
+Core lock and unlock commands work reliably, and state updates are handled via an Observe stream with automatic reconnection, fallback refresh, and reauthentication support.
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-## Pre-release 2025.12.31b43 - Reauth flow (beta)
+## Release 2026.01.01 - Trait cache on fallback refresh (latest stable)
 
-- Trigger Home Assistant reauthentication when Nest cookies expire
-- Prompt for fresh Issue Token URL and Cookies instead of failing setup
-
-> To test via HACS: enable “Show beta versions” for this repository in HACS and select version `2025.12.31b43`.
+- Preserve and merge trait data during fallback refresh so battery/firmware do not show `unknown` after restarts
+- Includes reauth flow and options support from recent pre-releases
 
 ## Release 2025.12.17 - Stability + Faster Setup
 
@@ -86,6 +87,12 @@ You can install the **Google Nest x Yale Lock** integration either via **HACS** 
 
 The integration will automatically reuse the same headers and protobuf payloads as the standalone test client.
 
+### Options (Optional)
+
+After setup, open the integration options to:
+- Configure the stale-state timeout (unavailable after inactivity)
+- Enable masked debug attributes (diagnostics only)
+
 ### Verify Installation
 
 After onboarding:
@@ -94,6 +101,7 @@ After onboarding:
 - `lock.lock`
 - `lock.unlock`
 service calls.
+ - Verify entities: Battery sensor, Last Action sensor, Tamper binary sensor, Auto-Lock switch, Auto-Lock Duration select.
 
 ## Community Help Needed
 

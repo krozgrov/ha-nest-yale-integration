@@ -30,6 +30,14 @@ Prioritized plan (least impactful -> most impactful)
    - Add reauth step to config flow.
    - Higher risk: impacts setup path and user flows.
 
+5) Code health review follow-ups (pending)
+   - Unify trait filtering/extraction helpers used by observer + fallback paths.
+   - Fix trait key mismatch in metadata lookup so cached DeviceIdentityTrait is used consistently.
+   - Consolidate entity coordinator update boilerplate in the base class.
+   - Simplify device_info update flow to reduce duplication and branching.
+   - Consolidate battery trait parsing to a shared helper to avoid drift.
+   - Risk: medium (refactor-heavy; must preserve entity/state behavior).
+
 Validation approach
 - Manual HA test after each step.
 - Keep pre-releases for each step to isolate regressions.
@@ -39,3 +47,4 @@ Status updates
 - 2025-12-31: Completed reauth flow and prepared for b43 pre-release.
 - 2025-12-31: Filter trait cache to lock-only devices plus structure/user metadata to reduce unrelated device bleed-through.
 - 2025-12-31: Sync coordinator device data on entity add to avoid unknown values until the next observer update.
+- 2026-01-01: Code health review captured follow-up refactors for duplication and trait metadata alignment; pending decision.
