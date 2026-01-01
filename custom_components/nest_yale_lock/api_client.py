@@ -1077,17 +1077,30 @@ class NestAPIClient:
             "structure_id": self._structure_id if self._structure_id else "unknown",
         }
         
-        # Try to get metadata from trait data first (most accurate)
-        all_traits = self.current_state.get("all_traits", {})
+        # Try to get metadata from trait data first (most accurate).
+        # Some payloads prefix type_url with "type.googleapis.com/".
+        all_traits = self.current_state.get("all_traits", {}) or {}
         device_identity_key = f"{device_id}:weave.trait.description.DeviceIdentityTrait"
-        if device_identity_key in all_traits:
-            trait_info = all_traits[device_identity_key]
-            if trait_info.get("decoded") and trait_info.get("data"):
-                trait_data = trait_info["data"]
-                if trait_data.get("serial_number"):
-                    metadata["serial_number"] = trait_data["serial_number"]
-                if trait_data.get("firmware_version"):
-                    metadata["firmware_revision"] = trait_data["firmware_version"]
+        trait_info = all_traits.get(device_identity_key)
+        if not trait_info:
+            device_identity_key = f"{device_id}:type.googleapis.com/weave.trait.description.DeviceIdentityTrait"
+            trait_info = all_traits.get(device_identity_key)
+        if not trait_info:
+            for candidate in all_traits.values():
+                if not isinstance(candidate, dict):
+                    continue
+                if candidate.get("object_id") != device_id:
+                    continue
+                type_url = candidate.get("type_url") or ""
+                if type_url.endswith("weave.trait.description.DeviceIdentityTrait"):
+                    trait_info = candidate
+                    break
+        if trait_info and trait_info.get("decoded") and trait_info.get("data"):
+            trait_data = trait_info["data"]
+            if trait_data.get("serial_number"):
+                metadata["serial_number"] = trait_data["serial_number"]
+            if trait_data.get("firmware_version"):
+                metadata["firmware_revision"] = trait_data["firmware_version"]
         
         # Fallback to auth_data if trait data not available
         if "devices" in self.auth_data:

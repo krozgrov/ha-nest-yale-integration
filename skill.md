@@ -48,3 +48,4 @@ Status updates
 - 2025-12-31: Filter trait cache to lock-only devices plus structure/user metadata to reduce unrelated device bleed-through.
 - 2025-12-31: Sync coordinator device data on entity add to avoid unknown values until the next observer update.
 - 2026-01-01: Code health review captured follow-up refactors for duplication and trait metadata alignment; pending decision.
+- 2026-01-01: Started code health work; fixed DeviceIdentityTrait metadata lookup to handle type_url key variations.
