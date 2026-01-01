@@ -95,24 +95,13 @@ class NestYaleBatterySensor(NestYaleEntity, SensorEntity):
     @property
     def native_value(self) -> int | None:
         """Return the battery level."""
-        traits = self._device_data.get("traits", {})
-        battery_trait = traits.get("BatteryPowerSourceTrait", {})
-        if battery_trait and battery_trait.get("battery_level") is not None:
-            battery_level = battery_trait["battery_level"]
-            # Convert to percentage (0.0-1.0 -> 0-100) and round to whole number
-            if isinstance(battery_level, float):
-                return round(battery_level * 100)
-            if isinstance(battery_level, (int, float)):
-                return int(round(battery_level * 100 if battery_level <= 1.0 else battery_level))
-            return battery_level
-        return None
+        return self._battery_level_from_trait()
 
     @property
     def extra_state_attributes(self):
         """Return extra state attributes."""
         attrs = {}
-        traits = self._device_data.get("traits", {})
-        battery_trait = traits.get("BatteryPowerSourceTrait", {})
+        battery_trait = self._battery_trait()
         if battery_trait:
             if battery_trait.get("voltage") is not None:
                 attrs["voltage"] = battery_trait["voltage"]

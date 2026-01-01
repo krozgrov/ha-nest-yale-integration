@@ -43,3 +43,4 @@
 - 2026-01-01: Begin code health work by making DeviceIdentityTrait metadata lookup tolerant of type_url key variations.
 - 2026-01-01: Deduplicate coordinator trait filtering/extraction helpers to keep observer and fallback paths in sync.
 - 2026-01-01: Add a base entity helper for coordinator updates to reduce duplicate update boilerplate across entity platforms.
+- 2026-01-01: Centralize battery trait parsing helpers to keep lock attributes and battery sensor values aligned.

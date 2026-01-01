@@ -163,6 +163,28 @@ class NestYaleEntity(CoordinatorEntity):
             return new_data
         return None
 
+    def _battery_trait(self) -> dict:
+        """Return BatteryPowerSourceTrait data when available."""
+        traits = self._device_data.get("traits", {})
+        battery_trait = traits.get("BatteryPowerSourceTrait", {})
+        return battery_trait if isinstance(battery_trait, dict) else {}
+
+    @staticmethod
+    def _battery_level_to_percent(battery_level):
+        if battery_level is None:
+            return None
+        if isinstance(battery_level, float):
+            return round(battery_level * 100)
+        if isinstance(battery_level, (int, float)):
+            return int(round(battery_level * 100 if battery_level <= 1.0 else battery_level))
+        return battery_level
+
+    def _battery_level_from_trait(self):
+        battery_trait = self._battery_trait()
+        if not battery_trait:
+            return None
+        return self._battery_level_to_percent(battery_trait.get("battery_level"))
+
     def _update_device_info_from_traits(self):
         """Update device_info when trait data arrives."""
         if self._device_info_updated:
