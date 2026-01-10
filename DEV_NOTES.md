@@ -54,3 +54,5 @@
 - 2026-01-10: Add DeviceLocatedSettingsTrait mapping to resolve lock names from location catalog when label settings are missing.
 - 2026-01-10: Decode DeviceLocatedSettingsTrait whereLabel/fixtureNameLabel to use the app's "Where" value when available.
 - 2026-01-10: Prefer fixtureNameLabel for device names while storing whereLabel as suggested area.
+- 2026-01-10: Decode DeviceLocatedSettingsTrait fixture/where annotation IDs and map fixture IDs to custom annotations for lock names.
+- 2026-01-11: Parse CustomLocatedAnnotationsTrait fixture labels for lock naming and update device registry suggested_area from where labels instead of using where labels as device names.

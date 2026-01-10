@@ -210,6 +210,7 @@ class NestAPIClient:
             "nest.trait.user.UserInfoTrait",
             "nest.trait.structure.StructureInfoTrait",
             "nest.trait.located.LocatedAnnotationsTrait",
+            "nest.trait.located.CustomLocatedAnnotationsTrait",
             "nest.trait.located.DeviceLocatedSettingsTrait",
             "weave.trait.security.BoltLockTrait",
             "weave.trait.description.LabelSettingsTrait",

@@ -47,6 +47,12 @@ Prioritized plan (least impactful -> most impactful)
    - Update device registry name when user has not overridden it and the name changes.
    - Risk: low-medium (new trait parsing; potential for unexpected name sources).
 
+7) Device name from located fixture labels (in progress)
+   - Parse CustomLocatedAnnotationsTrait fixture labels for lock names when LabelSettingsTrait is missing.
+   - Use where labels for suggested area only to align HA device naming expectations.
+   - Update device registry suggested_area when where labels change.
+   - Risk: low-medium (new manual trait decoding; device naming updates).
+
 Validation approach
 - Manual HA test after each step.
 - Keep pre-releases for each step to isolate regressions.
@@ -71,3 +77,5 @@ Status updates
 - 2026-01-10: Added DeviceLocatedSettingsTrait mapping as fallback to resolve lock names from location catalog when label settings are missing.
 - 2026-01-10: Decode DeviceLocatedSettingsTrait whereLabel/fixtureNameLabel to match the app's "Where" field when present.
 - 2026-01-10: Prefer fixtureNameLabel for device names and expose whereLabel as suggested area.
+- 2026-01-10: Decode DeviceLocatedSettingsTrait fixture/where annotation IDs and map fixture IDs to custom annotations for lock names.
+- 2026-01-11: Parse CustomLocatedAnnotationsTrait fixture labels and update suggested_area in the device registry.

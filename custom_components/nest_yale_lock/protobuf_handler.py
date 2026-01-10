@@ -483,6 +483,15 @@ class NestProtobufHandler:
             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
             device["name"] = label
 
+    @staticmethod
+    def _normalize_label_value(value: str | None) -> str | None:
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        if not value or value.lower() == "undefined":
+            return None
+        return value
+
     def _extract_where_map(self, located) -> dict[str, str]:
         where_map: dict[str, str] = {}
         for field_name in ("annotations", "custom_annotations"):
@@ -546,9 +555,33 @@ class NestProtobufHandler:
             pos = self._skip_field(payload, pos, wire_type)
         return None
 
-    def _decode_device_located_labels(self, payload: bytes) -> tuple[str | None, str | None]:
+    def _decode_resource_id(self, payload: bytes) -> str | None:
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                return None
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    return None
+                try:
+                    return value.decode("utf-8")
+                except Exception:
+                    return None
+            pos = self._skip_field(payload, pos, wire_type)
+        return None
+
+    def _decode_device_located_payload(
+        self,
+        payload: bytes,
+    ) -> tuple[str | None, str | None, str | None, str | None]:
         where_label = None
         fixture_label = None
+        where_id = None
+        fixture_id = None
         pos = 0
         while pos < len(payload):
             tag, pos = self._read_varint(payload, pos)
@@ -556,6 +589,17 @@ class NestProtobufHandler:
                 break
             field = tag >> 3
             wire_type = tag & 0x07
+            if field in (2, 3) and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                decoded = self._decode_resource_id(value)
+                if decoded:
+                    if field == 2:
+                        where_id = decoded
+                    else:
+                        fixture_id = decoded
+                continue
             if field in (5, 7) and wire_type == 2:
                 value, pos = self._read_length_delimited(payload, pos)
                 if value is None:
@@ -568,13 +612,101 @@ class NestProtobufHandler:
                         fixture_label = label
                 continue
             pos = self._skip_field(payload, pos, wire_type)
-        return where_label, fixture_label
-        _LOGGER.debug(
-            "Parsed StructureInfoTrait for %s: structure_id=%s, structure_id_v2=%s",
-            obj_id,
-            locks_data.get("structure_id"),
-            locks_data.get("structure_id_v2"),
-        )
+        return where_label, fixture_label, where_id, fixture_id
+
+    def _decode_custom_located_map_entry(self, payload: bytes) -> bytes | None:
+        pos = 0
+        value_payload = None
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 2 and wire_type == 2:
+                value_payload, pos = self._read_length_delimited(payload, pos)
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+        return value_payload
+
+    def _decode_custom_where_item(self, payload: bytes) -> tuple[str | None, str | None]:
+        where_id = None
+        label = None
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                label = self._decode_string_ref(value)
+                continue
+            if field == 3 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                where_id = self._decode_resource_id(value)
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+        return self._normalize_label_value(where_id), self._normalize_label_value(label)
+
+    def _decode_custom_fixture_item(self, payload: bytes) -> tuple[str | None, str | None]:
+        fixture_id = None
+        label = None
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                label = self._decode_string_ref(value)
+                continue
+            if field == 2 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                fixture_id = self._decode_resource_id(value)
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+        return self._normalize_label_value(fixture_id), self._normalize_label_value(label)
+
+    def _decode_custom_located_annotations(self, payload: bytes) -> tuple[dict[str, str], dict[str, str]]:
+        fixtures: dict[str, str] = {}
+        wheres: dict[str, str] = {}
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field in (1, 2) and wire_type == 2:
+                entry, pos = self._read_length_delimited(payload, pos)
+                if entry is None:
+                    break
+                value_payload = self._decode_custom_located_map_entry(entry)
+                if not value_payload:
+                    continue
+                if field == 1:
+                    where_id, label = self._decode_custom_where_item(value_payload)
+                    if where_id and label:
+                        wheres[where_id] = label
+                else:
+                    fixture_id, label = self._decode_custom_fixture_item(value_payload)
+                    if fixture_id and label:
+                        fixtures[fixture_id] = label
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+        return fixtures, wheres
 
     def _process_v2_observe(self, message: bytes):
         updates = self._parse_v2_observe(message)
@@ -594,7 +726,10 @@ class NestProtobufHandler:
         trait_labels = {}
         lock_device_ids = set()
         where_map: dict[str, str] = {}
+        custom_where_map: dict[str, str] = {}
+        fixture_map: dict[str, str] = {}
         device_wheres: dict[str, str] = {}
+        device_fixtures: dict[str, str] = {}
 
         for obj_id, trait_map in updates.items():
             if not obj_id:
@@ -649,6 +784,18 @@ class NestProtobufHandler:
                         }
                         if is_lock:
                             self._apply_label_settings_trait(obj_id, label, locks_data)
+                    continue
+
+                if descriptor_name == "nest.trait.located.CustomLocatedAnnotationsTrait":
+                    for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
+                        any_msg = entry.get("any_msg")
+                        if not any_msg or not any_msg.value:
+                            continue
+                        fixtures, wheres = self._decode_custom_located_annotations(any_msg.value)
+                        if fixtures:
+                            fixture_map.update(fixtures)
+                        if wheres:
+                            custom_where_map.update(wheres)
                     continue
 
                 trait_cls = _V2_TRAIT_CLASS_MAP.get(descriptor_name)
@@ -747,41 +894,62 @@ class NestProtobufHandler:
                         where_id = where_id.strip()
                     where_label = None
                     fixture_label = None
+                    raw_where_id = None
+                    raw_fixture_id = None
                     if located_payload:
-                        where_label, fixture_label = self._decode_device_located_labels(located_payload)
-                    if isinstance(where_label, str):
-                        where_label = where_label.strip()
-                    if isinstance(fixture_label, str):
-                        fixture_label = fixture_label.strip()
-                    if is_lock and (where_label or fixture_label):
-                        label = fixture_label or where_label
-                        if label and label.lower() != "undefined":
+                        (
+                            where_label,
+                            fixture_label,
+                            raw_where_id,
+                            raw_fixture_id,
+                        ) = self._decode_device_located_payload(located_payload)
+                    raw_where_id = self._normalize_label_value(raw_where_id)
+                    raw_fixture_id = self._normalize_label_value(raw_fixture_id)
+                    if not where_id and raw_where_id:
+                        where_id = raw_where_id
+                    where_label = self._normalize_label_value(where_label)
+                    fixture_label = self._normalize_label_value(fixture_label)
+                    if is_lock:
+                        label = fixture_label
+                        if not label and raw_fixture_id:
+                            label = fixture_map.get(raw_fixture_id)
+                        if label:
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
                             device["name"] = label
-                        if where_label and where_label.lower() != "undefined":
+                        area_label = where_label or (where_map.get(where_id) if where_id else None)
+                        if area_label:
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
-                            device["where_label"] = where_label
+                            device["where_label"] = area_label
                     if where_id:
                         device_wheres[obj_id] = where_id
-                        if is_lock and not locks_data["yale"].get(obj_id, {}).get("name"):
-                            where_name = where_map.get(where_id)
-                            if where_name:
-                                device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
-                                device["name"] = where_name
+                    if raw_fixture_id:
+                        device_fixtures[obj_id] = raw_fixture_id
 
+        if custom_where_map:
+            where_map.update(custom_where_map)
         locks_data["all_traits"] = all_traits
         locks_data["trait_states"] = trait_states
         locks_data["trait_labels"] = trait_labels
-        if where_map and device_wheres:
-            for device_id, where_id in device_wheres.items():
+        if fixture_map and device_fixtures:
+            for device_id, fixture_id in device_fixtures.items():
                 if device_id not in lock_device_ids:
                     continue
                 device = locks_data["yale"].setdefault(device_id, {"device_id": device_id})
                 if device.get("name"):
                     continue
+                label = fixture_map.get(fixture_id)
+                if label:
+                    device["name"] = label
+        if where_map and device_wheres:
+            for device_id, where_id in device_wheres.items():
+                if device_id not in lock_device_ids:
+                    continue
+                device = locks_data["yale"].setdefault(device_id, {"device_id": device_id})
+                if device.get("where_label"):
+                    continue
                 where_name = where_map.get(where_id)
                 if where_name:
-                    device["name"] = where_name
+                    device["where_label"] = where_name
         for obj_id in lock_device_ids:
             locks_data["yale"].setdefault(
                 obj_id,

@@ -185,21 +185,21 @@ class NestYaleEntity(CoordinatorEntity):
     def _update_device_name_from_data(self) -> None:
         new_name = _normalize_device_name(self._device_data.get("name"))
         new_where = _normalize_device_name(self._device_data.get("where_label"))
-        if not new_name or new_name == self._device_name:
-            if new_where and new_where != self._where_label:
-                self._where_label = new_where
-                self._attr_device_info["suggested_area"] = self._where_label
+        name_changed = new_name and new_name != self._device_name
+        where_changed = new_where and new_where != self._where_label
+        if not name_changed and not where_changed:
             return
-        self._device_name = new_name
-        self._where_label = new_where or self._where_label
-        if self._device_name:
-            self._attr_device_info["name"] = self._device_name
-        else:
-            self._attr_device_info.pop("name", None)
-        if self._where_label:
+        if name_changed:
+            self._device_name = new_name
+            if self._device_name:
+                self._attr_device_info["name"] = self._device_name
+            else:
+                self._attr_device_info.pop("name", None)
+            if not getattr(self, "_attr_has_entity_name", False):
+                self._attr_name = self._device_name
+        if where_changed:
+            self._where_label = new_where
             self._attr_device_info["suggested_area"] = self._where_label
-        if not getattr(self, "_attr_has_entity_name", False):
-            self._attr_name = self._device_name
         if not hasattr(self, "hass") or self.hass is None:
             self._device_registry_update_pending = True
             return
@@ -215,6 +215,7 @@ class NestYaleEntity(CoordinatorEntity):
                 None,
                 None,
                 None,
+                self._where_label,
             )
             if update_kwargs:
                 device_registry.async_update_device(device.id, **update_kwargs)
@@ -274,6 +275,7 @@ class NestYaleEntity(CoordinatorEntity):
         new_firmware,
         new_manufacturer,
         new_model,
+        new_suggested_area,
     ) -> dict:
         update_kwargs: dict = {}
         if self._device_name:
@@ -308,6 +310,12 @@ class NestYaleEntity(CoordinatorEntity):
         if new_serial and device.serial_number != new_serial:
             update_kwargs["serial_number"] = new_serial
             _LOGGER.info("Updating device serial_number: %s -> %s", device.serial_number, new_serial)
+
+        if new_suggested_area and not device.area_id:
+            device_suggested = getattr(device, "suggested_area", None)
+            if device_suggested != new_suggested_area:
+                update_kwargs["suggested_area"] = new_suggested_area
+                _LOGGER.info("Updating suggested area: %s -> %s", device_suggested, new_suggested_area)
 
         return update_kwargs
 
@@ -380,6 +388,7 @@ class NestYaleEntity(CoordinatorEntity):
                     new_firmware,
                     new_manufacturer,
                     new_model,
+                    self._where_label,
                 )
                 if update_kwargs:
                     device_registry.async_update_device(device.id, **update_kwargs)
