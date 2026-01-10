@@ -5,7 +5,6 @@ from base64 import b64decode
 import binascii
 
 from .proto.weave.trait import security_pb2 as weave_security_pb2
-from .proto.weave.trait import label_settings_pb2 as weave_label_pb2
 from .proto.nest.trait import structure_pb2 as nest_structure_pb2
 from .proto.nest.trait import security_pb2 as nest_security_pb2
 from .proto.nest.trait import located_pb2 as nest_located_pb2
@@ -48,7 +47,6 @@ _V2_TRAIT_CLASS_MAP = {
     "nest.trait.security.EnhancedBoltLockSettingsTrait": nest_security_pb2.EnhancedBoltLockSettingsTrait,
     "nest.trait.structure.StructureInfoTrait": nest_structure_pb2.StructureInfoTrait,
     "nest.trait.located.LocatedAnnotationsTrait": nest_located_pb2.LocatedAnnotationsTrait,
-    "weave.trait.description.LabelSettingsTrait": weave_label_pb2.LabelSettingsTrait,
 }
 
 if PROTO_AVAILABLE:
@@ -299,7 +297,9 @@ class NestProtobufHandler:
                 if not resource_id or not any_msg or not any_msg.type_url:
                     continue
                 descriptor = _strip_type_prefix(any_msg.type_url)
-                if not descriptor or descriptor not in _V2_TRAIT_CLASS_MAP:
+                if not descriptor:
+                    continue
+                if descriptor != "weave.trait.description.LabelSettingsTrait" and descriptor not in _V2_TRAIT_CLASS_MAP:
                     continue
                 state_types = trait_state.get("state_types") or []
                 state_ranks: list[int] = []
@@ -498,12 +498,31 @@ class NestProtobufHandler:
             device["name"] = name
 
     def _apply_label_settings_trait(self, obj_id, label_trait, locks_data):
-        label = getattr(label_trait, "label", None)
+        label = label_trait
         if isinstance(label, str):
             label = label.strip()
         if label and label.lower() != "undefined":
             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
             device["name"] = label
+
+    def _decode_label_settings(self, payload: bytes) -> str | None:
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                return None
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    return None
+                try:
+                    return value.decode("utf-8")
+                except Exception:
+                    return None
+            pos = self._skip_field(payload, pos, wire_type)
+        return None
         _LOGGER.debug(
             "Parsed StructureInfoTrait for %s: structure_id=%s, structure_id_v2=%s",
             obj_id,
@@ -551,12 +570,41 @@ class NestProtobufHandler:
                         break
 
             for descriptor_name, entries in trait_map.items():
-                trait_cls = _V2_TRAIT_CLASS_MAP.get(descriptor_name)
-                if not trait_cls:
-                    continue
                 if isinstance(entries, dict):
                     entries = [entries]
                 if not entries:
+                    continue
+
+                if descriptor_name == "weave.trait.description.LabelSettingsTrait":
+                    label = None
+                    for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
+                        any_msg = entry.get("any_msg")
+                        if not any_msg or not any_msg.value:
+                            continue
+                        label = self._decode_label_settings(any_msg.value)
+                        if label:
+                            break
+                    if label:
+                        type_url = ""
+                        for entry in entries:
+                            if entry.get("type_url"):
+                                type_url = entry["type_url"]
+                                break
+                        if not type_url:
+                            type_url = "type.googleapis.com/weave.trait.description.LabelSettingsTrait"
+                        trait_key = f"{obj_id}:{type_url}"
+                        all_traits[trait_key] = {
+                            "object_id": obj_id,
+                            "type_url": type_url,
+                            "decoded": True,
+                            "data": {"label": label},
+                        }
+                        if is_lock:
+                            self._apply_label_settings_trait(obj_id, label, locks_data)
+                    continue
+
+                trait_cls = _V2_TRAIT_CLASS_MAP.get(descriptor_name)
+                if not trait_cls:
                     continue
 
                 merged_msg = None
@@ -611,18 +659,6 @@ class NestProtobufHandler:
                     self._apply_structure_info_trait(obj_id, merged_msg, locks_data)
                 elif "LocatedAnnotationsTrait" in descriptor_name and is_lock:
                     self._apply_located_annotations_trait(obj_id, merged_msg, locks_data)
-                elif "LabelSettingsTrait" in descriptor_name:
-                    trait_key = f"{obj_id}:{type_url}"
-                    all_traits[trait_key] = {
-                        "object_id": obj_id,
-                        "type_url": type_url,
-                        "decoded": True,
-                        "data": {
-                            "label": merged_msg.label if getattr(merged_msg, "label", None) else None,
-                        },
-                    }
-                    if is_lock:
-                        self._apply_label_settings_trait(obj_id, merged_msg, locks_data)
                 elif "DeviceIdentityTrait" in descriptor_name and PROTO_AVAILABLE:
                     trait_key = f"{obj_id}:{type_url}"
                     all_traits[trait_key] = {

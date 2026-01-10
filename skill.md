@@ -67,3 +67,4 @@ Status updates
 - 2026-01-01: Removed hardcoded fallback device name to align with HA naming expectations.
 - 2026-01-10: LocatedAnnotationsTrait returned location catalog, not device names; switched plan to LabelSettingsTrait.
 - 2026-01-10: Added LabelSettingsTrait device name parsing and registry sync update.
+- 2026-01-10: Switched LabelSettingsTrait decoding to manual parsing after invalid proto descriptor caused import errors.
