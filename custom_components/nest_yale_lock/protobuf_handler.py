@@ -46,6 +46,7 @@ _V2_TRAIT_CLASS_MAP = {
     "weave.trait.security.PincodeInputTrait": weave_security_pb2.PincodeInputTrait,
     "nest.trait.security.EnhancedBoltLockSettingsTrait": nest_security_pb2.EnhancedBoltLockSettingsTrait,
     "nest.trait.structure.StructureInfoTrait": nest_structure_pb2.StructureInfoTrait,
+    "nest.trait.located.DeviceLocatedSettingsTrait": nest_located_pb2.DeviceLocatedSettingsTrait,
     "nest.trait.located.LocatedAnnotationsTrait": nest_located_pb2.LocatedAnnotationsTrait,
 }
 
@@ -474,29 +475,6 @@ class NestProtobufHandler:
                 if not locks_data.get("structure_id"):
                     locks_data["structure_id"] = resolved
 
-    def _apply_located_annotations_trait(self, obj_id, located, locks_data):
-        name = None
-        for field_name in ("custom_annotations", "annotations"):
-            annotations = getattr(located, field_name, None)
-            if not annotations:
-                continue
-            for annotation in annotations:
-                info = getattr(annotation, "info", None)
-                if not info:
-                    continue
-                name_field = getattr(info, "name", None)
-                value = getattr(name_field, "value", None) if name_field else None
-                if isinstance(value, str):
-                    value = value.strip()
-                if value and value.lower() != "undefined":
-                    name = value
-                    break
-            if name:
-                break
-        if name:
-            device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
-            device["name"] = name
-
     def _apply_label_settings_trait(self, obj_id, label_trait, locks_data):
         label = label_trait
         if isinstance(label, str):
@@ -504,6 +482,31 @@ class NestProtobufHandler:
         if label and label.lower() != "undefined":
             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
             device["name"] = label
+
+    def _extract_where_map(self, located) -> dict[str, str]:
+        where_map: dict[str, str] = {}
+        for field_name in ("annotations", "custom_annotations"):
+            annotations = getattr(located, field_name, None)
+            if not annotations:
+                continue
+            for annotation in annotations:
+                info = getattr(annotation, "info", None)
+                if not info:
+                    continue
+                id_field = getattr(info, "id", None)
+                name_field = getattr(info, "name", None)
+                where_id = getattr(id_field, "value", None) if id_field else None
+                where_name = getattr(name_field, "value", None) if name_field else None
+                if isinstance(where_id, str):
+                    where_id = where_id.strip()
+                if isinstance(where_name, str):
+                    where_name = where_name.strip()
+                if not where_id or not where_name:
+                    continue
+                if where_name.lower() == "undefined":
+                    continue
+                where_map[where_id] = where_name
+        return where_map
 
     def _decode_label_settings(self, payload: bytes) -> str | None:
         pos = 0
@@ -547,6 +550,8 @@ class NestProtobufHandler:
         trait_states = {}
         trait_labels = {}
         lock_device_ids = set()
+        where_map: dict[str, str] = {}
+        device_wheres: dict[str, str] = {}
 
         for obj_id, trait_map in updates.items():
             if not obj_id:
@@ -657,8 +662,8 @@ class NestProtobufHandler:
                     self._apply_tamper_trait(obj_id, merged_msg, locks_data)
                 elif "StructureInfoTrait" in descriptor_name:
                     self._apply_structure_info_trait(obj_id, merged_msg, locks_data)
-                elif "LocatedAnnotationsTrait" in descriptor_name and is_lock:
-                    self._apply_located_annotations_trait(obj_id, merged_msg, locks_data)
+                elif "LocatedAnnotationsTrait" in descriptor_name:
+                    where_map.update(self._extract_where_map(merged_msg))
                 elif "DeviceIdentityTrait" in descriptor_name and PROTO_AVAILABLE:
                     trait_key = f"{obj_id}:{type_url}"
                     all_traits[trait_key] = {
@@ -688,10 +693,33 @@ class NestProtobufHandler:
                             "replacement_indicator": merged_msg.replacementIndicator,
                         },
                     }
+                elif "DeviceLocatedSettingsTrait" in descriptor_name:
+                    where_id = None
+                    if hasattr(merged_msg, "where_id") and merged_msg.HasField("where_id"):
+                        where_id = getattr(merged_msg.where_id, "value", None)
+                    if isinstance(where_id, str):
+                        where_id = where_id.strip()
+                    if where_id:
+                        device_wheres[obj_id] = where_id
+                        if is_lock and not locks_data["yale"].get(obj_id, {}).get("name"):
+                            where_name = where_map.get(where_id)
+                            if where_name:
+                                device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
+                                device["name"] = where_name
 
         locks_data["all_traits"] = all_traits
         locks_data["trait_states"] = trait_states
         locks_data["trait_labels"] = trait_labels
+        if where_map and device_wheres:
+            for device_id, where_id in device_wheres.items():
+                if device_id not in lock_device_ids:
+                    continue
+                device = locks_data["yale"].setdefault(device_id, {"device_id": device_id})
+                if device.get("name"):
+                    continue
+                where_name = where_map.get(where_id)
+                if where_name:
+                    device["name"] = where_name
         for obj_id in lock_device_ids:
             locks_data["yale"].setdefault(
                 obj_id,
