@@ -57,3 +57,4 @@ Status updates
 - 2026-01-01: Simplified device_info update flow with shared helpers to reduce branching.
 - 2026-01-01: Reduced routine trait update logs to DEBUG and added last-command status to diagnostics output.
 - 2026-01-01: Completed code health review follow-ups for refactor readiness.
+- 2026-01-01: Removed hardcoded fallback device name to align with HA naming expectations.

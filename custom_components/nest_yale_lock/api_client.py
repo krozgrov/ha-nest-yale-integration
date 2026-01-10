@@ -1073,7 +1073,7 @@ class NestAPIClient:
         metadata = {
             "serial_number": lock_data.get("serial_number", device_id),
             "firmware_revision": lock_data.get("firmware_revision", "unknown"),
-            "name": lock_data.get("name", "Front Door Lock"),
+            "name": lock_data.get("name"),
             "structure_id": self._structure_id if self._structure_id else "unknown",
         }
         
@@ -1110,7 +1110,7 @@ class NestAPIClient:
                         metadata["serial_number"] = dev.get("serial_number", device_id)
                     if metadata["firmware_revision"] == "unknown":  # Only update if not set from traits
                         metadata["firmware_revision"] = dev.get("firmware_revision", "unknown")
-                    metadata["name"] = dev.get("name", "Front Door Lock")
+                    metadata["name"] = dev.get("name") or metadata.get("name")
                     break
         return metadata
 

@@ -48,3 +48,4 @@
 - 2026-01-01: Queue log-level tweak for routine trait updates and diagnostics-only last command status to reduce log noise and aid troubleshooting.
 - 2026-01-01: Lower routine trait update logging to DEBUG and expose last command status in diagnostics output.
 - 2026-01-01: Complete code health refactor set (trait helpers, entity updates, battery parsing, device_info, logging/diagnostics) in preparation for stable promotion.
+- 2026-01-01: Remove hardcoded "Front Door Lock" fallback name so HA can use actual API names or user-provided names.
