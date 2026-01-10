@@ -57,3 +57,4 @@
 - 2026-01-10: Decode DeviceLocatedSettingsTrait fixture/where annotation IDs and map fixture IDs to custom annotations for lock names.
 - 2026-01-11: Parse CustomLocatedAnnotationsTrait fixture labels for lock naming and update device registry suggested_area from where labels instead of using where labels as device names.
 - 2026-01-11: Prefer custom fixture labels over fixtureNameLabel when available and drop suggested_area updates due to Home Assistant deprecation.
+- 2026-01-11: Add legacy app_launch name overrides (throttled) to align lock names with Nest app labels when protobuf naming sources disagree.

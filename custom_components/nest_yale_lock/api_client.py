@@ -48,6 +48,43 @@ def _transport_candidates(session_base):
 
 _LOGGER = logging.getLogger(__name__)
 
+_APP_LAUNCH_URL_FORMAT = "https://{host}/api/0.1/user/{user_id}/app_launch"
+_APP_LAUNCH_BUCKET_TYPES = [
+    "buckets",
+    "delayed_topaz",
+    "demand_response",
+    "device",
+    "device_alert_dialog",
+    "geofence_info",
+    "kryptonite",
+    "link",
+    "message",
+    "message_center",
+    "metadata",
+    "occupancy",
+    "quartz",
+    "rcs_settings",
+    "safety",
+    "safety_summary",
+    "schedule",
+    "shared",
+    "structure",
+    "structure_history",
+    "structure_metadata",
+    "topaz",
+    "topaz_resource",
+    "track",
+    "trip",
+    "tuneups",
+    "user",
+    "user_alert_dialog",
+    "user_settings",
+    "where",
+    "widget_track",
+]
+_APP_LAUNCH_TIMEOUT_SECONDS = 15
+_APP_LAUNCH_REFRESH_SECONDS = 6 * 60 * 60
+
 class ConnectionShim:
     def __init__(self, session):
         self.connected = True
@@ -143,6 +180,9 @@ class NestAPIClient:
         self._connect_failures = 0
         self._reauth_task = None
         self._auth_failure_raises = bool(auth_failure_raises)
+        self._legacy_name_overrides = {}
+        self._legacy_name_last_fetch = None
+        self._legacy_name_task = None
         _LOGGER.debug("NestAPIClient initialized with session")
 
     @property
@@ -391,6 +431,7 @@ class NestAPIClient:
             except Exception as e:
                 _LOGGER.debug("StructureId fetch failed (continuing): %s", e)
             self.current_state["structure_id"] = self._structure_id
+            self._schedule_legacy_name_refresh("auth")
             # Schedule preemptive re-auth
             self._schedule_reauth()
         except Exception as e:
@@ -489,6 +530,7 @@ class NestAPIClient:
                                 self.protobuf_handler.prepend_chunk(chunk)
                                 continue
                             if locks_data.get("yale"):
+                                self._apply_legacy_name_overrides(locks_data)
                                 self.current_state["devices"]["locks"] = locks_data["yale"]
                                 if locks_data.get("user_id"):
                                     old_user_id = self._user_id
@@ -496,6 +538,7 @@ class NestAPIClient:
                                     self.current_state["user_id"] = self._user_id
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                        self._schedule_legacy_name_refresh("refresh_state")
                             if locks_data.get("all_traits"):
                                 current_traits = self.current_state.get("all_traits", {}) or {}
                                 merged_traits = {**current_traits, **locks_data["all_traits"]}
@@ -653,6 +696,7 @@ class NestAPIClient:
                                     self.current_state["user_id"] = self._user_id
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                        self._schedule_legacy_name_refresh("observe")
                             if locks_data.get("structure_id"):
                                 new_structure_id = locks_data["structure_id"]
                                 if self._is_legacy_structure_id(new_structure_id):
@@ -680,6 +724,8 @@ class NestAPIClient:
                             self.transport_url = base_url
                             self._last_observe_data_ts = current_time
                             # Yield full locks_data including all_traits so coordinator can extract trait data
+                            if locks_data.get("yale"):
+                                self._apply_legacy_name_overrides(locks_data)
                             yield locks_data
 
                         if auth_failure:
@@ -1071,6 +1117,192 @@ class NestAPIClient:
         if self._reauth_task and not self._reauth_task.done():
             self._reauth_task.cancel()
             self._reauth_task = None
+        if self._legacy_name_task and not self._legacy_name_task.done():
+            self._legacy_name_task.cancel()
+            self._legacy_name_task = None
+
+    def _schedule_legacy_name_refresh(self, reason: str) -> None:
+        if not self.access_token or not self._user_id:
+            return
+        if self._legacy_name_task and not self._legacy_name_task.done():
+            return
+        now = asyncio.get_event_loop().time()
+        if self._legacy_name_last_fetch and (now - self._legacy_name_last_fetch) < _APP_LAUNCH_REFRESH_SECONDS:
+            return
+        _LOGGER.debug("Scheduling legacy name refresh (%s)", reason)
+        self._legacy_name_task = asyncio.create_task(self._refresh_legacy_device_names(reason))
+
+    def _legacy_app_launch_host(self) -> str:
+        candidates = [
+            self.transport_url,
+            self.auth_data.get("urls", {}).get("transport_url") if isinstance(self.auth_data, dict) else None,
+            "https://home.nest.com",
+        ]
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                continue
+            host = candidate.replace("https://", "").replace("http://", "").strip("/")
+            if host:
+                return host.split("/")[0]
+        return "home.nest.com"
+
+    async def _refresh_legacy_device_names(self, reason: str) -> None:
+        self._legacy_name_last_fetch = asyncio.get_event_loop().time()
+        try:
+            user_id = self._user_id
+            if isinstance(user_id, str) and user_id.startswith("USER_"):
+                stripped = user_id.replace("USER_", "")
+                if stripped.isdigit():
+                    user_id = stripped
+            if not self.access_token or not user_id:
+                return
+            host = self._legacy_app_launch_host()
+            url = _APP_LAUNCH_URL_FORMAT.format(host=host, user_id=user_id)
+            headers = {
+                "Authorization": f"Basic {self.access_token}",
+                "X-nl-user-id": str(user_id),
+                "X-nl-protocol-version": "1",
+                "User-Agent": USER_AGENT_STRING,
+            }
+            payload = {
+                "known_bucket_types": _APP_LAUNCH_BUCKET_TYPES,
+                "known_bucket_versions": [],
+            }
+            timeout = aiohttp.ClientTimeout(total=_APP_LAUNCH_TIMEOUT_SECONDS)
+            _LOGGER.debug("Requesting app_launch for legacy names (%s)", reason)
+            async with self.session.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+            ) as resp:
+                if resp.status != 200:
+                    _LOGGER.debug("app_launch returned status %s (%s)", resp.status, reason)
+                    return
+                data = await resp.json()
+            overrides = self._extract_legacy_device_names(data)
+            if overrides:
+                self._legacy_name_overrides.update(overrides)
+                self._apply_legacy_name_overrides_to_current()
+                _LOGGER.info(
+                    "Applied legacy app_launch names for %d devices",
+                    len(overrides),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            _LOGGER.debug("Legacy app_launch name refresh failed (%s): %s", reason, err)
+        finally:
+            self._legacy_name_task = None
+
+    def _apply_legacy_name_overrides(self, locks_data: dict) -> None:
+        if not self._legacy_name_overrides:
+            return
+        yale = locks_data.get("yale")
+        if not isinstance(yale, dict):
+            return
+        for device_id, payload in yale.items():
+            if not isinstance(payload, dict):
+                continue
+            override = self._legacy_name_overrides.get(device_id)
+            if override:
+                payload["name"] = override
+
+    def _apply_legacy_name_overrides_to_current(self) -> None:
+        yale = self.current_state.get("devices", {}).get("locks", {})
+        if not isinstance(yale, dict):
+            return
+        for device_id, payload in yale.items():
+            if not isinstance(payload, dict):
+                continue
+            override = self._legacy_name_overrides.get(device_id)
+            if override:
+                payload["name"] = override
+
+    def _extract_legacy_device_names(self, payload: dict) -> dict[str, str]:
+        if not isinstance(payload, dict):
+            return {}
+        results: dict[str, str] = {}
+        serial_map = self._serial_map_from_traits()
+        self._scan_legacy_value(payload, None, serial_map, results)
+        return results
+
+    def _scan_legacy_value(
+        self,
+        value,
+        key_hint: str | None,
+        serial_map: dict[str, str],
+        results: dict[str, str],
+    ) -> None:
+        if isinstance(value, dict):
+            device_id = self._extract_device_id(value, key_hint)
+            serial = self._extract_serial(value, key_hint)
+            name = self._extract_name(value)
+            if name:
+                if device_id:
+                    results[device_id] = name
+                elif serial and serial in serial_map:
+                    results[serial_map[serial]] = name
+            for child_key, child_value in value.items():
+                next_hint = child_key if isinstance(child_key, str) else None
+                self._scan_legacy_value(child_value, next_hint, serial_map, results)
+            return
+        if isinstance(value, list):
+            for entry in value:
+                self._scan_legacy_value(entry, key_hint, serial_map, results)
+
+    def _extract_device_id(self, node: dict, key_hint: str | None) -> str | None:
+        for key in ("device_id", "deviceId", "deviceID", "device"):
+            val = node.get(key)
+            if isinstance(val, str) and "DEVICE_" in val:
+                return val.split()[0]
+        if isinstance(key_hint, str):
+            if key_hint.startswith("DEVICE_"):
+                return key_hint
+            if "DEVICE_" in key_hint:
+                idx = key_hint.find("DEVICE_")
+                return key_hint[idx:].split(".")[0]
+        return None
+
+    def _extract_serial(self, node: dict, key_hint: str | None) -> str | None:
+        for key in ("serial_number", "serialNumber", "serial", "sn"):
+            val = node.get(key)
+            if isinstance(val, str):
+                return val
+        if isinstance(key_hint, str) and "." in key_hint:
+            return key_hint.split(".", 1)[1]
+        return None
+
+    def _extract_name(self, node: dict) -> str | None:
+        for key in ("name", "label", "description", "device_name", "deviceName"):
+            val = node.get(key)
+            name = self._normalize_device_name(val)
+            if name:
+                return name
+            if isinstance(val, dict):
+                nested = self._normalize_device_name(val.get("value"))
+                if nested:
+                    return nested
+        return None
+
+    def _serial_map_from_traits(self) -> dict[str, str]:
+        serial_map: dict[str, str] = {}
+        all_traits = self.current_state.get("all_traits", {}) or {}
+        for key, info in all_traits.items():
+            if not isinstance(info, dict):
+                continue
+            if "DeviceIdentityTrait" not in str(key):
+                continue
+            data = info.get("data")
+            if not isinstance(data, dict):
+                continue
+            serial = data.get("serial_number")
+            if not isinstance(serial, str) or not serial:
+                continue
+            device_id = info.get("object_id")
+            if isinstance(device_id, str) and device_id.startswith("DEVICE_"):
+                serial_map[serial] = device_id
+        return serial_map
 
     @staticmethod
     def _normalize_device_name(name):

@@ -47,12 +47,17 @@ Prioritized plan (least impactful -> most impactful)
    - Update device registry name when user has not overridden it and the name changes.
    - Risk: low-medium (new trait parsing; potential for unexpected name sources).
 
-7) Device name from located fixture labels (in progress)
+7) Device name from located fixture labels (completed)
    - Parse CustomLocatedAnnotationsTrait fixture labels for lock names when LabelSettingsTrait is missing.
-   - Use where labels for suggested area only to align HA device naming expectations.
-   - Remove suggested area updates (HA deprecates suggested_area).
+   - Use where labels for where_label/area display only (no suggested_area updates).
+   - Remove suggested_area updates (HA deprecates suggested_area).
    - Prefer custom fixture labels over fixtureNameLabel when available.
    - Risk: low-medium (new manual trait decoding; device naming updates).
+
+8) Legacy app_launch name override (in progress)
+   - Fetch app_launch data (throttled) and extract device names for locks.
+   - Override lock names when app_launch provides a more accurate device label than protobuf traits.
+   - Risk: medium (extra API call; parsing heuristics).
 
 Validation approach
 - Manual HA test after each step.
@@ -81,3 +86,4 @@ Status updates
 - 2026-01-10: Decode DeviceLocatedSettingsTrait fixture/where annotation IDs and map fixture IDs to custom annotations for lock names.
 - 2026-01-11: Parse CustomLocatedAnnotationsTrait fixture labels and update suggested_area in the device registry.
 - 2026-01-11: Drop suggested_area updates per HA deprecation; prefer custom fixture labels over fixtureNameLabel.
+- 2026-01-11: Add legacy app_launch name override step after fixture labels still did not match the Nest app device name.
