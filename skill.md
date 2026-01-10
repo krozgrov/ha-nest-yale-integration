@@ -50,7 +50,8 @@ Prioritized plan (least impactful -> most impactful)
 7) Device name from located fixture labels (in progress)
    - Parse CustomLocatedAnnotationsTrait fixture labels for lock names when LabelSettingsTrait is missing.
    - Use where labels for suggested area only to align HA device naming expectations.
-   - Update device registry suggested_area when where labels change.
+   - Remove suggested area updates (HA deprecates suggested_area).
+   - Prefer custom fixture labels over fixtureNameLabel when available.
    - Risk: low-medium (new manual trait decoding; device naming updates).
 
 Validation approach
@@ -79,3 +80,4 @@ Status updates
 - 2026-01-10: Prefer fixtureNameLabel for device names and expose whereLabel as suggested area.
 - 2026-01-10: Decode DeviceLocatedSettingsTrait fixture/where annotation IDs and map fixture IDs to custom annotations for lock names.
 - 2026-01-11: Parse CustomLocatedAnnotationsTrait fixture labels and update suggested_area in the device registry.
+- 2026-01-11: Drop suggested_area updates per HA deprecation; prefer custom fixture labels over fixtureNameLabel.

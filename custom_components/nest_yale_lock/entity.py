@@ -166,8 +166,6 @@ class NestYaleEntity(CoordinatorEntity):
             self._attr_device_info["name"] = self._device_name
         if serial_number:
             self._attr_device_info["serial_number"] = serial_number
-        if self._where_label:
-            self._attr_device_info["suggested_area"] = self._where_label
         
         _LOGGER.debug("Initial device_info for %s: identifiers=%s, serial_number=%s, sw_version=%s", 
                      self._attr_unique_id, identifiers, serial_number, metadata["firmware_revision"])
@@ -199,7 +197,6 @@ class NestYaleEntity(CoordinatorEntity):
                 self._attr_name = self._device_name
         if where_changed:
             self._where_label = new_where
-            self._attr_device_info["suggested_area"] = self._where_label
         if not hasattr(self, "hass") or self.hass is None:
             self._device_registry_update_pending = True
             return
@@ -215,7 +212,6 @@ class NestYaleEntity(CoordinatorEntity):
                 None,
                 None,
                 None,
-                self._where_label,
             )
             if update_kwargs:
                 device_registry.async_update_device(device.id, **update_kwargs)
@@ -275,7 +271,6 @@ class NestYaleEntity(CoordinatorEntity):
         new_firmware,
         new_manufacturer,
         new_model,
-        new_suggested_area,
     ) -> dict:
         update_kwargs: dict = {}
         if self._device_name:
@@ -310,12 +305,6 @@ class NestYaleEntity(CoordinatorEntity):
         if new_serial and device.serial_number != new_serial:
             update_kwargs["serial_number"] = new_serial
             _LOGGER.info("Updating device serial_number: %s -> %s", device.serial_number, new_serial)
-
-        if new_suggested_area and not device.area_id:
-            device_suggested = getattr(device, "suggested_area", None)
-            if device_suggested != new_suggested_area:
-                update_kwargs["suggested_area"] = new_suggested_area
-                _LOGGER.info("Updating suggested area: %s -> %s", device_suggested, new_suggested_area)
 
         return update_kwargs
 
@@ -388,7 +377,6 @@ class NestYaleEntity(CoordinatorEntity):
                     new_firmware,
                     new_manufacturer,
                     new_model,
-                    self._where_label,
                 )
                 if update_kwargs:
                     device_registry.async_update_device(device.id, **update_kwargs)

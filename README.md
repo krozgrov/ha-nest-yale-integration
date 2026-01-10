@@ -30,7 +30,7 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Pre-release testing: `2026.01.10b7` adds fixture-label parsing via CustomLocatedAnnotationsTrait, prefers LabelSettingsTrait/fixture labels for device names, and updates suggested area from where labels.
+Pre-release testing: `2026.01.10b7` adds fixture-label parsing via CustomLocatedAnnotationsTrait, prefers custom fixture labels over fixtureNameLabel, and removes suggested_area updates per HA deprecation.
 
 ## Release 2026.01.02 - Code health refactors + diagnostics (latest stable)
 

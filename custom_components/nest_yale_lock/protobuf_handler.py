@@ -910,9 +910,11 @@ class NestProtobufHandler:
                     where_label = self._normalize_label_value(where_label)
                     fixture_label = self._normalize_label_value(fixture_label)
                     if is_lock:
-                        label = fixture_label
-                        if not label and raw_fixture_id:
+                        label = None
+                        if raw_fixture_id:
                             label = fixture_map.get(raw_fixture_id)
+                        if not label:
+                            label = fixture_label
                         if label:
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
                             device["name"] = label
