@@ -69,3 +69,4 @@ Status updates
 - 2026-01-10: Added LabelSettingsTrait device name parsing and registry sync update.
 - 2026-01-10: Switched LabelSettingsTrait decoding to manual parsing after invalid proto descriptor caused import errors.
 - 2026-01-10: Added DeviceLocatedSettingsTrait mapping as fallback to resolve lock names from location catalog when label settings are missing.
+- 2026-01-10: Decode DeviceLocatedSettingsTrait whereLabel/fixtureNameLabel to match the app's "Where" field when present.

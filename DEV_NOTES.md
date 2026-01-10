@@ -52,3 +52,4 @@
 - 2026-01-10: LocatedAnnotationsTrait returned location catalog instead of device names; switch to LabelSettingsTrait for lock naming and ignore placeholder values (like "undefined") so device registry names stay accurate; allow registry name updates when users have not overridden names.
 - 2026-01-10: LabelSettingsTrait proto descriptor was invalid; replace with manual label decoding to avoid import errors.
 - 2026-01-10: Add DeviceLocatedSettingsTrait mapping to resolve lock names from location catalog when label settings are missing.
+- 2026-01-10: Decode DeviceLocatedSettingsTrait whereLabel/fixtureNameLabel to use the app's "Where" value when available.

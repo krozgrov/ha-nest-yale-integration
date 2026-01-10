@@ -526,6 +526,49 @@ class NestProtobufHandler:
                     return None
             pos = self._skip_field(payload, pos, wire_type)
         return None
+
+    def _decode_string_ref(self, payload: bytes) -> str | None:
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                return None
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    return None
+                try:
+                    return value.decode("utf-8")
+                except Exception:
+                    return None
+            pos = self._skip_field(payload, pos, wire_type)
+        return None
+
+    def _decode_device_located_labels(self, payload: bytes) -> tuple[str | None, str | None]:
+        where_label = None
+        fixture_label = None
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field in (5, 7) and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                label = self._decode_string_ref(value)
+                if label:
+                    if field == 5:
+                        where_label = label
+                    elif field == 7:
+                        fixture_label = label
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+        return where_label, fixture_label
         _LOGGER.debug(
             "Parsed StructureInfoTrait for %s: structure_id=%s, structure_id_v2=%s",
             obj_id,
@@ -614,6 +657,7 @@ class NestProtobufHandler:
 
                 merged_msg = None
                 merged_type_url = ""
+                located_payload = None
                 prefer_confirmed = descriptor_name != "weave.trait.security.BoltLockTrait"
                 for entry in sorted(
                     entries,
@@ -623,6 +667,8 @@ class NestProtobufHandler:
                     any_msg = entry.get("any_msg")
                     if not any_msg:
                         continue
+                    if located_payload is None and any_msg.value:
+                        located_payload = any_msg.value
                     normalized_any = _normalize_any_type(any_msg)
                     trait_msg = trait_cls()
                     try:
@@ -699,6 +745,19 @@ class NestProtobufHandler:
                         where_id = getattr(merged_msg.where_id, "value", None)
                     if isinstance(where_id, str):
                         where_id = where_id.strip()
+                    where_label = None
+                    fixture_label = None
+                    if located_payload:
+                        where_label, fixture_label = self._decode_device_located_labels(located_payload)
+                    if isinstance(where_label, str):
+                        where_label = where_label.strip()
+                    if isinstance(fixture_label, str):
+                        fixture_label = fixture_label.strip()
+                    if is_lock and (where_label or fixture_label):
+                        label = where_label or fixture_label
+                        if label and label.lower() != "undefined":
+                            device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
+                            device["name"] = label
                     if where_id:
                         device_wheres[obj_id] = where_id
                         if is_lock and not locks_data["yale"].get(obj_id, {}).get("name"):
