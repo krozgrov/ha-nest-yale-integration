@@ -211,6 +211,7 @@ class NestAPIClient:
             "nest.trait.structure.StructureInfoTrait",
             "nest.trait.located.LocatedAnnotationsTrait",
             "weave.trait.security.BoltLockTrait",
+            "weave.trait.description.LabelSettingsTrait",
             "weave.trait.security.BoltLockSettingsTrait",
             "nest.trait.security.EnhancedBoltLockSettingsTrait",
             "weave.trait.security.BoltLockCapabilitiesTrait",
@@ -1114,6 +1115,27 @@ class NestAPIClient:
                 metadata["serial_number"] = trait_data["serial_number"]
             if trait_data.get("firmware_version"):
                 metadata["firmware_revision"] = trait_data["firmware_version"]
+
+        label_trait_info = None
+        label_trait_key = f"{device_id}:weave.trait.description.LabelSettingsTrait"
+        label_trait_info = all_traits.get(label_trait_key)
+        if not label_trait_info:
+            label_trait_key = f"{device_id}:type.googleapis.com/weave.trait.description.LabelSettingsTrait"
+            label_trait_info = all_traits.get(label_trait_key)
+        if not label_trait_info:
+            for candidate in all_traits.values():
+                if not isinstance(candidate, dict):
+                    continue
+                if candidate.get("object_id") != device_id:
+                    continue
+                type_url = candidate.get("type_url") or ""
+                if type_url.endswith("weave.trait.description.LabelSettingsTrait"):
+                    label_trait_info = candidate
+                    break
+        if label_trait_info and label_trait_info.get("data"):
+            label = self._normalize_device_name(label_trait_info["data"].get("label"))
+            if label:
+                metadata["name"] = label
         
         # Fallback to auth_data if trait data not available
         if "devices" in self.auth_data:

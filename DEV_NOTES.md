@@ -49,4 +49,4 @@
 - 2026-01-01: Lower routine trait update logging to DEBUG and expose last command status in diagnostics output.
 - 2026-01-01: Complete code health refactor set (trait helpers, entity updates, battery parsing, device_info, logging/diagnostics) in preparation for stable promotion.
 - 2026-01-01: Remove hardcoded "Front Door Lock" fallback name so HA can use actual API names or user-provided names.
-- 2026-01-10: Read device names from LocatedAnnotationsTrait (observe) and ignore placeholder values (like "undefined") so device registry names stay accurate; allow registry name updates when users have not overridden names.
+- 2026-01-10: LocatedAnnotationsTrait returned location catalog instead of device names; switch to LabelSettingsTrait for lock naming and ignore placeholder values (like "undefined") so device registry names stay accurate; allow registry name updates when users have not overridden names.

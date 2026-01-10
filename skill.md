@@ -40,9 +40,9 @@ Prioritized plan (least impactful -> most impactful)
    - Add last command status to diagnostics-only output for easier troubleshooting.
    - Risk: medium (refactor-heavy; must preserve entity/state behavior).
 
-6) Device name from LocatedAnnotationsTrait (completed)
-   - Add LocatedAnnotationsTrait to observe payload.
-   - Decode annotations and extract a non-empty device name (prefer custom annotations).
+6) Device name from LabelSettingsTrait (completed)
+   - Add LabelSettingsTrait to observe payload.
+   - Decode label settings and extract a non-empty device name.
    - Normalize invalid placeholders (e.g., "undefined") to avoid polluting device registry.
    - Update device registry name when user has not overridden it and the name changes.
    - Risk: low-medium (new trait parsing; potential for unexpected name sources).
@@ -65,4 +65,5 @@ Status updates
 - 2026-01-01: Reduced routine trait update logs to DEBUG and added last-command status to diagnostics output.
 - 2026-01-01: Completed code health review follow-ups for refactor readiness.
 - 2026-01-01: Removed hardcoded fallback device name to align with HA naming expectations.
-- 2026-01-10: Added LocatedAnnotationsTrait device name parsing and registry sync update.
+- 2026-01-10: LocatedAnnotationsTrait returned location catalog, not device names; switched plan to LabelSettingsTrait.
+- 2026-01-10: Added LabelSettingsTrait device name parsing and registry sync update.

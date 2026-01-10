@@ -5,6 +5,7 @@ from base64 import b64decode
 import binascii
 
 from .proto.weave.trait import security_pb2 as weave_security_pb2
+from .proto.weave.trait import label_settings_pb2 as weave_label_pb2
 from .proto.nest.trait import structure_pb2 as nest_structure_pb2
 from .proto.nest.trait import security_pb2 as nest_security_pb2
 from .proto.nest.trait import located_pb2 as nest_located_pb2
@@ -47,6 +48,7 @@ _V2_TRAIT_CLASS_MAP = {
     "nest.trait.security.EnhancedBoltLockSettingsTrait": nest_security_pb2.EnhancedBoltLockSettingsTrait,
     "nest.trait.structure.StructureInfoTrait": nest_structure_pb2.StructureInfoTrait,
     "nest.trait.located.LocatedAnnotationsTrait": nest_located_pb2.LocatedAnnotationsTrait,
+    "weave.trait.description.LabelSettingsTrait": weave_label_pb2.LabelSettingsTrait,
 }
 
 if PROTO_AVAILABLE:
@@ -494,6 +496,14 @@ class NestProtobufHandler:
         if name:
             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
             device["name"] = name
+
+    def _apply_label_settings_trait(self, obj_id, label_trait, locks_data):
+        label = getattr(label_trait, "label", None)
+        if isinstance(label, str):
+            label = label.strip()
+        if label and label.lower() != "undefined":
+            device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
+            device["name"] = label
         _LOGGER.debug(
             "Parsed StructureInfoTrait for %s: structure_id=%s, structure_id_v2=%s",
             obj_id,
@@ -601,6 +611,18 @@ class NestProtobufHandler:
                     self._apply_structure_info_trait(obj_id, merged_msg, locks_data)
                 elif "LocatedAnnotationsTrait" in descriptor_name and is_lock:
                     self._apply_located_annotations_trait(obj_id, merged_msg, locks_data)
+                elif "LabelSettingsTrait" in descriptor_name:
+                    trait_key = f"{obj_id}:{type_url}"
+                    all_traits[trait_key] = {
+                        "object_id": obj_id,
+                        "type_url": type_url,
+                        "decoded": True,
+                        "data": {
+                            "label": merged_msg.label if getattr(merged_msg, "label", None) else None,
+                        },
+                    }
+                    if is_lock:
+                        self._apply_label_settings_trait(obj_id, merged_msg, locks_data)
                 elif "DeviceIdentityTrait" in descriptor_name and PROTO_AVAILABLE:
                     trait_key = f"{obj_id}:{type_url}"
                     all_traits[trait_key] = {
