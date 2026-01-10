@@ -7,6 +7,7 @@ import binascii
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 from .proto.nest.trait import structure_pb2 as nest_structure_pb2
 from .proto.nest.trait import security_pb2 as nest_security_pb2
+from .proto.nest.trait import located_pb2 as nest_located_pb2
 from .proto.nest import rpc_pb2 as rpc_pb2
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ _V2_TRAIT_CLASS_MAP = {
     "weave.trait.security.PincodeInputTrait": weave_security_pb2.PincodeInputTrait,
     "nest.trait.security.EnhancedBoltLockSettingsTrait": nest_security_pb2.EnhancedBoltLockSettingsTrait,
     "nest.trait.structure.StructureInfoTrait": nest_structure_pb2.StructureInfoTrait,
+    "nest.trait.located.LocatedAnnotationsTrait": nest_located_pb2.LocatedAnnotationsTrait,
 }
 
 if PROTO_AVAILABLE:
@@ -469,6 +471,29 @@ class NestProtobufHandler:
             else:
                 if not locks_data.get("structure_id"):
                     locks_data["structure_id"] = resolved
+
+    def _apply_located_annotations_trait(self, obj_id, located, locks_data):
+        name = None
+        for field_name in ("custom_annotations", "annotations"):
+            annotations = getattr(located, field_name, None)
+            if not annotations:
+                continue
+            for annotation in annotations:
+                info = getattr(annotation, "info", None)
+                if not info:
+                    continue
+                name_field = getattr(info, "name", None)
+                value = getattr(name_field, "value", None) if name_field else None
+                if isinstance(value, str):
+                    value = value.strip()
+                if value and value.lower() != "undefined":
+                    name = value
+                    break
+            if name:
+                break
+        if name:
+            device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
+            device["name"] = name
         _LOGGER.debug(
             "Parsed StructureInfoTrait for %s: structure_id=%s, structure_id_v2=%s",
             obj_id,
@@ -507,6 +532,13 @@ class NestProtobufHandler:
                         locks_data["structure_id"] = resolved
             if obj_id.startswith("USER_"):
                 locks_data["user_id"] = obj_id
+
+            is_lock = False
+            if isinstance(trait_map, dict):
+                for descriptor in trait_map.keys():
+                    if any(hint in descriptor for hint in _LOCK_TRAIT_HINTS):
+                        is_lock = True
+                        break
 
             for descriptor_name, entries in trait_map.items():
                 trait_cls = _V2_TRAIT_CLASS_MAP.get(descriptor_name)
@@ -567,6 +599,8 @@ class NestProtobufHandler:
                     self._apply_tamper_trait(obj_id, merged_msg, locks_data)
                 elif "StructureInfoTrait" in descriptor_name:
                     self._apply_structure_info_trait(obj_id, merged_msg, locks_data)
+                elif "LocatedAnnotationsTrait" in descriptor_name and is_lock:
+                    self._apply_located_annotations_trait(obj_id, merged_msg, locks_data)
                 elif "DeviceIdentityTrait" in descriptor_name and PROTO_AVAILABLE:
                     trait_key = f"{obj_id}:{type_url}"
                     all_traits[trait_key] = {

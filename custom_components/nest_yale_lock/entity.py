@@ -19,6 +19,17 @@ def _mask_debug_value(value):
     return f"{text[:4]}***{text[-4:]}"
 
 
+def _normalize_device_name(name):
+    if not isinstance(name, str):
+        return None
+    value = name.strip()
+    if not value:
+        return None
+    if value.lower() == "undefined":
+        return None
+    return value
+
+
 class NestYaleEntity(CoordinatorEntity):
     """Base entity class for Nest Yale devices."""
 
@@ -66,6 +77,7 @@ class NestYaleEntity(CoordinatorEntity):
 
         # Get initial metadata
         metadata = self._coordinator.api_client.get_device_metadata(device_id)
+        metadata["name"] = _normalize_device_name(metadata.get("name"))
         # Only set _attr_name for entities that opt out of entity naming.
         # Home Assistant skips translations when _attr_name is present.
         if not entity_has_name:
@@ -85,6 +97,7 @@ class NestYaleEntity(CoordinatorEntity):
         
         # Set up device info
         self._setup_device_info(metadata)
+        self._update_device_name_from_data()
 
     async def async_added_to_hass(self) -> None:
         """Run when entity is added to Home Assistant."""
@@ -92,6 +105,7 @@ class NestYaleEntity(CoordinatorEntity):
         latest = self._coordinator.data.get(self._device_id)
         if isinstance(latest, dict):
             self._device_data.update(latest)
+        self._update_device_name_from_data()
         # If we saw trait data early, retry registry update now that hass is available.
         if not self._device_info_updated or self._device_registry_update_pending:
             self._update_device_info_from_traits()
@@ -145,9 +159,10 @@ class NestYaleEntity(CoordinatorEntity):
             "identifiers": identifiers,
             "manufacturer": "Nest",
             "model": "Nest x Yale Lock",
-            "name": self._device_name,
             "sw_version": metadata["firmware_revision"],
         }
+        if self._device_name:
+            self._attr_device_info["name"] = self._device_name
         if serial_number:
             self._attr_device_info["serial_number"] = serial_number
         
@@ -159,9 +174,48 @@ class NestYaleEntity(CoordinatorEntity):
         new_data = self._coordinator.data.get(self._device_id)
         if new_data:
             self._device_data.update(new_data)
+            self._update_device_name_from_data()
             self._update_device_info_from_traits()
             return new_data
         return None
+
+    def _update_device_name_from_data(self) -> None:
+        new_name = _normalize_device_name(self._device_data.get("name"))
+        if not new_name or new_name == self._device_name:
+            return
+        self._device_name = new_name
+        if self._device_name:
+            self._attr_device_info["name"] = self._device_name
+        else:
+            self._attr_device_info.pop("name", None)
+        if not getattr(self, "_attr_has_entity_name", False):
+            self._attr_name = self._device_name
+        if not hasattr(self, "hass") or self.hass is None:
+            self._device_registry_update_pending = True
+            return
+        try:
+            device_registry = dr.async_get(self.hass)
+            device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
+            if not device:
+                self._device_registry_update_pending = True
+                return
+            update_kwargs = self._build_device_registry_updates(
+                device,
+                None,
+                None,
+                None,
+                None,
+            )
+            if update_kwargs:
+                device_registry.async_update_device(device.id, **update_kwargs)
+            self._device_registry_update_pending = False
+        except Exception as err:
+            _LOGGER.debug(
+                "Failed to update device name for %s: %s",
+                self._attr_unique_id,
+                err,
+            )
+            self._device_registry_update_pending = True
 
     def _battery_trait(self) -> dict:
         """Return BatteryPowerSourceTrait data when available."""
@@ -214,9 +268,16 @@ class NestYaleEntity(CoordinatorEntity):
         update_kwargs: dict = {}
         if self._device_name:
             device_name_by_user = getattr(device, "name_by_user", None)
-            if not device_name_by_user and not device.name:
+            if not device_name_by_user and device.name != self._device_name:
                 update_kwargs["name"] = self._device_name
-                _LOGGER.info("Setting device name: %s", self._device_name)
+                if device.name:
+                    _LOGGER.info(
+                        "Updating device name: %s -> %s",
+                        device.name,
+                        self._device_name,
+                    )
+                else:
+                    _LOGGER.info("Setting device name: %s", self._device_name)
 
         if new_firmware:
             if device.sw_version != new_firmware:

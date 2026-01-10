@@ -209,6 +209,7 @@ class NestAPIClient:
         trait_names = [
             "nest.trait.user.UserInfoTrait",
             "nest.trait.structure.StructureInfoTrait",
+            "nest.trait.located.LocatedAnnotationsTrait",
             "weave.trait.security.BoltLockTrait",
             "weave.trait.security.BoltLockSettingsTrait",
             "nest.trait.security.EnhancedBoltLockSettingsTrait",
@@ -1068,12 +1069,24 @@ class NestAPIClient:
             self._reauth_task.cancel()
             self._reauth_task = None
 
+    @staticmethod
+    def _normalize_device_name(name):
+        if not isinstance(name, str):
+            return None
+        value = name.strip()
+        if not value:
+            return None
+        if value.lower() == "undefined":
+            return None
+        return value
+
     def get_device_metadata(self, device_id):
         lock_data = self.current_state["devices"]["locks"].get(device_id, {})
+        name = self._normalize_device_name(lock_data.get("name"))
         metadata = {
             "serial_number": lock_data.get("serial_number", device_id),
             "firmware_revision": lock_data.get("firmware_revision", "unknown"),
-            "name": lock_data.get("name"),
+            "name": name,
             "structure_id": self._structure_id if self._structure_id else "unknown",
         }
         
@@ -1110,7 +1123,9 @@ class NestAPIClient:
                         metadata["serial_number"] = dev.get("serial_number", device_id)
                     if metadata["firmware_revision"] == "unknown":  # Only update if not set from traits
                         metadata["firmware_revision"] = dev.get("firmware_revision", "unknown")
-                    metadata["name"] = dev.get("name") or metadata.get("name")
+                    candidate_name = self._normalize_device_name(dev.get("name"))
+                    if candidate_name:
+                        metadata["name"] = candidate_name
                     break
         return metadata
 
