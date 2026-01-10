@@ -30,7 +30,7 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Pre-release testing: `2026.01.10b5` validates device name sync from the Nest app via LabelSettingsTrait with a DeviceLocatedSettingsTrait label fallback.
+Pre-release testing: `2026.01.10b6` validates device name sync from the Nest app via LabelSettingsTrait with a DeviceLocatedSettingsTrait label fallback (fixture name preferred; where label suggested for area).
 
 ## Release 2026.01.02 - Code health refactors + diagnostics (latest stable)
 

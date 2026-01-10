@@ -754,10 +754,13 @@ class NestProtobufHandler:
                     if isinstance(fixture_label, str):
                         fixture_label = fixture_label.strip()
                     if is_lock and (where_label or fixture_label):
-                        label = where_label or fixture_label
+                        label = fixture_label or where_label
                         if label and label.lower() != "undefined":
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
                             device["name"] = label
+                        if where_label and where_label.lower() != "undefined":
+                            device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
+                            device["where_label"] = where_label
                     if where_id:
                         device_wheres[obj_id] = where_id
                         if is_lock and not locks_data["yale"].get(obj_id, {}).get("name"):

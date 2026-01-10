@@ -39,6 +39,7 @@ class NestYaleEntity(CoordinatorEntity):
         self._coordinator = coordinator
         self._device_id = device_id
         self._device_data = device_data.copy() if device_data else {}
+        self._where_label = None
         self._device_info_updated = False
         # If trait data arrives before the entity is added to HA, we may not be
         # able to update the device registry yet. Track that and retry once the
@@ -165,6 +166,8 @@ class NestYaleEntity(CoordinatorEntity):
             self._attr_device_info["name"] = self._device_name
         if serial_number:
             self._attr_device_info["serial_number"] = serial_number
+        if self._where_label:
+            self._attr_device_info["suggested_area"] = self._where_label
         
         _LOGGER.debug("Initial device_info for %s: identifiers=%s, serial_number=%s, sw_version=%s", 
                      self._attr_unique_id, identifiers, serial_number, metadata["firmware_revision"])
@@ -181,13 +184,20 @@ class NestYaleEntity(CoordinatorEntity):
 
     def _update_device_name_from_data(self) -> None:
         new_name = _normalize_device_name(self._device_data.get("name"))
+        new_where = _normalize_device_name(self._device_data.get("where_label"))
         if not new_name or new_name == self._device_name:
+            if new_where and new_where != self._where_label:
+                self._where_label = new_where
+                self._attr_device_info["suggested_area"] = self._where_label
             return
         self._device_name = new_name
+        self._where_label = new_where or self._where_label
         if self._device_name:
             self._attr_device_info["name"] = self._device_name
         else:
             self._attr_device_info.pop("name", None)
+        if self._where_label:
+            self._attr_device_info["suggested_area"] = self._where_label
         if not getattr(self, "_attr_has_entity_name", False):
             self._attr_name = self._device_name
         if not hasattr(self, "hass") or self.hass is None:
