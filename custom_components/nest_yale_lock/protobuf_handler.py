@@ -917,7 +917,8 @@ class NestProtobufHandler:
                             label = fixture_label
                         if label:
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
-                            device["name"] = label
+                            if not device.get("name"):
+                                device["name"] = label
                         area_label = where_label or (where_map.get(where_id) if where_id else None)
                         if area_label:
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})

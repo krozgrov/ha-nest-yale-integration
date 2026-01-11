@@ -30,7 +30,7 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Pre-release testing: `2026.01.10b9` adds legacy app_launch name overrides to align lock names with the Nest app while retaining fixture/where parsing for fallback.
+Pre-release testing: `2026.01.10b10` avoids overriding LabelSettingsTrait names with fixture labels so Nest app device names are preserved when present.
 
 ## Release 2026.01.02 - Code health refactors + diagnostics (latest stable)
 
