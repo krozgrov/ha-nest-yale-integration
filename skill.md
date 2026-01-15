@@ -88,3 +88,4 @@ Status updates
 - 2026-01-11: Drop suggested_area updates per HA deprecation; prefer custom fixture labels over fixtureNameLabel.
 - 2026-01-11: Add legacy app_launch name override step after fixture labels still did not match the Nest app device name.
 - 2026-01-11: Preserve LabelSettingsTrait as the top priority by not overwriting it with fixture labels.
+- 2026-01-11: Extend app_launch parsing to carry device/serial hints through nested payloads for better name mapping.

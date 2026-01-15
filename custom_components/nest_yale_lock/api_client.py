@@ -1224,19 +1224,21 @@ class NestAPIClient:
             return {}
         results: dict[str, str] = {}
         serial_map = self._serial_map_from_traits()
-        self._scan_legacy_value(payload, None, serial_map, results)
+        self._scan_legacy_value(payload, None, None, None, serial_map, results)
         return results
 
     def _scan_legacy_value(
         self,
         value,
         key_hint: str | None,
+        device_id_hint: str | None,
+        serial_hint: str | None,
         serial_map: dict[str, str],
         results: dict[str, str],
     ) -> None:
         if isinstance(value, dict):
-            device_id = self._extract_device_id(value, key_hint)
-            serial = self._extract_serial(value, key_hint)
+            device_id = self._extract_device_id(value, key_hint) or device_id_hint
+            serial = self._extract_serial(value, key_hint) or serial_hint
             name = self._extract_name(value)
             if name:
                 if device_id:
@@ -1245,17 +1247,32 @@ class NestAPIClient:
                     results[serial_map[serial]] = name
             for child_key, child_value in value.items():
                 next_hint = child_key if isinstance(child_key, str) else None
-                self._scan_legacy_value(child_value, next_hint, serial_map, results)
+                self._scan_legacy_value(
+                    child_value,
+                    next_hint,
+                    device_id,
+                    serial,
+                    serial_map,
+                    results,
+                )
             return
         if isinstance(value, list):
             for entry in value:
-                self._scan_legacy_value(entry, key_hint, serial_map, results)
+                self._scan_legacy_value(
+                    entry,
+                    key_hint,
+                    device_id_hint,
+                    serial_hint,
+                    serial_map,
+                    results,
+                )
 
     def _extract_device_id(self, node: dict, key_hint: str | None) -> str | None:
         for key in ("device_id", "deviceId", "deviceID", "device"):
             val = node.get(key)
-            if isinstance(val, str) and "DEVICE_" in val:
-                return val.split()[0]
+            candidate = self._extract_value_string(val)
+            if isinstance(candidate, str) and "DEVICE_" in candidate:
+                return candidate.split()[0]
         if isinstance(key_hint, str):
             if key_hint.startswith("DEVICE_"):
                 return key_hint
@@ -1267,8 +1284,9 @@ class NestAPIClient:
     def _extract_serial(self, node: dict, key_hint: str | None) -> str | None:
         for key in ("serial_number", "serialNumber", "serial", "sn"):
             val = node.get(key)
-            if isinstance(val, str):
-                return val
+            candidate = self._extract_value_string(val)
+            if isinstance(candidate, str):
+                return candidate
         if isinstance(key_hint, str) and "." in key_hint:
             return key_hint.split(".", 1)[1]
         return None
@@ -1282,6 +1300,24 @@ class NestAPIClient:
             if isinstance(val, dict):
                 nested = self._normalize_device_name(val.get("value"))
                 if nested:
+                    return nested
+                for nested_key in ("name", "label", "description"):
+                    nested = self._normalize_device_name(val.get(nested_key))
+                    if nested:
+                        return nested
+                nested = self._extract_name(val)
+                if nested:
+                    return nested
+        return None
+
+    @staticmethod
+    def _extract_value_string(value) -> str | None:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            for key in ("value", "device_id", "deviceId", "resource_id", "resourceId", "id"):
+                nested = value.get(key)
+                if isinstance(nested, str):
                     return nested
         return None
 
