@@ -30,7 +30,7 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Pre-release testing: `2026.01.10b12` hardens LabelSettingsTrait decoding (proto unpack first, manual fallback) to improve lock name accuracy.
+Pre-release testing: `2026.01.15b1` prefers confirmed trait states for naming/location data to avoid stale labels from accepted state.
 
 ## Release 2026.01.02 - Code health refactors + diagnostics (latest stable)
 

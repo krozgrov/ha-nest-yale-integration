@@ -61,3 +61,5 @@
 - 2026-01-11: Preserve LabelSettingsTrait names by only using fixture labels when no name is already set.
 - 2026-01-11: Improve app_launch name parsing by carrying device/serial hints through nested structures to better map labels to lock IDs.
 - 2026-01-11: Prefer protobuf unpack for LabelSettingsTrait with manual fallback to improve device name accuracy.
+- 2026-01-15: Guard LabelSettingsTrait protobuf unpack behind presence checks; fall back to manual decode when the proto class is unavailable.
+- 2026-01-15: Prefer confirmed trait states for name/location traits; accepted state can lag and surface stale labels.

@@ -537,7 +537,12 @@ class NestProtobufHandler:
         return None
 
     def _decode_label_settings_any(self, any_msg: Any) -> str | None:
-        if any_msg and any_msg.value and PROTO_AVAILABLE:
+        if (
+            any_msg
+            and any_msg.value
+            and PROTO_AVAILABLE
+            and hasattr(description_pb2, "LabelSettingsTrait")
+        ):
             trait = description_pb2.LabelSettingsTrait()
             normalized_any = _normalize_any_type(any_msg)
             try:
@@ -776,7 +781,7 @@ class NestProtobufHandler:
 
                 if descriptor_name == "weave.trait.description.LabelSettingsTrait":
                     label = None
-                    for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
+                    for entry in sorted(entries, key=lambda item: item.get("rank", 0)):
                         any_msg = entry.get("any_msg")
                         if not any_msg or not any_msg.value:
                             continue
@@ -803,7 +808,7 @@ class NestProtobufHandler:
                     continue
 
                 if descriptor_name == "nest.trait.located.CustomLocatedAnnotationsTrait":
-                    for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
+                    for entry in sorted(entries, key=lambda item: item.get("rank", 0)):
                         any_msg = entry.get("any_msg")
                         if not any_msg or not any_msg.value:
                             continue
@@ -825,7 +830,7 @@ class NestProtobufHandler:
                 for entry in sorted(
                     entries,
                     key=lambda item: item.get("rank", 0),
-                    reverse=prefer_confirmed,
+                    reverse=not prefer_confirmed,
                 ):
                     any_msg = entry.get("any_msg")
                     if not any_msg:
