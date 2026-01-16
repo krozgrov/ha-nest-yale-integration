@@ -59,6 +59,11 @@ Prioritized plan (least impactful -> most impactful)
    - Override lock names when app_launch provides a more accurate device label than protobuf traits.
    - Risk: medium (extra API call; parsing heuristics).
 
+9) LabelSettingsTrait decode hardening (planned)
+   - Prefer protobuf unpack of LabelSettingsTrait when available.
+   - Fall back to manual decode only if unpack fails or label is empty.
+   - Risk: low (name parsing only).
+
 Validation approach
 - Manual HA test after each step.
 - Keep pre-releases for each step to isolate regressions.
@@ -89,3 +94,4 @@ Status updates
 - 2026-01-11: Add legacy app_launch name override step after fixture labels still did not match the Nest app device name.
 - 2026-01-11: Preserve LabelSettingsTrait as the top priority by not overwriting it with fixture labels.
 - 2026-01-11: Extend app_launch parsing to carry device/serial hints through nested payloads for better name mapping.
+- 2026-01-11: Plan to harden LabelSettingsTrait decoding using protobuf unpack with manual fallback.

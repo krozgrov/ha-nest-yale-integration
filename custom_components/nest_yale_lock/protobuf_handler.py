@@ -536,6 +536,22 @@ class NestProtobufHandler:
             pos = self._skip_field(payload, pos, wire_type)
         return None
 
+    def _decode_label_settings_any(self, any_msg: Any) -> str | None:
+        if any_msg and any_msg.value and PROTO_AVAILABLE:
+            trait = description_pb2.LabelSettingsTrait()
+            normalized_any = _normalize_any_type(any_msg)
+            try:
+                unpacked = normalized_any.Unpack(trait)
+            except DecodeError:
+                unpacked = False
+            if unpacked:
+                label = self._normalize_label_value(getattr(trait, "label", None))
+                if label:
+                    return label
+        if any_msg and any_msg.value:
+            return self._normalize_label_value(self._decode_label_settings(any_msg.value))
+        return None
+
     def _decode_string_ref(self, payload: bytes) -> str | None:
         pos = 0
         while pos < len(payload):
@@ -764,7 +780,7 @@ class NestProtobufHandler:
                         any_msg = entry.get("any_msg")
                         if not any_msg or not any_msg.value:
                             continue
-                        label = self._decode_label_settings(any_msg.value)
+                        label = self._decode_label_settings_any(any_msg)
                         if label:
                             break
                     if label:
