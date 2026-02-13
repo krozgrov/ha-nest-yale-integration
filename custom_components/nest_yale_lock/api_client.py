@@ -436,7 +436,24 @@ class NestAPIClient:
                 self.current_state["user_id"] = self._user_id
                 _LOGGER.info(f"Initial user_id from id_token: {self._user_id}, structure_id: {self._structure_id}")
             else:
-                _LOGGER.warning(f"No id_token in auth_data, awaiting stream for user_id and structure_id")
+                # Some accounts do not return id_token; attempt to decode the Nest JWT
+                # before falling back to observe/user-data discovery.
+                self._user_id = None
+                try:
+                    decoded_jwt = jwt.decode(self.access_token, options={"verify_signature": False})
+                    if isinstance(decoded_jwt, dict):
+                        for key in ("sub", "user_id", "userid"):
+                            candidate = decoded_jwt.get(key)
+                            if isinstance(candidate, str) and candidate.strip():
+                                self._user_id = candidate.strip()
+                                break
+                except Exception:
+                    self._user_id = None
+                self.current_state["user_id"] = self._user_id
+                _LOGGER.warning(
+                    "No id_token in auth_data; derived user_id=%s from access token (may be None)",
+                    self._user_id,
+                )
             _LOGGER.info(f"Authenticated with access_token: {self.access_token[:10]}..., user_id: {self._user_id}, structure_id: {self._structure_id}")
             # IMPORTANT: Do NOT block authentication on refresh_state().
             #
@@ -1207,7 +1224,7 @@ class NestAPIClient:
             self._legacy_name_task = None
 
     def _schedule_legacy_name_refresh(self, reason: str) -> None:
-        if not self.access_token or not self._user_id:
+        if not self.access_token:
             return
         if self._legacy_name_task and not self._legacy_name_task.done():
             return
@@ -1231,48 +1248,120 @@ class NestAPIClient:
                 return host.split("/")[0]
         return "home.nest.com"
 
+    def _legacy_user_candidates(self) -> list[str]:
+        candidates: list[str] = []
+
+        def _add(value) -> None:
+            if not isinstance(value, str):
+                return
+            normalized = value.strip()
+            if not normalized:
+                return
+            if normalized.lower() == "unknown":
+                return
+            if normalized not in candidates:
+                candidates.append(normalized)
+
+        _add(self._user_id)
+        if isinstance(self.auth_data, dict):
+            _add(self.auth_data.get("userid"))
+            _add(self.auth_data.get("user_id"))
+            user_obj = self.auth_data.get("user")
+            if isinstance(user_obj, dict):
+                _add(user_obj.get("user_id"))
+
+        # If id_token was unavailable, try decoding the Nest JWT as a fallback source.
+        if self.access_token:
+            try:
+                decoded = jwt.decode(self.access_token, options={"verify_signature": False})
+                if isinstance(decoded, dict):
+                    for key in ("sub", "user_id", "userid"):
+                        _add(decoded.get(key))
+            except Exception:
+                pass
+
+        # Harvest observed USER_* ids from the pincode trait cache as a last resort.
+        trait_cache = self.current_state.get("traits", {}) or {}
+        for resource_traits in trait_cache.values():
+            if not isinstance(resource_traits, dict):
+                continue
+            pincode_trait = resource_traits.get("weave.trait.security.UserPincodesSettingsTrait")
+            if not pincode_trait:
+                continue
+            try:
+                for user_pincode in pincode_trait.userPincodes.values():
+                    if not user_pincode.HasField("userId"):
+                        continue
+                    _add(getattr(user_pincode.userId, "resourceId", None))
+            except Exception:
+                continue
+
+        return candidates
+
     async def _refresh_legacy_device_names(self, reason: str) -> None:
-        self._legacy_name_last_fetch = asyncio.get_event_loop().time()
         try:
-            user_id = self._user_id
-            if isinstance(user_id, str) and user_id.startswith("USER_"):
-                stripped = user_id.replace("USER_", "")
-                if stripped.isdigit():
-                    user_id = stripped
-            if not self.access_token or not user_id:
+            if not self.access_token:
+                return
+            user_candidates = self._legacy_user_candidates()
+            if not user_candidates:
+                _LOGGER.debug("Skipping app_launch name refresh (%s): no user id candidates", reason)
                 return
             host = self._legacy_app_launch_host()
-            url = _APP_LAUNCH_URL_FORMAT.format(host=host, user_id=user_id)
-            headers = {
-                "Authorization": f"Basic {self.access_token}",
-                "X-nl-user-id": str(user_id),
-                "X-nl-protocol-version": "1",
-                "User-Agent": USER_AGENT_STRING,
-            }
             payload = {
                 "known_bucket_types": _APP_LAUNCH_BUCKET_TYPES,
                 "known_bucket_versions": [],
             }
             timeout = aiohttp.ClientTimeout(total=_APP_LAUNCH_TIMEOUT_SECONDS)
-            _LOGGER.debug("Requesting app_launch for legacy names (%s)", reason)
-            async with self.session.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=timeout,
-            ) as resp:
-                if resp.status != 200:
-                    _LOGGER.debug("app_launch returned status %s (%s)", resp.status, reason)
-                    return
-                data = await resp.json()
-            overrides = self._extract_legacy_device_names(data)
-            if overrides:
-                self._legacy_name_overrides.update(overrides)
-                self._apply_legacy_name_overrides_to_current()
-                _LOGGER.info(
-                    "Applied legacy app_launch names for %d devices",
-                    len(overrides),
-                )
+            attempted = False
+            for raw_user_id in user_candidates:
+                candidate_ids = [raw_user_id]
+                if raw_user_id.startswith("USER_"):
+                    stripped = raw_user_id.replace("USER_", "", 1)
+                    if stripped.isdigit():
+                        candidate_ids.insert(0, stripped)
+                for request_user_id in candidate_ids:
+                    attempted = True
+                    url = _APP_LAUNCH_URL_FORMAT.format(host=host, user_id=request_user_id)
+                    headers = {
+                        "Authorization": f"Basic {self.access_token}",
+                        "X-nl-user-id": str(request_user_id),
+                        "X-nl-protocol-version": "1",
+                        "User-Agent": USER_AGENT_STRING,
+                    }
+                    _LOGGER.debug(
+                        "Requesting app_launch for legacy names (%s) with user_id=%s",
+                        reason,
+                        request_user_id,
+                    )
+                    async with self.session.post(
+                        url,
+                        json=payload,
+                        headers=headers,
+                        timeout=timeout,
+                    ) as resp:
+                        if resp.status != 200:
+                            _LOGGER.debug(
+                                "app_launch returned status %s for user_id=%s (%s)",
+                                resp.status,
+                                request_user_id,
+                                reason,
+                            )
+                            continue
+                        data = await resp.json()
+                    overrides = self._extract_legacy_device_names(data)
+                    if overrides:
+                        self._legacy_name_overrides.update(overrides)
+                        self._apply_legacy_name_overrides_to_current()
+                        _LOGGER.info(
+                            "Applied legacy app_launch names for %d devices using user_id=%s",
+                            len(overrides),
+                            request_user_id,
+                        )
+                        if attempted:
+                            self._legacy_name_last_fetch = asyncio.get_event_loop().time()
+                        return
+            if attempted:
+                self._legacy_name_last_fetch = asyncio.get_event_loop().time()
         except asyncio.CancelledError:
             raise
         except Exception as err:

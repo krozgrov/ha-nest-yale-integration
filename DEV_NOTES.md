@@ -71,3 +71,4 @@
 - 2026-02-13: Restrict lock discovery to `DEVICE_*` resource ids and clean stale `USER_*` registry entries to prevent duplicate ghost devices (e.g., generic “Nest Yale”) after passcode trait parsing.
 - 2026-02-13: Expand startup registry cleanup to remove legacy non-`DEVICE_*` entities/devices (e.g., old serial-based IDs) when canonical `DEVICE_*` entries exist, eliminating duplicate lock devices in HA.
 - 2026-02-13: Harden app_launch name extraction to avoid inheriting device IDs into nested location nodes, and allow app_launch overrides to update differing existing names so Nest app label changes (e.g., Garage door) propagate in HA.
+- 2026-02-13: When id_token is missing, derive user id candidates from the Nest JWT and observed pincode trait cache so app_launch name refresh still runs; avoid throttling cache updates when no candidates were available.
