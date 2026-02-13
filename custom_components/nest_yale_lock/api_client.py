@@ -1291,7 +1291,13 @@ class NestAPIClient:
                 continue
             override = self._legacy_name_overrides.get(device_id)
             current_name = self._normalize_device_name(payload.get("name"))
-            if override and not current_name:
+            if (
+                override
+                and (
+                    not current_name
+                    or current_name.casefold() != override.casefold()
+                )
+            ):
                 payload["name"] = override
 
     def _apply_legacy_name_overrides_to_current(self) -> None:
@@ -1303,7 +1309,13 @@ class NestAPIClient:
                 continue
             override = self._legacy_name_overrides.get(device_id)
             current_name = self._normalize_device_name(payload.get("name"))
-            if override and not current_name:
+            if (
+                override
+                and (
+                    not current_name
+                    or current_name.casefold() != override.casefold()
+                )
+            ):
                 payload["name"] = override
 
     def _extract_legacy_device_names(self, payload: dict) -> dict[str, str]:
@@ -1324,11 +1336,21 @@ class NestAPIClient:
         results: dict[str, str],
     ) -> None:
         if isinstance(value, dict):
-            device_id = self._extract_device_id(value, key_hint) or device_id_hint
-            serial = self._extract_serial(value, key_hint) or serial_hint
-            name = self._extract_name(value)
-            if name:
-                if device_id:
+            explicit_device_id = self._extract_device_id(value, key_hint)
+            explicit_serial = self._extract_serial(value, key_hint)
+            device_id = explicit_device_id or device_id_hint
+            serial = explicit_serial or serial_hint
+            has_explicit_device_ref = bool(
+                explicit_device_id
+                or explicit_serial
+                or (
+                    isinstance(key_hint, str)
+                    and key_hint.startswith("DEVICE_")
+                )
+            )
+            name = self._extract_name(value, allow_fallback=has_explicit_device_ref)
+            if name and has_explicit_device_ref:
+                if isinstance(device_id, str) and device_id.startswith("DEVICE_"):
                     results[device_id] = name
                 elif serial and serial in serial_map:
                     results[serial_map[serial]] = name
@@ -1374,12 +1396,16 @@ class NestAPIClient:
             candidate = self._extract_value_string(val)
             if isinstance(candidate, str):
                 return candidate
-        if isinstance(key_hint, str) and "." in key_hint:
-            return key_hint.split(".", 1)[1]
+        if isinstance(key_hint, str):
+            hint = key_hint.strip()
+            if hint.lower().startswith("device.") and "." in hint:
+                return hint.split(".", 1)[1]
         return None
 
-    def _extract_name(self, node: dict) -> str | None:
-        for key in ("name", "label", "description", "device_name", "deviceName"):
+    def _extract_name(self, node: dict, *, allow_fallback: bool = False) -> str | None:
+        primary_keys = ("name", "device_name", "deviceName")
+        fallback_keys = ("label", "description") if allow_fallback else ()
+        for key in (*primary_keys, *fallback_keys):
             val = node.get(key)
             name = self._normalize_device_name(val)
             if name:
@@ -1388,11 +1414,11 @@ class NestAPIClient:
                 nested = self._normalize_device_name(val.get("value"))
                 if nested:
                     return nested
-                for nested_key in ("name", "label", "description"):
+                for nested_key in (*primary_keys, *fallback_keys):
                     nested = self._normalize_device_name(val.get(nested_key))
                     if nested:
                         return nested
-                nested = self._extract_name(val)
+                nested = self._extract_name(val, allow_fallback=allow_fallback)
                 if nested:
                     return nested
         return None
