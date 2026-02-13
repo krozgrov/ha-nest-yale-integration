@@ -63,3 +63,7 @@
 - 2026-01-11: Prefer protobuf unpack for LabelSettingsTrait with manual fallback to improve device name accuracy.
 - 2026-01-15: Guard LabelSettingsTrait protobuf unpack behind presence checks; fall back to manual decode when the proto class is unavailable.
 - 2026-01-15: Prefer confirmed trait states for name/location traits; accepted state can lag and surface stale labels.
+- 2026-01-15: Parse CustomLocatedAnnotationsTrait in v2 observe and use custom fixture labels to override generic location names when available.
+- 2026-02-13: Treat auth_data device names as true fallback only so trait/device-stream names are not overwritten by stale generic labels (fixes persistent "Front door lock" naming regressions).
+- 2026-02-13: Apply legacy app_launch name overrides only when a lock currently has no resolved name so fallback data cannot clobber trait-derived Nest app labels.
+- 2026-02-13: Add guest passcode service support via UserPincodesSettingsTrait set/delete commands; require explicit guest user ids for safety and validate passcode length against observed capabilities when available.

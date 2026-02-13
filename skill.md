@@ -64,6 +64,15 @@ Prioritized plan (least impactful -> most impactful)
    - Guard protobuf unpack behind presence checks and fall back to manual decode.
    - Risk: low (name parsing only).
 
+10) Guest passcode management services (completed)
+   - Add Home Assistant services to set/update and delete guest passcodes.
+   - Use `UserPincodesSettingsTrait.SetUserPincodeRequest` and `DeleteUserPincodeRequest` command payloads through existing `SendCommand` plumbing.
+   - Resolve target lock by `device_id` when provided; otherwise auto-select when a single lock is configured.
+   - Require explicit guest user resource IDs for this first version and validate passcode format before sending commands.
+   - Add service docs and logging/diagnostics hooks for troubleshooting command outcomes.
+   - Risk: medium-high (Nest guest/passcode APIs are under-documented; behavior may vary by account/firmware).
+   - Test/validation: manual HA service-call validation for successful set/delete, invalid passcode handling, missing/ambiguous device targeting, and command error surfacing.
+
 Validation approach
 - Manual HA test after each step.
 - Keep pre-releases for each step to isolate regressions.
@@ -96,3 +105,6 @@ Status updates
 - 2026-01-11: Extend app_launch parsing to carry device/serial hints through nested payloads for better name mapping.
 - 2026-01-11: Plan to harden LabelSettingsTrait decoding using protobuf unpack with manual fallback.
 - 2026-01-15: Prefer confirmed trait states for naming/location to avoid stale accepted values; guard LabelSettingsTrait protobuf unpack to avoid missing-class errors.
+- 2026-01-15: Allow CustomLocatedAnnotationsTrait through v2 parsing and prefer custom fixture labels when the current name looks like a location label.
+- 2026-02-13: Fixed naming precedence so auth/app_launch fallbacks no longer overwrite resolved trait names, addressing stale generic lock names in HA.
+- 2026-02-13: Added guest passcode services (`set_guest_passcode`, `delete_guest_passcode`) using UserPincodesSettingsTrait command requests with device-aware passcode validation.

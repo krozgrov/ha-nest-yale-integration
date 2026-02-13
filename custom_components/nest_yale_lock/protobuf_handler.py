@@ -26,6 +26,8 @@ _LOCK_TRAIT_HINTS = (
     "BoltLockTrait",
     "BoltLockSettingsTrait",
     "BoltLockCapabilitiesTrait",
+    "UserPincodesSettingsTrait",
+    "UserPincodesCapabilitiesTrait",
     "TamperTrait",
     "PincodeInputTrait",
 )
@@ -42,6 +44,8 @@ _V2_TRAIT_CLASS_MAP = {
     "weave.trait.security.BoltLockTrait": weave_security_pb2.BoltLockTrait,
     "weave.trait.security.BoltLockSettingsTrait": weave_security_pb2.BoltLockSettingsTrait,
     "weave.trait.security.BoltLockCapabilitiesTrait": weave_security_pb2.BoltLockCapabilitiesTrait,
+    "weave.trait.security.UserPincodesSettingsTrait": weave_security_pb2.UserPincodesSettingsTrait,
+    "weave.trait.security.UserPincodesCapabilitiesTrait": weave_security_pb2.UserPincodesCapabilitiesTrait,
     "weave.trait.security.TamperTrait": weave_security_pb2.TamperTrait,
     "weave.trait.security.PincodeInputTrait": weave_security_pb2.PincodeInputTrait,
     "nest.trait.security.EnhancedBoltLockSettingsTrait": nest_security_pb2.EnhancedBoltLockSettingsTrait,
@@ -300,7 +304,11 @@ class NestProtobufHandler:
                 descriptor = _strip_type_prefix(any_msg.type_url)
                 if not descriptor:
                     continue
-                if descriptor != "weave.trait.description.LabelSettingsTrait" and descriptor not in _V2_TRAIT_CLASS_MAP:
+                if (
+                    descriptor != "weave.trait.description.LabelSettingsTrait"
+                    and descriptor != "nest.trait.located.CustomLocatedAnnotationsTrait"
+                    and descriptor not in _V2_TRAIT_CLASS_MAP
+                ):
                     continue
                 state_types = trait_state.get("state_types") or []
                 state_ranks: list[int] = []
@@ -633,7 +641,49 @@ class NestProtobufHandler:
                         fixture_label = label
                 continue
             pos = self._skip_field(payload, pos, wire_type)
+
+        if not where_id or not fixture_id or not where_label or not fixture_label:
+            ids, labels = self._scan_located_strings(payload)
+            if not where_id and ids:
+                where_id = ids[0]
+            if not fixture_id and len(ids) > 1:
+                fixture_id = ids[1]
+            if not where_label and labels:
+                where_label = labels[0]
+            if not fixture_label and len(labels) > 1:
+                fixture_label = labels[1]
         return where_label, fixture_label, where_id, fixture_id
+
+    def _scan_located_strings(self, payload: bytes) -> tuple[list[str], list[str]]:
+        ids: list[str] = []
+        labels: list[str] = []
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            wire_type = tag & 0x07
+            if wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                try:
+                    text = value.decode("utf-8").strip()
+                except Exception:
+                    text = ""
+                if not text:
+                    continue
+                if text.startswith("ANNOTATION_"):
+                    if text not in ids:
+                        ids.append(text)
+                    continue
+                if text.lower() == "undefined":
+                    continue
+                if text not in labels:
+                    labels.append(text)
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+        return ids, labels
 
     def _decode_custom_located_map_entry(self, payload: bytes) -> bytes | None:
         pos = 0
@@ -752,6 +802,17 @@ class NestProtobufHandler:
         device_wheres: dict[str, str] = {}
         device_fixtures: dict[str, str] = {}
 
+        def _is_location_label(label: str | None) -> bool:
+            if not isinstance(label, str):
+                return False
+            value = label.strip().lower()
+            if not value:
+                return False
+            for candidate in list(where_map.values()) + list(custom_where_map.values()):
+                if isinstance(candidate, str) and candidate.strip().lower() == value:
+                    return True
+            return False
+
         for obj_id, trait_map in updates.items():
             if not obj_id:
                 continue
@@ -852,6 +913,8 @@ class NestProtobufHandler:
                 if merged_msg is None:
                     continue
                 type_url = merged_type_url
+                if not type_url:
+                    type_url = f"type.googleapis.com/{descriptor_name}"
                 entry_label = None
                 for entry in entries:
                     if entry.get("trait_label"):
@@ -871,6 +934,47 @@ class NestProtobufHandler:
                 elif "BoltLockCapabilitiesTrait" in descriptor_name:
                     lock_device_ids.add(obj_id)
                     self._apply_bolt_lock_capabilities_trait(obj_id, merged_msg, locks_data)
+                elif "UserPincodesCapabilitiesTrait" in descriptor_name:
+                    lock_device_ids.add(obj_id)
+                    trait_key = f"{obj_id}:{type_url}"
+                    all_traits[trait_key] = {
+                        "object_id": obj_id,
+                        "type_url": type_url,
+                        "decoded": True,
+                        "data": {
+                            "min_pincode_length": int(getattr(merged_msg, "minPincodeLength", 0) or 0),
+                            "max_pincode_length": int(getattr(merged_msg, "maxPincodeLength", 0) or 0),
+                            "max_pincodes_supported": int(getattr(merged_msg, "maxPincodesSupported", 0) or 0),
+                        },
+                    }
+                elif "UserPincodesSettingsTrait" in descriptor_name:
+                    lock_device_ids.add(obj_id)
+                    sanitized_pincodes = {}
+                    try:
+                        for slot, user_pincode in merged_msg.userPincodes.items():
+                            user_id = None
+                            if user_pincode.HasField("userId"):
+                                user_id = getattr(user_pincode.userId, "resourceId", None)
+                            enabled = None
+                            if user_pincode.HasField("pincodeCredentialEnabled"):
+                                enabled = bool(user_pincode.pincodeCredentialEnabled.value)
+                            has_passcode = bool(getattr(user_pincode, "pincode", b""))
+                            sanitized_pincodes[str(int(slot))] = {
+                                "user_id": user_id,
+                                "enabled": enabled,
+                                "has_passcode": has_passcode,
+                            }
+                    except Exception:
+                        sanitized_pincodes = {}
+                    trait_key = f"{obj_id}:{type_url}"
+                    all_traits[trait_key] = {
+                        "object_id": obj_id,
+                        "type_url": type_url,
+                        "decoded": True,
+                        "data": {
+                            "user_pincodes": sanitized_pincodes,
+                        },
+                    }
                 elif "TamperTrait" in descriptor_name:
                     lock_device_ids.add(obj_id)
                     self._apply_tamper_trait(obj_id, merged_msg, locks_data)
@@ -938,7 +1042,8 @@ class NestProtobufHandler:
                             label = fixture_label
                         if label:
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
-                            if not device.get("name"):
+                            current_name = device.get("name")
+                            if not current_name or _is_location_label(current_name):
                                 device["name"] = label
                         area_label = where_label or (where_map.get(where_id) if where_id else None)
                         if area_label:
@@ -959,11 +1064,11 @@ class NestProtobufHandler:
                 if device_id not in lock_device_ids:
                     continue
                 device = locks_data["yale"].setdefault(device_id, {"device_id": device_id})
-                if device.get("name"):
-                    continue
                 label = fixture_map.get(fixture_id)
                 if label:
-                    device["name"] = label
+                    current_name = device.get("name")
+                    if not current_name or _is_location_label(current_name):
+                        device["name"] = label
         if where_map and device_wheres:
             for device_id, where_id in device_wheres.items():
                 if device_id not in lock_device_ids:

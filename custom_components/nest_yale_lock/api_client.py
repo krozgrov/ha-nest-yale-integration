@@ -257,6 +257,8 @@ class NestAPIClient:
             "weave.trait.security.BoltLockSettingsTrait",
             "nest.trait.security.EnhancedBoltLockSettingsTrait",
             "weave.trait.security.BoltLockCapabilitiesTrait",
+            "weave.trait.security.UserPincodesSettingsTrait",
+            "weave.trait.security.UserPincodesCapabilitiesTrait",
             "weave.trait.security.PincodeInputTrait",
             "weave.trait.security.TamperTrait",
             # HomeKit-relevant traits
@@ -1109,6 +1111,67 @@ class NestAPIClient:
                 pass
         return raw
 
+    def _user_pincodes_trait_label(self, device_id: str) -> str | None:
+        labels = self.current_state.get("trait_labels", {}).get(device_id, {})
+        label = labels.get("weave.trait.security.UserPincodesSettingsTrait")
+        if isinstance(label, str) and label.strip():
+            return label
+        return None
+
+    async def set_guest_passcode(
+        self,
+        device_id: str,
+        guest_user_id: str,
+        passcode: str,
+        *,
+        enabled: bool = True,
+    ):
+        """Set or update a guest passcode for a given guest user resource id."""
+        if not isinstance(guest_user_id, str) or not guest_user_id.strip():
+            raise ValueError("guest_user_id is required")
+        if not isinstance(passcode, str):
+            raise ValueError("passcode must be a string")
+        passcode_text = passcode.strip()
+        if not passcode_text.isdigit():
+            raise ValueError("passcode must contain digits only")
+
+        request = weave_security_pb2.UserPincodesSettingsTrait.SetUserPincodeRequest()
+        request.userPincode.userId.resourceId = guest_user_id.strip()
+        request.userPincode.pincode = passcode_text.encode("utf-8")
+        request.userPincode.pincodeCredentialEnabled.value = bool(enabled)
+
+        cmd_any = {
+            "command": {
+                "type_url": "type.nestlabs.com/weave.trait.security.UserPincodesSettingsTrait.SetUserPincodeRequest",
+                "value": request.SerializeToString(),
+            },
+        }
+        trait_label = self._user_pincodes_trait_label(device_id)
+        if trait_label:
+            cmd_any["traitLabel"] = trait_label
+        _LOGGER.info("Sending guest passcode update for device %s", device_id)
+        return await self.send_command(cmd_any, device_id, structure_id=self._structure_id)
+
+    async def delete_guest_passcode(self, device_id: str, guest_user_id: str):
+        """Delete a guest passcode for a given guest user resource id."""
+        if not isinstance(guest_user_id, str) or not guest_user_id.strip():
+            raise ValueError("guest_user_id is required")
+
+        request = weave_security_pb2.UserPincodesSettingsTrait.DeleteUserPincodeRequest()
+        request.userId.resourceId = guest_user_id.strip()
+
+        cmd_any = {
+            "command": {
+                "type_url": "type.nestlabs.com/weave.trait.security.UserPincodesSettingsTrait.DeleteUserPincodeRequest",
+                "value": request.SerializeToString(),
+            },
+        }
+        trait_label = self._user_pincodes_trait_label(device_id)
+        if trait_label:
+            cmd_any["traitLabel"] = trait_label
+        _LOGGER.info("Sending guest passcode delete for device %s", device_id)
+        return await self.send_command(cmd_any, device_id, structure_id=self._structure_id)
+
     async def close(self):
         if self.connection and self.connection.connected:
             await self.connection.close()
@@ -1205,7 +1268,8 @@ class NestAPIClient:
             if not isinstance(payload, dict):
                 continue
             override = self._legacy_name_overrides.get(device_id)
-            if override:
+            current_name = self._normalize_device_name(payload.get("name"))
+            if override and not current_name:
                 payload["name"] = override
 
     def _apply_legacy_name_overrides_to_current(self) -> None:
@@ -1216,7 +1280,8 @@ class NestAPIClient:
             if not isinstance(payload, dict):
                 continue
             override = self._legacy_name_overrides.get(device_id)
-            if override:
+            current_name = self._normalize_device_name(payload.get("name"))
+            if override and not current_name:
                 payload["name"] = override
 
     def _extract_legacy_device_names(self, payload: dict) -> dict[str, str]:
@@ -1416,7 +1481,7 @@ class NestAPIClient:
                     if metadata["firmware_revision"] == "unknown":  # Only update if not set from traits
                         metadata["firmware_revision"] = dev.get("firmware_revision", "unknown")
                     candidate_name = self._normalize_device_name(dev.get("name"))
-                    if candidate_name:
+                    if candidate_name and not metadata.get("name"):
                         metadata["name"] = candidate_name
                     break
         return metadata
