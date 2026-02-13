@@ -11,6 +11,18 @@ from .proto.nest import rpc_pb2
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _normalize_lock_name(name):
+    if not isinstance(name, str):
+        return None
+    value = name.strip()
+    if not value:
+        return None
+    if value.lower() == "undefined":
+        return None
+    return value
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     _LOGGER.debug("Starting async_setup_entry for lock platform, entry_id: %s", entry.entry_id)
     coordinator = hass.data[DOMAIN][entry.entry_id]
@@ -32,6 +44,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             unique_id = f"{DOMAIN}_{device_id}"
             if unique_id in added:
                 continue
+            # Seed first-time HA naming with placement (where_label) when present.
+            # This controls initial entity_id generation on add.
+            where_name = _normalize_lock_name(device.get("where_label"))
+            if where_name:
+                device["name"] = where_name
             new_entities.append(NestYaleLock(coordinator, device))
             added.add(unique_id)
             _LOGGER.debug("Prepared new lock entity: %s", unique_id)

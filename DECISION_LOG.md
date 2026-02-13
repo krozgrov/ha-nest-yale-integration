@@ -110,6 +110,21 @@ Validation
   - `label_name` reflects Nest label (example: `Test1`)
   - `name` resolves to composed value.
 
+### 2026-02-13: Seed first-time HA lock naming from placement label
+Why
+- Users requested initial lock add behavior to use placement (`where_id` -> label) as the name source in Home Assistant.
+
+Decision
+- During first-time entity creation, if `where_label` is present, use it as the initial lock `name` seed.
+- Keep parsing/composition traits intact for runtime state attributes.
+
+Impact
+- Non-breaking.
+- Affects initial HA entity/device naming (and resulting initial entity_id generation) at add time.
+
+Validation
+- Manual HA add/re-add validation confirms first-created lock entity name is placement-derived.
+
 ## Historical Decision Timeline (migrated from `DEV_NOTES.md` on 2026-02-13)
 - 2025-12-30: Use gRPC v1 SendCommand/BatchUpdateState requests (legacy-style) for lock commands/settings while keeping v2 Observe for state/traits to improve command reliability and retain richer trait updates.
 - 2025-12-30: Removed bolt lock actor originator IDs from command payloads to align with legacy behavior and avoid INTERNAL errors on lock/unlock.
