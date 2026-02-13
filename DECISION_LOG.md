@@ -97,6 +97,7 @@ Decision
 - Persist app label as `label_name`.
 - Compute display name as `door_label (label_name)` when both are present; otherwise use whichever exists.
 - Treat app_launch overrides as fallback when trait-derived `label_name` is missing.
+- When explicit fixture labels are absent, infer `door_label` from `fixtureType` (for example garage door fixture types map to `Garage door`).
 
 Impact
 - Non-breaking behavior change to naming format.
