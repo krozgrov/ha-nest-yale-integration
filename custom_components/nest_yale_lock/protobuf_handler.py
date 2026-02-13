@@ -613,65 +613,6 @@ class NestProtobufHandler:
                     return normalized
         return None
 
-    def _is_door_fixture_type(self, located_settings) -> bool:
-        try:
-            if not hasattr(located_settings, "fixtureType") or not located_settings.HasField("fixtureType"):
-                return False
-            major = int(getattr(located_settings.fixtureType, "majorType", 0) or 0)
-            door_major = int(
-                getattr(
-                    nest_located_pb2.LocatedTrait,
-                    "LOCATED_MAJOR_FIXTURE_TYPE_DOOR",
-                    1,
-                )
-                or 1
-            )
-            return major == door_major
-        except Exception:
-            return False
-
-    def _door_label_from_fixture_type(self, located_settings) -> str | None:
-        if not self._is_door_fixture_type(located_settings):
-            return None
-        try:
-            minor = int(getattr(located_settings.fixtureType, "minorTypeDoor", 0) or 0)
-        except Exception:
-            return "Door"
-
-        enum = nest_located_pb2.LocatedTrait
-        garage_segmented = int(
-            getattr(enum, "LOCATED_MINOR_FIXTURE_TYPE_DOOR_GARAGE_SEGMENTED", -1) or -1
-        )
-        garage_single = int(
-            getattr(enum, "LOCATED_MINOR_FIXTURE_TYPE_DOOR_GARAGE_SINGLE_PANEL", -1) or -1
-        )
-        french = int(getattr(enum, "LOCATED_MINOR_FIXTURE_TYPE_DOOR_FRENCH", -1) or -1)
-        sliding = int(getattr(enum, "LOCATED_MINOR_FIXTURE_TYPE_DOOR_SLIDING", -1) or -1)
-        hinged = int(getattr(enum, "LOCATED_MINOR_FIXTURE_TYPE_DOOR_HINGED", -1) or -1)
-
-        if minor in (garage_segmented, garage_single):
-            return "Garage door"
-        if minor == french:
-            return "French door"
-        if minor == sliding:
-            return "Sliding door"
-        if minor == hinged:
-            return "Door"
-        return "Door"
-
-    def _normalize_door_label(self, value: str | None, *, is_door_fixture: bool) -> str | None:
-        label = self._normalize_label_value(value)
-        if not label:
-            return None
-        if not is_door_fixture:
-            return label
-        low = label.casefold()
-        if "door" in low:
-            return label
-        if low in {"garage", "front", "side", "back"}:
-            return f"{label} door"
-        return label
-
     @staticmethod
     def _normalize_label_value(value: str | None) -> str | None:
         if not isinstance(value, str):
@@ -1289,7 +1230,6 @@ class NestProtobufHandler:
                     where_label = self._normalize_label_value(where_label)
                     fixture_label = self._normalize_label_value(fixture_label)
                     if is_lock:
-                        is_door_fixture = self._is_door_fixture_type(merged_msg)
                         door_label = None
                         if raw_fixture_id:
                             door_label = self._lookup_annotation_label(
@@ -1300,12 +1240,7 @@ class NestProtobufHandler:
                             )
                         if not door_label:
                             door_label = fixture_label
-                        door_label = self._normalize_door_label(
-                            door_label,
-                            is_door_fixture=is_door_fixture,
-                        )
-                        if not door_label:
-                            door_label = self._door_label_from_fixture_type(merged_msg)
+                        door_label = self._normalize_label_value(door_label)
                         if door_label:
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
                             device["door_label"] = door_label

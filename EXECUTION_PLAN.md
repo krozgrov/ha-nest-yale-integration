@@ -158,6 +158,6 @@ Status updates
 - 2026-02-13: Added fallback user-id discovery for app_launch refresh (access-token claims + observed pincode trait user ids) so name sync still works when id_token is absent.
 - 2026-02-13: Triggered throttled app_launch refresh on lock updates (even when stream `user_id` stays unset), added `USER_*` suffix candidate attempts for app_launch requests, and corrected non-lock v2 trait merge order so confirmed naming states win over accepted.
 - 2026-02-13: Added explicit `door_label` + `label_name` naming components and composed lock name as `door_label (label_name)` while keeping `where_label` as placement; app_launch overrides are fallback-only when trait label is missing.
-- 2026-02-13: Added `door_label` fallback inference from `DeviceLocatedSettingsTrait.fixtureType` (including garage door minors) when explicit fixture labels are missing from trait payloads.
+- 2026-02-13: Removed synthetic `door_label` inference so lock naming uses literal Nest-provided values only (plus annotation-id alias resolution for flagged IDs).
 - 2026-02-13: Updated first-time lock entity creation to seed initial HA name from `where_label` (placement) so add-time naming follows `where_id` mapping.
 - 2026-02-13: Added canonical alias resolution for flagged annotation IDs (such as `ANNOTATION_0000000001000007`) so updated Nest door selections map to the correct annotation labels (`Garage`, `Front Door`, etc.).
