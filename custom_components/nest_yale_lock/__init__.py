@@ -69,23 +69,50 @@ def _active_coordinators(hass: HomeAssistant) -> dict[str, NestCoordinator]:
 
 
 def _cleanup_non_device_registry_entries(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Remove stale USER_* entities/devices left by pre-release parsing regressions."""
+    """Remove stale entities/devices that are not keyed by canonical DEVICE_* ids."""
     entity_registry = er.async_get(hass)
+    entity_entries = er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+    has_device_style_entity_ids = any(
+        isinstance(entity_entry.unique_id, str) and "DEVICE_" in entity_entry.unique_id
+        for entity_entry in entity_entries
+    )
+
     removed_entities = 0
-    for entity_entry in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
+    for entity_entry in entity_entries:
         unique_id = entity_entry.unique_id
-        if isinstance(unique_id, str) and unique_id.startswith(f"{DOMAIN}_USER_"):
+        if not isinstance(unique_id, str):
+            continue
+        if not unique_id.startswith(f"{DOMAIN}_"):
+            continue
+        if unique_id.startswith(f"{DOMAIN}_USER_"):
+            entity_registry.async_remove(entity_entry.entity_id)
+            removed_entities += 1
+            continue
+        if has_device_style_entity_ids and "DEVICE_" not in unique_id:
             entity_registry.async_remove(entity_entry.entity_id)
             removed_entities += 1
 
     device_registry = dr.async_get(hass)
+    device_entries = dr.async_entries_for_config_entry(device_registry, entry.entry_id)
+    has_device_style_identifiers = any(
+        domain == DOMAIN and isinstance(identifier, str) and identifier.startswith("DEVICE_")
+        for device in device_entries
+        for domain, identifier in device.identifiers
+    )
+
     removed_devices = 0
-    for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
-        has_user_identifier = any(
-            domain == DOMAIN and isinstance(identifier, str) and identifier.startswith("USER_")
+    for device in device_entries:
+        domain_identifiers = [
+            identifier
             for domain, identifier in device.identifiers
-        )
-        if has_user_identifier and device_registry.async_remove_device(device.id):
+            if domain == DOMAIN and isinstance(identifier, str)
+        ]
+        if not domain_identifiers:
+            continue
+        has_device_identifier = any(identifier.startswith("DEVICE_") for identifier in domain_identifiers)
+        has_user_identifier = any(identifier.startswith("USER_") for identifier in domain_identifiers)
+        stale_non_device = has_device_style_identifiers and not has_device_identifier
+        if (has_user_identifier or stale_non_device) and device_registry.async_remove_device(device.id):
             removed_devices += 1
 
     if removed_entities or removed_devices:

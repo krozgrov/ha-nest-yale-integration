@@ -69,3 +69,4 @@
 - 2026-02-13: Add guest passcode service support via UserPincodesSettingsTrait set/delete commands; require explicit guest user ids for safety and validate passcode length against observed capabilities when available.
 - 2026-02-13: Handle protobuf map fields during trait merge (`MessageMapContainer`) so observe/refresh no longer crash when UserPincodes map updates arrive.
 - 2026-02-13: Restrict lock discovery to `DEVICE_*` resource ids and clean stale `USER_*` registry entries to prevent duplicate ghost devices (e.g., generic “Nest Yale”) after passcode trait parsing.
+- 2026-02-13: Expand startup registry cleanup to remove legacy non-`DEVICE_*` entities/devices (e.g., old serial-based IDs) when canonical `DEVICE_*` entries exist, eliminating duplicate lock devices in HA.
