@@ -31,7 +31,7 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Pre-release testing: `2026.02.13b6` includes naming-path fixes and guest passcode service support for dev validation.
+Pre-release testing: `2026.02.13b7` includes naming-path fixes and guest passcode service support for dev validation.
 
 ## Release 2026.01.02 - Code health refactors + diagnostics (latest stable)
 
