@@ -98,6 +98,7 @@ Decision
 - Compute display name as `door_label (label_name)` when both are present; otherwise use whichever exists.
 - Treat app_launch overrides as fallback when trait-derived `label_name` is missing.
 - When explicit fixture labels are absent, infer `door_label` from `fixtureType` (for example garage door fixture types map to `Garage door`).
+- Normalize flagged annotation IDs (for example `ANNOTATION_0000000001000007`) back to canonical annotation IDs so door/placement mappings resolve to current Nest values.
 
 Impact
 - Non-breaking behavior change to naming format.

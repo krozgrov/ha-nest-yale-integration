@@ -570,6 +570,49 @@ class NestProtobufHandler:
         if composed:
             device["name"] = composed
 
+    def _annotation_id_variants(self, annotation_id: str | None) -> list[str]:
+        base = self._normalize_label_value(annotation_id)
+        if not base:
+            return []
+
+        variants: list[str] = [base]
+        upper = base.upper()
+        if upper not in variants:
+            variants.append(upper)
+
+        if not upper.startswith("ANNOTATION_"):
+            return variants
+
+        suffix = upper.split("ANNOTATION_", 1)[1]
+        if len(suffix) != 16:
+            return variants
+        try:
+            value = int(suffix, 16)
+        except ValueError:
+            return variants
+
+        # Some payloads encode fixture IDs with a 0x01000000 flag in the low
+        # 32 bits (for example ANNOTATION_0000000001000007). Try canonical
+        # aliases so they resolve against the located annotation catalog.
+        if suffix.startswith("0000000001") and value >= 0x01000000:
+            canonical = value - 0x01000000
+            alias = f"ANNOTATION_{canonical:016X}"
+            if alias not in variants:
+                variants.append(alias)
+
+        return variants
+
+    def _lookup_annotation_label(self, annotation_id: str | None, *maps: dict[str, str]) -> str | None:
+        for candidate in self._annotation_id_variants(annotation_id):
+            for mapping in maps:
+                if not mapping:
+                    continue
+                value = mapping.get(candidate)
+                normalized = self._normalize_label_value(value)
+                if normalized:
+                    return normalized
+        return None
+
     def _is_door_fixture_type(self, located_settings) -> bool:
         try:
             if not hasattr(located_settings, "fixtureType") or not located_settings.HasField("fixtureType"):
@@ -1249,7 +1292,12 @@ class NestProtobufHandler:
                         is_door_fixture = self._is_door_fixture_type(merged_msg)
                         door_label = None
                         if raw_fixture_id:
-                            door_label = fixture_map.get(raw_fixture_id) or where_map.get(raw_fixture_id)
+                            door_label = self._lookup_annotation_label(
+                                raw_fixture_id,
+                                fixture_map,
+                                where_map,
+                                custom_where_map,
+                            )
                         if not door_label:
                             door_label = fixture_label
                         door_label = self._normalize_door_label(
@@ -1262,7 +1310,11 @@ class NestProtobufHandler:
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
                             device["door_label"] = door_label
                             self._update_name_from_components(device)
-                        area_label = where_label or (where_map.get(where_id) if where_id else None)
+                        area_label = where_label or self._lookup_annotation_label(
+                            where_id,
+                            where_map,
+                            custom_where_map,
+                        )
                         if area_label:
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
                             device["where_label"] = area_label
@@ -1281,8 +1333,11 @@ class NestProtobufHandler:
                 if device_id not in lock_device_ids:
                     continue
                 device = locks_data["yale"].setdefault(device_id, {"device_id": device_id})
-                door_label = self._normalize_label_value(
-                    fixture_map.get(fixture_id) or where_map.get(fixture_id)
+                door_label = self._lookup_annotation_label(
+                    fixture_id,
+                    fixture_map,
+                    where_map,
+                    custom_where_map,
                 )
                 if door_label:
                     device["door_label"] = door_label
@@ -1294,7 +1349,11 @@ class NestProtobufHandler:
                 device = locks_data["yale"].setdefault(device_id, {"device_id": device_id})
                 if device.get("where_label"):
                     continue
-                where_name = where_map.get(where_id)
+                where_name = self._lookup_annotation_label(
+                    where_id,
+                    where_map,
+                    custom_where_map,
+                )
                 if where_name:
                     device["where_label"] = where_name
         for obj_id in lock_device_ids:

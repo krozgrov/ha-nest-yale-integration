@@ -160,3 +160,4 @@ Status updates
 - 2026-02-13: Added explicit `door_label` + `label_name` naming components and composed lock name as `door_label (label_name)` while keeping `where_label` as placement; app_launch overrides are fallback-only when trait label is missing.
 - 2026-02-13: Added `door_label` fallback inference from `DeviceLocatedSettingsTrait.fixtureType` (including garage door minors) when explicit fixture labels are missing from trait payloads.
 - 2026-02-13: Updated first-time lock entity creation to seed initial HA name from `where_label` (placement) so add-time naming follows `where_id` mapping.
+- 2026-02-13: Added canonical alias resolution for flagged annotation IDs (such as `ANNOTATION_0000000001000007`) so updated Nest door selections map to the correct annotation labels (`Garage`, `Front Door`, etc.).
