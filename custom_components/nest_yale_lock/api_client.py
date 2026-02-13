@@ -1389,7 +1389,16 @@ class NestAPIClient:
         for device_id, payload in yale.items():
             if not isinstance(payload, dict):
                 continue
-            override = self._legacy_name_overrides.get(device_id)
+            # Trust trait-derived label_name when present; app_launch is fallback.
+            if self._normalize_device_name(payload.get("label_name")):
+                continue
+            override = self._normalize_device_name(self._legacy_name_overrides.get(device_id))
+            if not override:
+                continue
+            door_label = self._normalize_device_name(payload.get("door_label"))
+            if door_label:
+                payload["label_name"] = override
+                override = self._compose_lock_name(door_label, override)
             current_name = self._normalize_device_name(payload.get("name"))
             if (
                 override
@@ -1407,7 +1416,15 @@ class NestAPIClient:
         for device_id, payload in yale.items():
             if not isinstance(payload, dict):
                 continue
-            override = self._legacy_name_overrides.get(device_id)
+            if self._normalize_device_name(payload.get("label_name")):
+                continue
+            override = self._normalize_device_name(self._legacy_name_overrides.get(device_id))
+            if not override:
+                continue
+            door_label = self._normalize_device_name(payload.get("door_label"))
+            if door_label:
+                payload["label_name"] = override
+                override = self._compose_lock_name(door_label, override)
             current_name = self._normalize_device_name(payload.get("name"))
             if (
                 override
@@ -1563,6 +1580,19 @@ class NestAPIClient:
         if value.lower() == "undefined":
             return None
         return value
+
+    def _compose_lock_name(self, door_label: str | None, label_name: str | None) -> str | None:
+        door = self._normalize_device_name(door_label)
+        label = self._normalize_device_name(label_name)
+        if door and label:
+            if door.casefold() == label.casefold():
+                return door
+            return f"{door} ({label})"
+        if door:
+            return door
+        if label:
+            return label
+        return None
 
     def get_device_metadata(self, device_id):
         lock_data = self.current_state["devices"]["locks"].get(device_id, {})

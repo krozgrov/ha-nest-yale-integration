@@ -541,12 +541,34 @@ class NestProtobufHandler:
                     locks_data["structure_id"] = resolved
 
     def _apply_label_settings_trait(self, obj_id, label_trait, locks_data):
-        label = label_trait
-        if isinstance(label, str):
-            label = label.strip()
-        if label and label.lower() != "undefined":
-            device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
-            device["name"] = label
+        label = self._normalize_label_value(label_trait if isinstance(label_trait, str) else None)
+        if not label:
+            return
+        device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
+        device["label_name"] = label
+        self._update_name_from_components(device)
+
+    def _compose_lock_name(self, door_label: str | None, label_name: str | None) -> str | None:
+        door = self._normalize_label_value(door_label)
+        label = self._normalize_label_value(label_name)
+        if door and label:
+            if door.casefold() == label.casefold():
+                return door
+            return f"{door} ({label})"
+        if door:
+            return door
+        if label:
+            return label
+        return None
+
+    def _update_name_from_components(self, device: dict) -> None:
+        if not isinstance(device, dict):
+            return
+        door_label = self._normalize_label_value(device.get("door_label"))
+        label_name = self._normalize_label_value(device.get("label_name"))
+        composed = self._compose_lock_name(door_label, label_name)
+        if composed:
+            device["name"] = composed
 
     @staticmethod
     def _normalize_label_value(value: str | None) -> str | None:
@@ -931,17 +953,6 @@ class NestProtobufHandler:
         device_wheres: dict[str, str] = {}
         device_fixtures: dict[str, str] = {}
 
-        def _is_location_label(label: str | None) -> bool:
-            if not isinstance(label, str):
-                return False
-            value = label.strip().lower()
-            if not value:
-                return False
-            for candidate in list(where_map.values()) + list(custom_where_map.values()):
-                if isinstance(candidate, str) and candidate.strip().lower() == value:
-                    return True
-            return False
-
         for obj_id, trait_map in updates.items():
             if not obj_id:
                 continue
@@ -1176,16 +1187,15 @@ class NestProtobufHandler:
                     where_label = self._normalize_label_value(where_label)
                     fixture_label = self._normalize_label_value(fixture_label)
                     if is_lock:
-                        label = None
+                        door_label = None
                         if raw_fixture_id:
-                            label = fixture_map.get(raw_fixture_id)
-                        if not label:
-                            label = fixture_label
-                        if label:
+                            door_label = fixture_map.get(raw_fixture_id)
+                        if not door_label:
+                            door_label = fixture_label
+                        if door_label:
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
-                            current_name = device.get("name")
-                            if not current_name or _is_location_label(current_name):
-                                device["name"] = label
+                            device["door_label"] = door_label
+                            self._update_name_from_components(device)
                         area_label = where_label or (where_map.get(where_id) if where_id else None)
                         if area_label:
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
@@ -1205,11 +1215,10 @@ class NestProtobufHandler:
                 if device_id not in lock_device_ids:
                     continue
                 device = locks_data["yale"].setdefault(device_id, {"device_id": device_id})
-                label = fixture_map.get(fixture_id)
-                if label:
-                    current_name = device.get("name")
-                    if not current_name or _is_location_label(current_name):
-                        device["name"] = label
+                door_label = self._normalize_label_value(fixture_map.get(fixture_id))
+                if door_label:
+                    device["door_label"] = door_label
+                    self._update_name_from_components(device)
         if where_map and device_wheres:
             for device_id, where_id in device_wheres.items():
                 if device_id not in lock_device_ids:

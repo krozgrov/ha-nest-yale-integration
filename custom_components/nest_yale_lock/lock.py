@@ -149,7 +149,18 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         for key in battery_keys:
             if key in attrs:
                 ordered_attrs[key] = attrs.pop(key)
-        
+
+        # Add naming components when available.
+        where_label = self._device_data.get("where_label")
+        if isinstance(where_label, str) and where_label.strip():
+            ordered_attrs["where_label"] = where_label.strip()
+        door_label = self._device_data.get("door_label")
+        if isinstance(door_label, str) and door_label.strip():
+            ordered_attrs["door_label"] = door_label.strip()
+        label_name = self._device_data.get("label_name")
+        if isinstance(label_name, str) and label_name.strip():
+            ordered_attrs["label_name"] = label_name.strip()
+
         # Add remaining device-level attributes in order
         for key in ["device_id", "firmware_revision", "serial_number"]:
             if key in attrs:

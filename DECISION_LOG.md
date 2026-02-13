@@ -87,6 +87,28 @@ Validation
   - app-launch refresh attempts after observer updates with `user_id=None`
   - parsed lock `name` switching away from stale `Front door` values when app data differs.
 
+### 2026-02-13: Compose lock name from door label and app label
+Why
+- Placement (`where_label`) and lock-facing door label are separate concepts in Nest.
+- Users requested final HA naming that keeps door context while still reflecting app label text.
+
+Decision
+- Persist `door_label` (door/fixture name) separately from `where_label` (placement).
+- Persist app label as `label_name`.
+- Compute display name as `door_label (label_name)` when both are present; otherwise use whichever exists.
+- Treat app_launch overrides as fallback when trait-derived `label_name` is missing.
+
+Impact
+- Non-breaking behavior change to naming format.
+- Device name now includes both door context and label context (example: `Garage door (Test1)`).
+
+Validation
+- Manual HA verification via observer logs and state attributes:
+  - `where_label` remains placement (example: `Entryway`)
+  - `door_label` reflects door context (example: `Garage door`)
+  - `label_name` reflects Nest label (example: `Test1`)
+  - `name` resolves to composed value.
+
 ## Historical Decision Timeline (migrated from `DEV_NOTES.md` on 2026-02-13)
 - 2025-12-30: Use gRPC v1 SendCommand/BatchUpdateState requests (legacy-style) for lock commands/settings while keeping v2 Observe for state/traits to improve command reliability and retain richer trait updates.
 - 2025-12-30: Removed bolt lock actor originator IDs from command payloads to align with legacy behavior and avoid INTERNAL errors on lock/unlock.
