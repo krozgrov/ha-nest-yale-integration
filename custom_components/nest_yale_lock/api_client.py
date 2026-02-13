@@ -570,7 +570,9 @@ class NestAPIClient:
                                 _LOGGER.debug("refresh_state received partial frame; waiting for more data")
                                 self.protobuf_handler.prepend_chunk(chunk)
                                 continue
+                            had_yale_update = False
                             if locks_data.get("yale"):
+                                had_yale_update = True
                                 self._apply_legacy_name_overrides(locks_data)
                                 self.current_state["devices"]["locks"] = locks_data["yale"]
                                 if locks_data.get("user_id"):
@@ -610,6 +612,8 @@ class NestAPIClient:
                                 self._apply_cached_settings_to_update(locks_data)
                                 self._last_observe_data_ts = asyncio.get_event_loop().time()
                                 self.transport_url = base_url
+                                if had_yale_update:
+                                    self._schedule_legacy_name_refresh("refresh_state")
                                 return locks_data["yale"]
                 except asyncio.TimeoutError:
                     _LOGGER.debug("refresh_state timeout after %s seconds", API_TIMEOUT_SECONDS)
@@ -713,6 +717,7 @@ class NestAPIClient:
                                 _LOGGER.debug("Observe received partial frame; skipping and waiting for next chunk")
                                 self.protobuf_handler.prepend_chunk(chunk)
                                 continue
+                            had_yale_update = False
                             # Check for authentication failure
                             if locks_data.get("auth_failed"):
                                 _LOGGER.warning("Observe stream reported authentication failure, triggering re-auth")
@@ -729,6 +734,7 @@ class NestAPIClient:
                                 break
 
                             if "yale" in locks_data:
+                                had_yale_update = True
                                 last_data_time = current_time
                                 _LOGGER.debug("Observe stream received yale data")
                                 if locks_data.get("user_id"):
@@ -762,6 +768,8 @@ class NestAPIClient:
                             self._merge_trait_states(locks_data.get("trait_states"))
                             self._merge_trait_labels(locks_data.get("trait_labels"))
                             self._apply_cached_settings_to_update(locks_data)
+                            if had_yale_update:
+                                self._schedule_legacy_name_refresh("observe")
                             self.transport_url = base_url
                             self._last_observe_data_ts = current_time
                             # Yield full locks_data including all_traits so coordinator can extract trait data
@@ -1314,11 +1322,14 @@ class NestAPIClient:
             timeout = aiohttp.ClientTimeout(total=_APP_LAUNCH_TIMEOUT_SECONDS)
             attempted = False
             for raw_user_id in user_candidates:
-                candidate_ids = [raw_user_id]
-                if raw_user_id.startswith("USER_"):
-                    stripped = raw_user_id.replace("USER_", "", 1)
-                    if stripped.isdigit():
-                        candidate_ids.insert(0, stripped)
+                candidate_ids: list[str] = []
+                normalized_user_id = raw_user_id.strip()
+                if normalized_user_id.upper().startswith("USER_"):
+                    stripped = normalized_user_id.split("_", 1)[1].strip()
+                    if stripped:
+                        candidate_ids.append(stripped)
+                if normalized_user_id:
+                    candidate_ids.append(normalized_user_id)
                 for request_user_id in candidate_ids:
                     attempted = True
                     url = _APP_LAUNCH_URL_FORMAT.format(host=host, user_id=request_user_id)

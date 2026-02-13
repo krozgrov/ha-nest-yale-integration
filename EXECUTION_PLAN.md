@@ -156,3 +156,4 @@ Status updates
 - 2026-02-13: Expanded registry cleanup to remove legacy non-`DEVICE_*` entity/device IDs once canonical `DEVICE_*` IDs are present, preventing duplicate lock devices like generic “Nest Yale”.
 - 2026-02-13: Hardened app_launch name parser and override behavior so location labels are not misattributed as lock names and app-side renames propagate to HA.
 - 2026-02-13: Added fallback user-id discovery for app_launch refresh (access-token claims + observed pincode trait user ids) so name sync still works when id_token is absent.
+- 2026-02-13: Triggered throttled app_launch refresh on lock updates (even when stream `user_id` stays unset), added `USER_*` suffix candidate attempts for app_launch requests, and corrected non-lock v2 trait merge order so confirmed naming states win over accepted.

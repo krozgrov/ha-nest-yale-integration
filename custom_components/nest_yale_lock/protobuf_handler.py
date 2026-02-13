@@ -220,25 +220,58 @@ class NestProtobufHandler:
         return resource_id, trait_label
 
     def _parse_v2_patch_any(self, data: bytes):
-        pos = 0
-        while pos < len(data):
-            tag, pos = self._read_varint(data, pos)
-            if tag is None:
-                break
-            field = tag >> 3
-            wire_type = tag & 0x07
-            if field == 1 and wire_type == 2:
-                any_bytes, pos = self._read_length_delimited(data, pos)
-                if any_bytes is None:
+        candidates = self._collect_patch_any_candidates(data, depth=2)
+        if not candidates:
+            return None
+
+        def _score(candidate: Any) -> tuple[int, int, int]:
+            descriptor = _strip_type_prefix(candidate.type_url)
+            is_known = descriptor in _V2_TRAIT_CLASS_MAP or descriptor in {
+                "weave.trait.description.LabelSettingsTrait",
+                "nest.trait.located.CustomLocatedAnnotationsTrait",
+            }
+            has_value = bool(candidate.value)
+            return (1 if is_known else 0, 1 if has_value else 0, len(candidate.value))
+
+        return max(candidates, key=_score)
+
+    def _collect_patch_any_candidates(self, payload: bytes, depth: int) -> list[Any]:
+        candidates: list[Any] = []
+        seen: set[tuple[str, bytes]] = set()
+
+        def _scan(data: bytes, remaining_depth: int) -> None:
+            pos = 0
+            while pos < len(data):
+                tag, pos = self._read_varint(data, pos)
+                if tag is None:
                     break
-                any_msg = Any()
+                wire_type = tag & 0x07
+                if wire_type != 2:
+                    pos = self._skip_field(data, pos, wire_type)
+                    continue
+
+                value, pos = self._read_length_delimited(data, pos)
+                if value is None:
+                    break
+
+                candidate = Any()
                 try:
-                    any_msg.ParseFromString(any_bytes)
+                    candidate.ParseFromString(value)
                 except DecodeError:
-                    return None
-                return _normalize_any_type(any_msg)
-            pos = self._skip_field(data, pos, wire_type)
-        return None
+                    candidate = None
+
+                if candidate and candidate.type_url:
+                    normalized = _normalize_any_type(candidate)
+                    key = (normalized.type_url, normalized.value)
+                    if key not in seen:
+                        seen.add(key)
+                        candidates.append(normalized)
+
+                if remaining_depth > 0 and value:
+                    _scan(value, remaining_depth - 1)
+
+        _scan(payload, depth)
+        return candidates
 
     def _parse_v2_trait_state(self, data: bytes):
         resource_id = None
@@ -561,12 +594,81 @@ class NestProtobufHandler:
                 value, pos = self._read_length_delimited(payload, pos)
                 if value is None:
                     return None
+                indirect = self._normalize_label_value(self._decode_string_ref(value))
+                if indirect:
+                    return indirect
                 try:
-                    return value.decode("utf-8")
+                    direct = self._normalize_label_value(value.decode("utf-8"))
                 except Exception:
-                    return None
+                    direct = None
+                if direct:
+                    return direct
             pos = self._skip_field(payload, pos, wire_type)
+
+        for candidate in self._scan_text_candidates(payload, depth=2):
+            if self._is_probable_label(candidate):
+                return candidate
         return None
+
+    @staticmethod
+    def _is_probable_label(value: str | None) -> bool:
+        if not isinstance(value, str):
+            return False
+        if len(value) > 80:
+            return False
+        if value.startswith(
+            (
+                "type.googleapis.com/",
+                "type.nestlabs.com/",
+                "weave.",
+                "nest.",
+                "google.",
+                "proto.",
+                "DEVICE_",
+                "STRUCTURE_",
+                "USER_",
+                "GUEST_",
+                "ANNOTATION_",
+            )
+        ):
+            return False
+        if not any(ch.isalpha() for ch in value):
+            return False
+        return all(ch.isprintable() for ch in value)
+
+    def _scan_text_candidates(self, payload: bytes, depth: int) -> list[str]:
+        results: list[str] = []
+        seen: set[str] = set()
+
+        def _scan(data: bytes, remaining_depth: int) -> None:
+            pos = 0
+            while pos < len(data):
+                tag, pos = self._read_varint(data, pos)
+                if tag is None:
+                    break
+                wire_type = tag & 0x07
+                if wire_type != 2:
+                    pos = self._skip_field(data, pos, wire_type)
+                    continue
+
+                value, pos = self._read_length_delimited(data, pos)
+                if value is None:
+                    break
+
+                try:
+                    text = value.decode("utf-8")
+                except Exception:
+                    text = None
+                normalized = self._normalize_label_value(text) if text else None
+                if normalized and normalized not in seen:
+                    seen.add(normalized)
+                    results.append(normalized)
+
+                if remaining_depth > 0 and value:
+                    _scan(value, remaining_depth - 1)
+
+        _scan(payload, depth)
+        return results
 
     def _decode_label_settings_any(self, any_msg: Any) -> str | None:
         if (
@@ -582,7 +684,10 @@ class NestProtobufHandler:
             except DecodeError:
                 unpacked = False
             if unpacked:
-                label = self._normalize_label_value(getattr(trait, "label", None))
+                raw_label = getattr(trait, "label", None)
+                label = self._normalize_label_value(raw_label)
+                if not label and hasattr(raw_label, "value"):
+                    label = self._normalize_label_value(getattr(raw_label, "value", None))
                 if label:
                     return label
         if any_msg and any_msg.value:
@@ -915,7 +1020,7 @@ class NestProtobufHandler:
                 for entry in sorted(
                     entries,
                     key=lambda item: item.get("rank", 0),
-                    reverse=not prefer_confirmed,
+                    reverse=prefer_confirmed,
                 ):
                     any_msg = entry.get("any_msg")
                     if not any_msg:

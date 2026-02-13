@@ -67,6 +67,26 @@ Impact
 Validation
 - Manual verification through debug logs and HA device-name propagation checks.
 
+### 2026-02-13: Keep lock naming fresh when stream actor IDs are absent
+Why
+- Some accounts only emit physical actor updates, so stream `user_id` remains unset and legacy app-launch refresh was not retriggered after trait cache warm-up.
+- V2 trait merge ordering for non-lock traits could apply stale accepted states over confirmed states.
+
+Decision
+- Trigger throttled app-launch name refresh whenever lock updates are processed (not only when stream `user_id` changes).
+- For `USER_*` app-launch candidates, also try the suffix without the `USER_` prefix (including hex IDs).
+- Apply non-lock v2 trait merges in rank order that leaves confirmed state authoritative.
+- Expand LabelSettingsTrait patch scanning to prefer nested `Any` payloads with known type URLs and value data.
+
+Impact
+- Non-breaking behavior fix.
+- Improves probability that HA lock name reflects the current Nest app label (`Garage door`/custom label) instead of stale location defaults.
+
+Validation
+- Manual HA verification using debug logs for:
+  - app-launch refresh attempts after observer updates with `user_id=None`
+  - parsed lock `name` switching away from stale `Front door` values when app data differs.
+
 ## Historical Decision Timeline (migrated from `DEV_NOTES.md` on 2026-02-13)
 - 2025-12-30: Use gRPC v1 SendCommand/BatchUpdateState requests (legacy-style) for lock commands/settings while keeping v2 Observe for state/traits to improve command reliability and retain richer trait updates.
 - 2025-12-30: Removed bolt lock actor originator IDs from command payloads to align with legacy behavior and avoid INTERNAL errors on lock/unlock.
