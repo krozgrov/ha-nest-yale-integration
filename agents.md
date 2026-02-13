@@ -219,7 +219,7 @@ Silent failure or rule bypassing is not acceptable.
 
 13.1 Development Notes & Continuity
 
-To reduce hallucinations, regressions, and loss of intent across sessions or restarts, this repository maintains a persistent development notes file (e.g., `DEV_NOTES.md`).
+To reduce hallucinations, regressions, and loss of intent across sessions or restarts, this repository maintains a persistent development notes file (e.g., `DECISION_LOG.md`).
 
 When making architectural, behavioral, entity-affecting, or migration-related decisions, AI agents should:
 •	Record brief rationale in the development notes file
@@ -232,7 +232,7 @@ This file is **not** a changelog or task list. It exists solely to preserve inte
 
 13.2 Distribution & Packaging Awareness
 
-AI agents must assume that control and context files such as `agents.md`, `DEV_NOTES.md`, and `skill.md`:
+AI agents must assume that control and context files such as `agents.md`, `DECISION_LOG.md`, and `EXECUTION_PLAN.md`:
 •	Are intentionally committed for development and AI guidance
 •	Are excluded from distribution artifacts (e.g., HACS, release archives)
 •	Are listed as `export-ignore` in `.gitattributes`
@@ -246,8 +246,8 @@ Agents must not rely on these files being present at runtime or in end-user envi
 The following files are required in all AI‑assisted projects in this repository:
 
 * `agents.md` — defines AI behavioral and engineering guardrails
-* `DEV_NOTES.md` — preserves design intent, decisions, and rationale
-* `skill.md` — tracks planned capabilities, backlog items, and execution readiness
+* `DECISION_LOG.md` — preserves design intent, decisions, and rationale
+* `EXECUTION_PLAN.md` — tracks planned capabilities, backlog items, and execution readiness
 
 These files exist to:
 
@@ -261,7 +261,7 @@ They must be version‑controlled but excluded from distribution packages.
 
 13.4 Skills Planning & Execution Discipline
 
-`skill.md` tracks **planned features, enhancements, and future work**.
+`EXECUTION_PLAN.md` tracks **planned features, enhancements, and future work**.
 
 For every planned item, AI agents must:
 
@@ -288,7 +288,7 @@ This ensures that planned work is:
 
 13.5 AI Self‑Evaluation & Reward Tracking (Experimental Guidance)
 
-To encourage quality and intentional delivery, AI agents may use the control files (`agents.md`, `DEV_NOTES.md`, and `skill.md`) to:
+To encourage quality and intentional delivery, AI agents may use the control files (`agents.md`, `DECISION_LOG.md`, and `EXECUTION_PLAN.md`) to:
 
 * Track completion of planned tasks
 * Assess whether objectives were delivered as defined
@@ -296,7 +296,7 @@ To encourage quality and intentional delivery, AI agents may use the control fil
 
 When a planned task is delivered successfully and aligned with its outline, the agent should:
 
-* Record success in `skill.md`
+* Record success in `EXECUTION_PLAN.md`
 * Reinforce patterns that led to success
 
 When tasks are missed, incomplete, or misaligned with the plan, the agent should:
@@ -848,8 +848,8 @@ Every release and pre-release must follow this checklist. If any step cannot be 
 
 #### 3. Documentation Updates
 
-* `DEV_NOTES.md` updated with design/behavior decisions
-* `skill.md` updated to reflect status of planned work
+* `DECISION_LOG.md` updated with design/behavior decisions
+* `EXECUTION_PLAN.md` updated to reflect status of planned work
 * `agents.md` updated if release process rules changed
 * `README.md` updated to reflect information and status for end-users of the integration
 * Related docs updated if user-visible behavior changed
@@ -887,7 +887,7 @@ This repository must remain auditable.
 
 * All approvals must be traceable through repository history
 * Release state must be reproducible from commits and notes
-* Decision rationale must exist in `DEV_NOTES.md`
+* Decision rationale must exist in `DECISION_LOG.md`
 
 Automation may assist with retention cleanup and tagging, but:
 
