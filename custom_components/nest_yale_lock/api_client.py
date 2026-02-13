@@ -276,6 +276,18 @@ class NestAPIClient:
     def _candidate_bases(self):
         return _transport_candidates(self.transport_url)
 
+    @staticmethod
+    def _is_map_field(field) -> bool:
+        if field.label != field.LABEL_REPEATED or field.type != field.TYPE_MESSAGE:
+            return False
+        message_type = getattr(field, "message_type", None)
+        if message_type is None:
+            return False
+        try:
+            return bool(message_type.GetOptions().map_entry)
+        except Exception:
+            return False
+
     def _merge_trait_state(self, existing, incoming):
         if existing is None:
             return incoming
@@ -289,7 +301,17 @@ class NestAPIClient:
             if field.label == field.LABEL_REPEATED:
                 target = getattr(merged, field.name)
                 target.clear()
-                if field.type == field.TYPE_MESSAGE:
+                if self._is_map_field(field):
+                    value_field = field.message_type.fields_by_name.get("value")
+                    value_is_message = bool(
+                        value_field and value_field.type == value_field.TYPE_MESSAGE
+                    )
+                    for map_key, map_value in value.items():
+                        if value_is_message:
+                            target[map_key].CopyFrom(map_value)
+                        else:
+                            target[map_key] = map_value
+                elif field.type == field.TYPE_MESSAGE:
                     for item in value:
                         target.add().CopyFrom(item)
                 else:

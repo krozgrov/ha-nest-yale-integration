@@ -26,8 +26,6 @@ _LOCK_TRAIT_HINTS = (
     "BoltLockTrait",
     "BoltLockSettingsTrait",
     "BoltLockCapabilitiesTrait",
-    "UserPincodesSettingsTrait",
-    "UserPincodesCapabilitiesTrait",
     "TamperTrait",
     "PincodeInputTrait",
 )
@@ -102,6 +100,10 @@ def _pick_object_id(obj) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _is_device_lock_id(object_id: str | None) -> bool:
+    return isinstance(object_id, str) and object_id.startswith("DEVICE_")
 
 
 class NestProtobufHandler:
@@ -373,7 +375,17 @@ class NestProtobufHandler:
             if field.label == field.LABEL_REPEATED:
                 target = getattr(merged, field.name)
                 target.clear()
-                if field.type == field.TYPE_MESSAGE:
+                if self._is_map_field(field):
+                    value_field = field.message_type.fields_by_name.get("value")
+                    value_is_message = bool(
+                        value_field and value_field.type == value_field.TYPE_MESSAGE
+                    )
+                    for map_key, map_value in value.items():
+                        if value_is_message:
+                            target[map_key].CopyFrom(map_value)
+                        else:
+                            target[map_key] = map_value
+                elif field.type == field.TYPE_MESSAGE:
                     for item in value:
                         target.add().CopyFrom(item)
                 else:
@@ -383,6 +395,18 @@ class NestProtobufHandler:
             else:
                 setattr(merged, field.name, value)
         return merged
+
+    @staticmethod
+    def _is_map_field(field) -> bool:
+        if field.label != field.LABEL_REPEATED or field.type != field.TYPE_MESSAGE:
+            return False
+        message_type = getattr(field, "message_type", None)
+        if message_type is None:
+            return False
+        try:
+            return bool(message_type.GetOptions().map_entry)
+        except Exception:
+            return False
 
     def _apply_bolt_lock_trait(self, obj_id, bolt_lock, locks_data):
         # Only publish bolt_locked when the stream explicitly reports LOCKED or UNLOCKED.
@@ -926,15 +950,23 @@ class NestProtobufHandler:
                 trait_states.setdefault(obj_id, {})[descriptor_name] = merged_msg
 
                 if "BoltLockTrait" in descriptor_name:
+                    if not _is_device_lock_id(obj_id):
+                        continue
                     lock_device_ids.add(obj_id)
                     self._apply_bolt_lock_trait(obj_id, merged_msg, locks_data)
                 elif "BoltLockSettingsTrait" in descriptor_name or "EnhancedBoltLockSettingsTrait" in descriptor_name:
+                    if not _is_device_lock_id(obj_id):
+                        continue
                     lock_device_ids.add(obj_id)
                     self._apply_bolt_lock_settings_trait(obj_id, merged_msg, locks_data)
                 elif "BoltLockCapabilitiesTrait" in descriptor_name:
+                    if not _is_device_lock_id(obj_id):
+                        continue
                     lock_device_ids.add(obj_id)
                     self._apply_bolt_lock_capabilities_trait(obj_id, merged_msg, locks_data)
                 elif "UserPincodesCapabilitiesTrait" in descriptor_name:
+                    if not _is_device_lock_id(obj_id):
+                        continue
                     lock_device_ids.add(obj_id)
                     trait_key = f"{obj_id}:{type_url}"
                     all_traits[trait_key] = {
@@ -948,6 +980,8 @@ class NestProtobufHandler:
                         },
                     }
                 elif "UserPincodesSettingsTrait" in descriptor_name:
+                    if not _is_device_lock_id(obj_id):
+                        continue
                     lock_device_ids.add(obj_id)
                     sanitized_pincodes = {}
                     try:
@@ -976,6 +1010,8 @@ class NestProtobufHandler:
                         },
                     }
                 elif "TamperTrait" in descriptor_name:
+                    if not _is_device_lock_id(obj_id):
+                        continue
                     lock_device_ids.add(obj_id)
                     self._apply_tamper_trait(obj_id, merged_msg, locks_data)
                 elif "StructureInfoTrait" in descriptor_name:
@@ -1080,6 +1116,8 @@ class NestProtobufHandler:
                 if where_name:
                     device["where_label"] = where_name
         for obj_id in lock_device_ids:
+            if not _is_device_lock_id(obj_id):
+                continue
             locks_data["yale"].setdefault(
                 obj_id,
                 {

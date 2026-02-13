@@ -4,6 +4,8 @@ import asyncio
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import (
     ConfigEntryNotReady,
@@ -64,6 +66,35 @@ def _active_coordinators(hass: HomeAssistant) -> dict[str, NestCoordinator]:
         if isinstance(key, str) and isinstance(value, NestCoordinator):
             active[key] = value
     return active
+
+
+def _cleanup_non_device_registry_entries(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove stale USER_* entities/devices left by pre-release parsing regressions."""
+    entity_registry = er.async_get(hass)
+    removed_entities = 0
+    for entity_entry in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
+        unique_id = entity_entry.unique_id
+        if isinstance(unique_id, str) and unique_id.startswith(f"{DOMAIN}_USER_"):
+            entity_registry.async_remove(entity_entry.entity_id)
+            removed_entities += 1
+
+    device_registry = dr.async_get(hass)
+    removed_devices = 0
+    for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
+        has_user_identifier = any(
+            domain == DOMAIN and isinstance(identifier, str) and identifier.startswith("USER_")
+            for domain, identifier in device.identifiers
+        )
+        if has_user_identifier and device_registry.async_remove_device(device.id):
+            removed_devices += 1
+
+    if removed_entities or removed_devices:
+        _LOGGER.warning(
+            "Removed stale non-device Nest Yale registry entries for %s: entities=%d devices=%d",
+            entry.entry_id,
+            removed_entities,
+            removed_devices,
+        )
 
 
 def _resolve_target_coordinators(
@@ -291,6 +322,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady(f"Failed to initialize: {e}") from e
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    _cleanup_non_device_registry_entries(hass, entry)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     hass.data[DOMAIN].setdefault("entities", [])
     # Reset per-entry added ids on setup to avoid stale rediscovery state.

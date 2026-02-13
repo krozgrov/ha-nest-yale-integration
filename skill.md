@@ -108,3 +108,4 @@ Status updates
 - 2026-01-15: Allow CustomLocatedAnnotationsTrait through v2 parsing and prefer custom fixture labels when the current name looks like a location label.
 - 2026-02-13: Fixed naming precedence so auth/app_launch fallbacks no longer overwrite resolved trait names, addressing stale generic lock names in HA.
 - 2026-02-13: Added guest passcode services (`set_guest_passcode`, `delete_guest_passcode`) using UserPincodesSettingsTrait command requests with device-aware passcode validation.
+- 2026-02-13: Fixed b1 regression by merging protobuf map fields correctly and filtering lock discovery to `DEVICE_*` ids only; stale `USER_*` registry artifacts are now cleaned up during setup.
