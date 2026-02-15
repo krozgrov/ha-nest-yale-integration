@@ -147,6 +147,26 @@ Validation
   - `where_label` remains placement/location.
   - Device name in registry reflects `<where_label> <name>` when location is known.
 
+### 2026-02-15: Make `door_label` the canonical HA lock name
+Why
+- User requirement changed: the lock entry in HA must reflect Nest app door selection (`door_label`) directly.
+- Placement (`where_label`) should remain location metadata only, and app label (`label_name`) should not drive HA lock naming.
+
+Decision
+- Compose lock `name` as `door_label` first, then `label_name` fallback, then `Lock`.
+- Stop composing HA device/entry name as `<where_label> <name>`; use lock-facing name only.
+- Keep `where_label` as placement metadata and expose app label as `label_name` attribute.
+
+Impact
+- Non-breaking behavior change to naming.
+- Existing entities keep stable IDs; displayed lock name now follows door selection from Nest app.
+
+Validation
+- Manual HA verification:
+  - lock name resolves to `door_label` (example: `Front door`)
+  - `where_label` reflects placement (example: `Basement`)
+  - `label_name` remains attribute-only (example: `Test1`)
+
 ## Historical Decision Timeline (migrated from `DEV_NOTES.md` on 2026-02-13)
 - 2025-12-30: Use gRPC v1 SendCommand/BatchUpdateState requests (legacy-style) for lock commands/settings while keeping v2 Observe for state/traits to improve command reliability and retain richer trait updates.
 - 2025-12-30: Removed bolt lock actor originator IDs from command payloads to align with legacy behavior and avoid INTERNAL errors on lock/unlock.

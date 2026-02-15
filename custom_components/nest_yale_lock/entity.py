@@ -78,8 +78,11 @@ class NestYaleEntity(CoordinatorEntity):
 
         # Get initial metadata
         metadata = self._coordinator.api_client.get_device_metadata(device_id)
-        metadata["name"] = _normalize_device_name(metadata.get("name"))
         self._where_label = _normalize_device_name(self._device_data.get("where_label"))
+        metadata["name"] = (
+            _normalize_device_name(self._device_data.get("door_label"))
+            or _normalize_device_name(metadata.get("name"))
+        )
         self._device_name = self._compose_device_display_name(
             metadata.get("name"),
             self._where_label,
@@ -184,11 +187,14 @@ class NestYaleEntity(CoordinatorEntity):
         return None
 
     def _update_device_name_from_data(self) -> None:
-        base_name = _normalize_device_name(self._device_data.get("name"))
+        base_name = (
+            _normalize_device_name(self._device_data.get("door_label"))
+            or _normalize_device_name(self._device_data.get("name"))
+        )
         new_where = _normalize_device_name(self._device_data.get("where_label"))
         new_name = self._compose_device_display_name(base_name, new_where)
-        name_changed = bool(new_name and new_name != self._device_name)
-        where_changed = new_where and new_where != self._where_label
+        name_changed = new_name != self._device_name
+        where_changed = new_where != self._where_label
         if not name_changed and not where_changed:
             return
         if name_changed:
@@ -230,11 +236,9 @@ class NestYaleEntity(CoordinatorEntity):
 
     @staticmethod
     def _compose_device_display_name(base_name: str | None, where_label: str | None) -> str | None:
-        """Match nest_legacy naming style: '<location> <name>'."""
+        """Use lock-facing label for HA device name; location is separate metadata."""
         base = _normalize_device_name(base_name)
-        where = _normalize_device_name(where_label)
-        if base and where:
-            return f"{where} {base}".strip()
+        del where_label
         if base:
             return base
         return None

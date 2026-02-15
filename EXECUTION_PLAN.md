@@ -167,3 +167,4 @@ Status updates
 - 2026-02-14: Aligned lock naming schema with nest_legacy: base lock name is label-first (`LabelSettingsTrait`, fallback `Lock`), placement remains separate (`where_label`), and HA device display name is composed as `<where_label> <name>` when location is available.
 - 2026-02-14: Removed add-time lock name seeding from `where_label` so initial naming no longer overrides label-first schema.
 - 2026-02-15: Fixed late-map override gap in observe parsing so annotation-ID post-pass updates can correct stale early `where_label`/`door_label` values instead of skipping when labels were already set.
+- 2026-02-15: Updated naming behavior per user requirement: HA lock name now resolves from `door_label` first (with `label_name` fallback), `where_label` remains placement metadata, and `label_name` is treated as attribute-only context.

@@ -547,8 +547,10 @@ class NestProtobufHandler:
         self._update_name_from_components(device)
 
     def _compose_lock_name(self, door_label: str | None, label_name: str | None) -> str | None:
-        """Align with nest_legacy: lock name is label-first, location handled separately."""
-        del door_label  # kept for call-site compatibility
+        """Use door label as canonical HA lock name, with label fallback."""
+        door = self._normalize_label_value(door_label)
+        if door:
+            return door
         label = self._normalize_label_value(label_name)
         if label:
             return label
