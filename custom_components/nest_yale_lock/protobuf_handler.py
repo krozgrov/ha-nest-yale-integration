@@ -1282,15 +1282,14 @@ class NestProtobufHandler:
                 if device_id not in lock_device_ids:
                     continue
                 device = locks_data["yale"].setdefault(device_id, {"device_id": device_id})
-                if device.get("door_label"):
-                    continue
                 door_label = self._lookup_annotation_label(
                     fixture_id,
                     where_map,
                     custom_where_map,
                     fixture_map,
                 )
-                if door_label:
+                current_door = self._normalize_label_value(device.get("door_label"))
+                if door_label and door_label != current_door:
                     device["door_label"] = door_label
                     self._update_name_from_components(device)
         if where_map and device_wheres:
@@ -1298,14 +1297,13 @@ class NestProtobufHandler:
                 if device_id not in lock_device_ids:
                     continue
                 device = locks_data["yale"].setdefault(device_id, {"device_id": device_id})
-                if device.get("where_label"):
-                    continue
                 where_name = self._lookup_annotation_label(
                     where_id,
                     where_map,
                     custom_where_map,
                 )
-                if where_name:
+                current_where = self._normalize_label_value(device.get("where_label"))
+                if where_name and where_name != current_where:
                     device["where_label"] = where_name
         for obj_id in lock_device_ids:
             if not _is_device_lock_id(obj_id):
