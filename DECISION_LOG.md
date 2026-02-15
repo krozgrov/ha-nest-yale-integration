@@ -167,6 +167,27 @@ Validation
   - `where_label` reflects placement (example: `Basement`)
   - `label_name` remains attribute-only (example: `Test1`)
 
+### 2026-02-15: Re-align naming with nest_legacy semantics
+Why
+- Device naming still appeared inconsistent for some accounts after `door_label`-first behavior.
+- User requested strict alignment with `tronikos/nest_legacy` naming to reduce custom mapping drift.
+
+Decision
+- Revert lock naming to `LabelSettingsTrait`-first (`name`), fallback `Lock`.
+- Keep location in `where_label` and compose HA display name as `<where_label> <name>`.
+- Retain `door_label`/`label_name` as attributes for diagnostics/context, not canonical name composition.
+- Keep parser robustness improvements so located-only updates and cross-device catalog overwrites are handled more safely.
+
+Impact
+- Non-breaking behavior change (display naming only).
+- HA naming now follows nest_legacy schema consistently.
+
+Validation
+- Manual HA verification:
+  - `name` follows `LabelSettingsTrait` value (`Test1`)
+  - HA display/device name resolves to `<where_label> <name>` when location is present
+  - `door_label` remains an attribute and does not override canonical naming
+
 ## Historical Decision Timeline (migrated from `DEV_NOTES.md` on 2026-02-13)
 - 2025-12-30: Use gRPC v1 SendCommand/BatchUpdateState requests (legacy-style) for lock commands/settings while keeping v2 Observe for state/traits to improve command reliability and retain richer trait updates.
 - 2025-12-30: Removed bolt lock actor originator IDs from command payloads to align with legacy behavior and avoid INTERNAL errors on lock/unlock.
