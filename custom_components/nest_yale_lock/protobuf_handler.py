@@ -549,7 +549,7 @@ class NestProtobufHandler:
         self._update_name_from_components(device)
 
     def _compose_lock_name(self, door_label: str | None, label_name: str | None) -> str | None:
-        """Align with nest_legacy: lock name is label-first, location handled separately."""
+        """Use label-first lock naming; location is handled separately."""
         del door_label  # kept for call-site compatibility
         label = self._normalize_label_value(label_name)
         if label:
@@ -1388,8 +1388,8 @@ class NestProtobufHandler:
                 elif self.buffer and self.buffer[0] == 0x0A:
                     # Nest streams often deliver a StreamBody message that begins with a length-delimited
                     # field tag (0x0A) followed by a varint length. This is NOT a standalone length prefix;
-                    # it's part of the protobuf encoding. We use it to find frame boundaries (similar to
-                    # nest_legacy's observe framing) to avoid parsing stray trailing bytes as new messages.
+                    # it's part of the protobuf encoding. We use it to find frame boundaries so stray
+                    # trailing bytes are not parsed as new messages.
                     message_length, end_pos = self._decode_varint(self.buffer, 1)
                     if message_length is None:
                         break

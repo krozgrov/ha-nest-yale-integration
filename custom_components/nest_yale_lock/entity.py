@@ -230,7 +230,7 @@ class NestYaleEntity(CoordinatorEntity):
 
     @staticmethod
     def _compose_device_display_name(base_name: str | None, where_label: str | None) -> str | None:
-        """Match nest_legacy naming style: '<location> <name>'."""
+        """Compose display name as '<location> <name>'."""
         base = _normalize_device_name(base_name)
         where = _normalize_device_name(where_label)
         if base and where:

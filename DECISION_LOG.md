@@ -126,9 +126,9 @@ Impact
 Validation
 - Manual HA add/re-add validation confirms first-created lock entity name is placement-derived.
 
-### 2026-02-14: Align lock naming schema with nest_legacy
+### 2026-02-14: Align lock naming schema with reference behavior
 Why
-- Users requested behavior parity with `tronikos/nest_legacy` for lock naming.
+- Users requested behavior parity with the reference naming behavior.
 - Previous composed naming (`door_label (label_name)`) and add-time placement seeding diverged from that schema.
 
 Decision
@@ -139,7 +139,7 @@ Decision
 
 Impact
 - Non-breaking behavior change to lock naming format.
-- Device names now match nest_legacy semantics (location prefix + label-based lock name), rather than door/label composition.
+- Device names now match reference semantics (location prefix + label-based lock name), rather than door/label composition.
 
 Validation
 - Manual HA verification after observer updates and integration reload:
@@ -167,10 +167,10 @@ Validation
   - `where_label` reflects placement (example: `Basement`)
   - `label_name` remains attribute-only (example: `Test1`)
 
-### 2026-02-15: Re-align naming with nest_legacy semantics
+### 2026-02-15: Re-align naming with reference semantics
 Why
 - Device naming still appeared inconsistent for some accounts after `door_label`-first behavior.
-- User requested strict alignment with `tronikos/nest_legacy` naming to reduce custom mapping drift.
+- User requested strict alignment with the reference naming behavior to reduce custom mapping drift.
 
 Decision
 - Revert lock naming to `LabelSettingsTrait`-first (`name`), fallback `Lock`.
@@ -180,7 +180,7 @@ Decision
 
 Impact
 - Non-breaking behavior change (display naming only).
-- HA naming now follows nest_legacy schema consistently.
+- HA naming now follows the reference schema consistently.
 
 Validation
 - Manual HA verification:
@@ -204,7 +204,7 @@ Validation
 - 2025-12-31: Treat UUID-style structure IDs from StructureInfoTrait legacy_id as v2 IDs so update requests include X-Nest-Structure-Id.
 - 2025-12-31: Preserve legacy STRUCTURE_ hex IDs alongside v2 UUIDs so BatchUpdateState headers use the legacy structure id (avoids INTERNAL errors).
 - 2025-12-31: Fix STRUCTURE_ parsing to overwrite default None so legacy structure ids actually persist for headers.
-- 2025-12-31: Revert auto-lock updates to legacy-only BoltLockSettingsTrait (no enhanced trait, no field mask, no extra headers) to match nest_legacy and avoid INTERNAL errors.
+- 2025-12-31: Revert auto-lock updates to legacy-only BoltLockSettingsTrait (no enhanced trait, no field mask, no extra headers) to match the reference legacy behavior and avoid INTERNAL errors.
 - 2025-12-31: Add enhanced auto-lock update (separate request, no field mask) while retaining weave update to keep Nest app and lock behavior in sync.
 - 2025-12-31: Treat missing autoRelockOn in settings traits as false to stop HA auto-lock switches from flipping back on after disable.
 - 2025-12-31: Use translation keys for entity names so UI labels are localized and avoid hardcoded English.
