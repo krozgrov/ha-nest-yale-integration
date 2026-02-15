@@ -161,3 +161,8 @@ Status updates
 - 2026-02-13: Removed synthetic `door_label` inference so lock naming uses literal Nest-provided values only (plus annotation-id alias resolution for flagged IDs).
 - 2026-02-13: Updated first-time lock entity creation to seed initial HA name from `where_label` (placement) so add-time naming follows `where_id` mapping.
 - 2026-02-13: Added canonical alias resolution for flagged annotation IDs (such as `ANNOTATION_0000000001000007`) so updated Nest door selections map to the correct annotation labels (`Garage`, `Front Door`, etc.).
+- 2026-02-14: Fixed `DeviceLocatedSettingsTrait` payload selection to prefer confirmed-state bytes for label decoding; this prevents stale accepted-state values from overriding current app door labels.
+- 2026-02-14: Made `door_label` precedence literal-first (`fixture_label`), with annotation lookup as fallback only and fixture-map resolution last; post-pass lookup now fills missing `door_label` only.
+- 2026-02-14: Removed per-chunk debug logs for partial varints during observe framing (expected under stream chunking); parser now waits silently for more bytes unless varint is invalid.
+- 2026-02-14: Aligned lock naming schema with nest_legacy: base lock name is label-first (`LabelSettingsTrait`, fallback `Lock`), placement remains separate (`where_label`), and HA device display name is composed as `<where_label> <name>` when location is available.
+- 2026-02-14: Removed add-time lock name seeding from `where_label` so initial naming no longer overrides label-first schema.

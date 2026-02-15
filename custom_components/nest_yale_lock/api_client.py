@@ -1582,17 +1582,11 @@ class NestAPIClient:
         return value
 
     def _compose_lock_name(self, door_label: str | None, label_name: str | None) -> str | None:
-        door = self._normalize_device_name(door_label)
+        del door_label  # kept for call-site compatibility
         label = self._normalize_device_name(label_name)
-        if door and label:
-            if door.casefold() == label.casefold():
-                return door
-            return f"{door} ({label})"
-        if door:
-            return door
         if label:
             return label
-        return None
+        return "Lock"
 
     def get_device_metadata(self, device_id):
         lock_data = self.current_state["devices"]["locks"].get(device_id, {})

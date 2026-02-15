@@ -79,10 +79,15 @@ class NestYaleEntity(CoordinatorEntity):
         # Get initial metadata
         metadata = self._coordinator.api_client.get_device_metadata(device_id)
         metadata["name"] = _normalize_device_name(metadata.get("name"))
+        self._where_label = _normalize_device_name(self._device_data.get("where_label"))
+        self._device_name = self._compose_device_display_name(
+            metadata.get("name"),
+            self._where_label,
+        )
         # Only set _attr_name for entities that opt out of entity naming.
         # Home Assistant skips translations when _attr_name is present.
         if not entity_has_name:
-            self._attr_name = metadata["name"]
+            self._attr_name = self._device_name
         
         # Log final state for debugging
         if entity_has_name:
@@ -93,8 +98,6 @@ class NestYaleEntity(CoordinatorEntity):
                 translation_key,
                 getattr(self, "_attr_name", None),
             )
-        
-        self._device_name = metadata.get("name")
         
         # Set up device info
         self._setup_device_info(metadata)
@@ -181,9 +184,10 @@ class NestYaleEntity(CoordinatorEntity):
         return None
 
     def _update_device_name_from_data(self) -> None:
-        new_name = _normalize_device_name(self._device_data.get("name"))
+        base_name = _normalize_device_name(self._device_data.get("name"))
         new_where = _normalize_device_name(self._device_data.get("where_label"))
-        name_changed = new_name and new_name != self._device_name
+        new_name = self._compose_device_display_name(base_name, new_where)
+        name_changed = bool(new_name and new_name != self._device_name)
         where_changed = new_where and new_where != self._where_label
         if not name_changed and not where_changed:
             return
@@ -223,6 +227,17 @@ class NestYaleEntity(CoordinatorEntity):
                 err,
             )
             self._device_registry_update_pending = True
+
+    @staticmethod
+    def _compose_device_display_name(base_name: str | None, where_label: str | None) -> str | None:
+        """Match nest_legacy naming style: '<location> <name>'."""
+        base = _normalize_device_name(base_name)
+        where = _normalize_device_name(where_label)
+        if base and where:
+            return f"{where} {base}".strip()
+        if base:
+            return base
+        return None
 
     def _battery_trait(self) -> dict:
         """Return BatteryPowerSourceTrait data when available."""

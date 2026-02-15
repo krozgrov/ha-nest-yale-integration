@@ -143,14 +143,12 @@ class NestProtobufHandler:
             value |= (byte & 0x7F) << shift
             pos += 1
             if not (byte & 0x80):
-                _LOGGER.debug("Decoded varint: %s from position %s using %s bytes", value, start, pos - start)
                 return value, pos
             shift += 7
             if shift >= 64 or pos - start >= max_bytes:
                 _LOGGER.error("Varint too long at pos %s", start)
                 return None, pos
-        # Not enough bytes yet to decode the varint; wait for more data.
-        _LOGGER.debug("Incomplete varint at pos %s; awaiting additional data", start)
+        # Partial varints are expected in chunked streams; wait for more bytes.
         return None, start
 
     def _read_varint(self, data: bytes, pos: int):
@@ -549,17 +547,12 @@ class NestProtobufHandler:
         self._update_name_from_components(device)
 
     def _compose_lock_name(self, door_label: str | None, label_name: str | None) -> str | None:
-        door = self._normalize_label_value(door_label)
+        """Align with nest_legacy: lock name is label-first, location handled separately."""
+        del door_label  # kept for call-site compatibility
         label = self._normalize_label_value(label_name)
-        if door and label:
-            if door.casefold() == label.casefold():
-                return door
-            return f"{door} ({label})"
-        if door:
-            return door
         if label:
             return label
-        return None
+        return "Lock"
 
     def _update_name_from_components(self, device: dict) -> None:
         if not isinstance(device, dict):
@@ -612,6 +605,17 @@ class NestProtobufHandler:
                 if normalized:
                     return normalized
         return None
+
+    @staticmethod
+    def _trait_state_payload_priority(rank: int | None) -> int:
+        """Lower number means higher preference for label-bearing payloads."""
+        if rank == _V2_STATE_CONFIRMED:
+            return 0
+        if rank == 0:
+            return 1
+        if rank == _V2_STATE_ACCEPTED:
+            return 2
+        return 3
 
     @staticmethod
     def _normalize_label_value(value: str | None) -> str | None:
@@ -1070,6 +1074,7 @@ class NestProtobufHandler:
                 merged_msg = None
                 merged_type_url = ""
                 located_payload = None
+                located_payload_priority = None
                 prefer_confirmed = descriptor_name != "weave.trait.security.BoltLockTrait"
                 for entry in sorted(
                     entries,
@@ -1079,8 +1084,6 @@ class NestProtobufHandler:
                     any_msg = entry.get("any_msg")
                     if not any_msg:
                         continue
-                    if located_payload is None and any_msg.value:
-                        located_payload = any_msg.value
                     normalized_any = _normalize_any_type(any_msg)
                     trait_msg = trait_cls()
                     try:
@@ -1090,6 +1093,15 @@ class NestProtobufHandler:
                     if not unpacked:
                         continue
                     merged_msg = self._merge_trait_message(merged_msg, trait_msg)
+                    if any_msg.value:
+                        entry_priority = self._trait_state_payload_priority(entry.get("rank", 0))
+                        if (
+                            located_payload is None
+                            or located_payload_priority is None
+                            or entry_priority < located_payload_priority
+                        ):
+                            located_payload = any_msg.value
+                            located_payload_priority = entry_priority
                     if not merged_type_url:
                         merged_type_url = normalized_any.type_url or entry.get("type_url") or ""
 
@@ -1234,9 +1246,9 @@ class NestProtobufHandler:
                         if raw_fixture_id:
                             door_label = self._lookup_annotation_label(
                                 raw_fixture_id,
-                                fixture_map,
                                 where_map,
                                 custom_where_map,
+                                fixture_map,
                             )
                         if not door_label:
                             door_label = fixture_label
@@ -1245,11 +1257,13 @@ class NestProtobufHandler:
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
                             device["door_label"] = door_label
                             self._update_name_from_components(device)
-                        area_label = where_label or self._lookup_annotation_label(
+                        area_label = self._lookup_annotation_label(
                             where_id,
                             where_map,
                             custom_where_map,
                         )
+                        if not area_label:
+                            area_label = where_label
                         if area_label:
                             device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
                             device["where_label"] = area_label
@@ -1268,11 +1282,13 @@ class NestProtobufHandler:
                 if device_id not in lock_device_ids:
                     continue
                 device = locks_data["yale"].setdefault(device_id, {"device_id": device_id})
+                if device.get("door_label"):
+                    continue
                 door_label = self._lookup_annotation_label(
                     fixture_id,
-                    fixture_map,
                     where_map,
                     custom_where_map,
+                    fixture_map,
                 )
                 if door_label:
                     device["door_label"] = door_label

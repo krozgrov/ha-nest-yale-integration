@@ -126,6 +126,27 @@ Impact
 Validation
 - Manual HA add/re-add validation confirms first-created lock entity name is placement-derived.
 
+### 2026-02-14: Align lock naming schema with nest_legacy
+Why
+- Users requested behavior parity with `tronikos/nest_legacy` for lock naming.
+- Previous composed naming (`door_label (label_name)`) and add-time placement seeding diverged from that schema.
+
+Decision
+- Use `LabelSettingsTrait` as the canonical lock base name (`name`), with fallback `Lock` when label is missing.
+- Keep location (`where_label`) separate from the base lock name.
+- Compose Home Assistant device display name as `<where_label> <name>` when location is available.
+- Remove add-time seeding that forced initial lock `name` from `where_label`.
+
+Impact
+- Non-breaking behavior change to lock naming format.
+- Device names now match nest_legacy semantics (location prefix + label-based lock name), rather than door/label composition.
+
+Validation
+- Manual HA verification after observer updates and integration reload:
+  - `name` tracks label-first lock naming.
+  - `where_label` remains placement/location.
+  - Device name in registry reflects `<where_label> <name>` when location is known.
+
 ## Historical Decision Timeline (migrated from `DEV_NOTES.md` on 2026-02-13)
 - 2025-12-30: Use gRPC v1 SendCommand/BatchUpdateState requests (legacy-style) for lock commands/settings while keeping v2 Observe for state/traits to improve command reliability and retain richer trait updates.
 - 2025-12-30: Removed bolt lock actor originator IDs from command payloads to align with legacy behavior and avoid INTERNAL errors on lock/unlock.
@@ -199,3 +220,6 @@ Validation
 - 2026-02-13: Expand startup registry cleanup to remove legacy non-`DEVICE_*` entities/devices (e.g., old serial-based IDs) when canonical `DEVICE_*` entries exist, eliminating duplicate lock devices in HA.
 - 2026-02-13: Harden app_launch name extraction to avoid inheriting device IDs into nested location nodes, and allow app_launch overrides to update differing existing names so Nest app label changes (e.g., Garage door) propagate in HA.
 - 2026-02-13: When id_token is missing, derive user id candidates from the Nest JWT and observed pincode trait cache so app_launch name refresh still runs; avoid throttling cache updates when no candidates were available.
+- 2026-02-14: For `DeviceLocatedSettingsTrait`, prefer label-bearing payload bytes from the best state rank (confirmed over accepted) so stale accepted snapshots do not pin `door_label` to old values after Nest app door changes.
+- 2026-02-14: Preserve literal trait-provided `fixture_label` as primary `door_label`, and only use annotation-id lookup as fallback (with fixture-map lookup last) to avoid stale/custom mapping precedence over current app values.
+- 2026-02-14: Treat partial varints in observe stream framing as normal chunk-boundary behavior and stop logging them per-chunk at DEBUG to reduce noise; keep only true varint errors.
