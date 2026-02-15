@@ -549,8 +549,10 @@ class NestProtobufHandler:
         self._update_name_from_components(device)
 
     def _compose_lock_name(self, door_label: str | None, label_name: str | None) -> str | None:
-        """Use label-first lock naming; location is handled separately."""
-        del door_label  # kept for call-site compatibility
+        """Prefer door label for lock naming; keep label as fallback context."""
+        door = self._normalize_label_value(door_label)
+        if door:
+            return door
         label = self._normalize_label_value(label_name)
         if label:
             return label

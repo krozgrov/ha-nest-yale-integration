@@ -31,7 +31,7 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Pre-release testing: `2026.02.15` beta builds include naming-path hardening and lock naming validation against the reference schema.
+Pre-release testing: `2026.02.15` beta builds include naming-path hardening with Door->Name, Where->Area, and Label attribute mapping validation.
 
 ## Release 2026.01.02 - Code health refactors + diagnostics (latest stable)
 

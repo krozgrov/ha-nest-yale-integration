@@ -188,6 +188,29 @@ Validation
   - HA display/device name resolves to `<where_label> <name>` when location is present
   - `door_label` remains an attribute and does not override canonical naming
 
+### 2026-02-15: Finalize lock mapping as Door->Name, Where->Area, Label->Attribute
+Why
+- User requirement changed to prioritize direct app semantics:
+  - Door selection should be the HA lock/device name.
+  - Where selection should drive HA area placement.
+  - Label should be retained for context as an attribute only.
+
+Decision
+- Compose canonical lock `name` from `door_label` first (with `label_name` fallback only when door is unavailable).
+- Do not prefix display names with location.
+- Keep `where_label` in entity attributes and sync it into Home Assistant device area.
+- Keep `label_name` as an attribute and do not use it as the primary display name when door is present.
+
+Impact
+- Non-breaking behavior change to name/area mapping.
+- Existing entity IDs remain stable; lock/device display names and area placement now follow app Door/Where semantics.
+
+Validation
+- Manual HA verification:
+  - lock/device name matches app Door value
+  - device area matches app Where value
+  - `label_name` is visible in attributes
+
 ## Historical Decision Timeline (migrated from `DEV_NOTES.md` on 2026-02-13)
 - 2025-12-30: Use gRPC v1 SendCommand/BatchUpdateState requests (legacy-style) for lock commands/settings while keeping v2 Observe for state/traits to improve command reliability and retain richer trait updates.
 - 2025-12-30: Removed bolt lock actor originator IDs from command payloads to align with legacy behavior and avoid INTERNAL errors on lock/unlock.

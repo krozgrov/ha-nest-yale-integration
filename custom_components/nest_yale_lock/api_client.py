@@ -1582,7 +1582,9 @@ class NestAPIClient:
         return value
 
     def _compose_lock_name(self, door_label: str | None, label_name: str | None) -> str | None:
-        del door_label  # kept for call-site compatibility
+        door = self._normalize_device_name(door_label)
+        if door:
+            return door
         label = self._normalize_device_name(label_name)
         if label:
             return label
