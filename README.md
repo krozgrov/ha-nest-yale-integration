@@ -105,14 +105,17 @@ Guest passcode management is available via Home Assistant services:
 
 Inputs:
 
-- `guest_user_id` (required): Nest guest/user resource id (for example `USER_123...`)
+- `guest_user_id` (optional): Nest guest/user resource id (for example `USER_123...`)
+- `slot` (optional): existing lock slot number to resolve `guest_user_id` automatically
 - `passcode` (required for set): numeric code; length is validated against lock capabilities when available
 - `device_id` (optional): required when multiple locks are present
 - `entry_id` (optional): target a specific config entry
 
 Notes:
 
-- This integration currently requires the guest user id instead of creating guest identities automatically.
+- Provide either `guest_user_id` or `slot` for set/delete actions.
+- You can discover known guest ids and slot mappings from lock attributes: `guest_user_ids` and `guest_users`.
+- This integration updates/deletes passcodes for existing Nest guest identities; creating new guest identities still needs to be done in the Nest app.
 - Passcode data is never exposed as entity attributes; only non-sensitive capability/slot metadata is stored.
 
 ## License

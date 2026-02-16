@@ -6,6 +6,28 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-02-16: Improve passcode service UX for Home Assistant UI mode
+Why
+- Passcode services required explicit `guest_user_id`, which is difficult to discover and use in HA action UI mode.
+- Users need a practical workflow to update existing guest passcodes without manually hunting resource IDs each time.
+
+Decision
+- Allow passcode services to accept either `guest_user_id` or `slot`.
+- Resolve `guest_user_id` automatically from current lock slot mappings when `slot` is provided.
+- Expose non-sensitive slot/user metadata (`guest_user_ids`, `guest_users`) on lock attributes for in-UI discovery.
+- Keep guest identity creation out-of-scope for now; new identities are still created in the Nest app.
+
+Impact
+- Backward-compatible service enhancement.
+- Improves automation UI workflow and reduces manual ID entry errors.
+
+Validation
+- `python -m compileall custom_components/nest_yale_lock`
+- Manual HA validation:
+  - set/delete passcode by `guest_user_id`
+  - set/delete passcode by `slot`
+  - verify `guest_user_ids` and `guest_users` appear on lock attributes.
+
 ### 2026-02-16: Resolve door names from fixture IDs on located-only stream updates
 Why
 - Door changes in the Nest app were not propagating reliably when observe updates only carried `DeviceLocatedSettingsTrait`.

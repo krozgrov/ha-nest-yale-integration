@@ -6,49 +6,83 @@ reset_connection:
       name: Entry ID
       description: Optional config entry id to target; when omitted, all active entries are reset.
       example: "01ABCDEF1234567890"
+      selector:
+        text:
 
 set_guest_passcode:
   name: Set Guest Passcode
-  description: Set or update a guest passcode for a guest user id on a Nest x Yale lock.
+  description: Set or update a guest passcode using either a guest user id or an existing slot number on a Nest x Yale lock.
   fields:
     entry_id:
       name: Entry ID
       description: Optional config entry id to target; when omitted, all active entries are targeted.
       example: "01ABCDEF1234567890"
+      selector:
+        text:
     device_id:
       name: Device ID
       description: Optional lock device id. Required when multiple locks exist in the targeted entry.
       example: "DEVICE_1234567890"
+      selector:
+        text:
     guest_user_id:
       name: Guest User ID
-      description: Guest user resource id used by Nest (for example, USER_1234567890123456).
+      description: Optional guest user resource id (for example, USER_1234567890123456). Provide this or slot.
       example: "USER_1234567890123456"
-      required: true
+      selector:
+        text:
+    slot:
+      name: Slot
+      description: Optional existing slot number to resolve user id automatically. Provide this or guest_user_id.
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 25
+          mode: box
     passcode:
       name: Passcode
       description: Numeric passcode to assign (length is validated against lock capabilities when available).
       example: "123456"
       required: true
+      selector:
+        text:
     enabled:
       name: Enabled
       description: Whether the guest passcode should be enabled after assignment.
       example: true
       default: true
+      selector:
+        boolean:
 
 delete_guest_passcode:
   name: Delete Guest Passcode
-  description: Delete the guest passcode for a guest user id on a Nest x Yale lock.
+  description: Delete the guest passcode using either a guest user id or an existing slot number on a Nest x Yale lock.
   fields:
     entry_id:
       name: Entry ID
       description: Optional config entry id to target; when omitted, all active entries are targeted.
       example: "01ABCDEF1234567890"
+      selector:
+        text:
     device_id:
       name: Device ID
       description: Optional lock device id. Required when multiple locks exist in the targeted entry.
       example: "DEVICE_1234567890"
+      selector:
+        text:
     guest_user_id:
       name: Guest User ID
-      description: Guest user resource id used by Nest (for example, USER_1234567890123456).
+      description: Optional guest user resource id (for example, USER_1234567890123456). Provide this or slot.
       example: "USER_1234567890123456"
-      required: true
+      selector:
+        text:
+    slot:
+      name: Slot
+      description: Optional existing slot number to resolve user id automatically. Provide this or guest_user_id.
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 25
+          mode: box

@@ -162,6 +162,43 @@ class NestYaleLock(NestYaleEntity, LockEntity):
         if isinstance(label_name, str) and label_name.strip():
             ordered_attrs["label_name"] = label_name.strip()
 
+        # Expose passcode/user slot metadata so USER_* ids are discoverable in UI.
+        traits = self._device_data.get("traits")
+        if isinstance(traits, dict):
+            pincode_trait = traits.get("UserPincodesSettingsTrait")
+            if isinstance(pincode_trait, dict):
+                user_pincodes = pincode_trait.get("user_pincodes")
+                if isinstance(user_pincodes, dict):
+                    guest_users = []
+                    guest_user_ids = []
+                    for raw_slot in sorted(
+                        user_pincodes.keys(),
+                        key=lambda item: int(item) if str(item).isdigit() else 9999,
+                    ):
+                        details = user_pincodes.get(raw_slot)
+                        if not isinstance(details, dict):
+                            continue
+                        user_id = details.get("user_id")
+                        if not isinstance(user_id, str) or not user_id.strip():
+                            continue
+                        user_id = user_id.strip()
+                        if user_id not in guest_user_ids:
+                            guest_user_ids.append(user_id)
+                        slot_entry = {
+                            "slot": int(raw_slot) if str(raw_slot).isdigit() else raw_slot,
+                            "user_id": user_id,
+                        }
+                        if isinstance(details.get("enabled"), bool):
+                            slot_entry["enabled"] = details["enabled"]
+                        if isinstance(details.get("has_passcode"), bool):
+                            slot_entry["has_passcode"] = details["has_passcode"]
+                        guest_users.append(slot_entry)
+
+                    if guest_user_ids:
+                        ordered_attrs["guest_user_ids"] = guest_user_ids
+                    if guest_users:
+                        ordered_attrs["guest_users"] = guest_users
+
         # Add remaining device-level attributes in order
         for key in ["device_id", "firmware_revision", "serial_number"]:
             if key in attrs:

@@ -171,3 +171,4 @@ Status updates
 - 2026-02-15: Re-aligned naming with reference behavior by reverting canonical name to `LabelSettingsTrait` (`name`) plus location prefix (`where_label`) for display; `door_label` remains attribute context and no longer drives name composition.
 - 2026-02-15: Finalized requested mapping: Door value drives HA lock name, Where value drives HA area assignment, and Label remains attribute-only context.
 - 2026-02-16: Added persistent located-annotation caches and fixture-ID-first door label resolution so located-only deltas can update `door_label` even when embedded fixture text is stale.
+- 2026-02-16: Started passcode UX work for HA UI mode by supporting slot-based user resolution (`slot` or `guest_user_id`) and exposing non-sensitive guest slot/user metadata in lock attributes.
