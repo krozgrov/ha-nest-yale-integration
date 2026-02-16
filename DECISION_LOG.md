@@ -6,6 +6,25 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-02-16: Resolve door names from fixture IDs on located-only stream updates
+Why
+- Door changes in the Nest app were not propagating reliably when observe updates only carried `DeviceLocatedSettingsTrait`.
+- In these deltas, embedded `fixture_label` text could remain stale (`Front door`) while the fixture annotation ID changed.
+
+Decision
+- Persist located annotation catalogs in parser memory across stream frames.
+- Resolve `door_label` from fixture annotation IDs first, then fall back to embedded fixture label text only when ID lookup is unavailable.
+- Normalize known flagged fixture-ID variants (including the `0x01008000` preset bucket) to canonical annotation IDs before lookup.
+- Normalize resolved door labels to `... door` formatting for HA display consistency.
+
+Impact
+- Non-breaking behavior fix with user-visible naming updates.
+- `door_label` and lock `name` should now follow app-side Door selection more consistently during incremental updates.
+
+Validation
+- `python -m compileall custom_components/nest_yale_lock`
+- Manual HA verification via observer logs and entity/device name updates after changing Door selections in the Nest app.
+
 ### 2026-02-13: Preserve lock naming from app-level sources and prevent stale fallbacks
 Why
 - Users reported persistent incorrect lock naming in Home Assistant despite app-side labels changing.
