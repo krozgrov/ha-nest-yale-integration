@@ -35,6 +35,10 @@ class NestCoordinator(DataUpdateCoordinator):
         self._known_lock_ids: set[str] = set()
         _LOGGER.debug("Initialized NestCoordinator with initial data: %s", self.data)
 
+    @staticmethod
+    def _is_device_lock_id(device_id: str | None) -> bool:
+        return isinstance(device_id, str) and device_id.startswith("DEVICE_")
+
     async def async_setup(self):
         """Set up the coordinator."""
         _LOGGER.debug("Starting async_setup for coordinator")
@@ -75,6 +79,8 @@ class NestCoordinator(DataUpdateCoordinator):
             current = {}
         merged: dict = {**current}
         for device_id, device in update.items():
+            if not self._is_device_lock_id(device_id):
+                continue
             if not isinstance(device, dict):
                 continue
             prev = merged.get(device_id, {})
@@ -86,7 +92,7 @@ class NestCoordinator(DataUpdateCoordinator):
             merged = {
                 device_id: device
                 for device_id, device in merged.items()
-                if device_id in self._known_lock_ids
+                if device_id in self._known_lock_ids and self._is_device_lock_id(device_id)
             }
         return merged
 
@@ -120,6 +126,13 @@ class NestCoordinator(DataUpdateCoordinator):
     def _filter_traits_for_locks(traits: dict, lock_ids: set[str]) -> dict:
         if not traits or not lock_ids:
             return traits
+        lock_ids = {
+            lock_id
+            for lock_id in lock_ids
+            if isinstance(lock_id, str) and lock_id.startswith("DEVICE_")
+        }
+        if not lock_ids:
+            return {}
         filtered: dict = {}
         for trait_key, trait_info in traits.items():
             if not isinstance(trait_info, dict):
@@ -166,6 +179,11 @@ class NestCoordinator(DataUpdateCoordinator):
                 return self.data
 
             normalized_data = new_data.get("yale", new_data) if new_data else {}
+            normalized_data = {
+                device_id: device
+                for device_id, device in normalized_data.items()
+                if self._is_device_lock_id(device_id)
+            }
             for device_id, device in normalized_data.items():
                 # Ensure required fields exist even if absent in payload
                 device.setdefault("device_id", device_id)
@@ -231,6 +249,8 @@ class NestCoordinator(DataUpdateCoordinator):
                     def _extract_lock_ids_from_traits(states: dict) -> set[str]:
                         lock_ids: set[str] = set()
                         for device_id, traits in (states or {}).items():
+                            if not self._is_device_lock_id(device_id):
+                                continue
                             if not isinstance(traits, dict):
                                 continue
                             for trait_name in traits.keys():
@@ -262,6 +282,11 @@ class NestCoordinator(DataUpdateCoordinator):
                         all_traits = cached_traits
 
                     if normalized_update:
+                        normalized_update = {
+                            device_id: device
+                            for device_id, device in normalized_update.items()
+                            if self._is_device_lock_id(device_id)
+                        }
                         lock_ids_from_traits = _extract_lock_ids_from_traits(trait_states)
                         if lock_ids_from_traits:
                             self._known_lock_ids.update(lock_ids_from_traits)

@@ -73,6 +73,14 @@ CONF_ISSUE_TOKEN = "issue_token"
 CONF_COOKIES = "cookies"
 CONF_DEBUG_ATTRIBUTES = "debug_attributes"
 CONF_STALE_STATE_MAX_SECONDS = "stale_state_max_seconds"
+# Services
+SERVICE_RESET_CONNECTION = "reset_connection"
+SERVICE_SET_GUEST_PASSCODE = "set_guest_passcode"
+SERVICE_DELETE_GUEST_PASSCODE = "delete_guest_passcode"
+
+# Guest passcode defaults (can be overridden by device capabilities when available)
+DEFAULT_MIN_PASSCODE_LENGTH = 4
+DEFAULT_MAX_PASSCODE_LENGTH = 8
 # Update interval for coordinator fallback polling (observe stream is primary)
 # Set to 10 minutes since we rely on push-based observe stream for real-time updates
 UPDATE_INTERVAL_SECONDS = timedelta(minutes=10)  # Use timedelta for DataUpdateCoordinator

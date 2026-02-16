@@ -3,6 +3,7 @@ import logging
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from .const import DOMAIN
 
@@ -19,6 +20,17 @@ def _mask_debug_value(value):
     return f"{text[:4]}***{text[-4:]}"
 
 
+def _normalize_device_name(name):
+    if not isinstance(name, str):
+        return None
+    value = name.strip()
+    if not value:
+        return None
+    if value.lower() == "undefined":
+        return None
+    return value
+
+
 class NestYaleEntity(CoordinatorEntity):
     """Base entity class for Nest Yale devices."""
 
@@ -28,6 +40,7 @@ class NestYaleEntity(CoordinatorEntity):
         self._coordinator = coordinator
         self._device_id = device_id
         self._device_data = device_data.copy() if device_data else {}
+        self._where_label = None
         self._device_info_updated = False
         # If trait data arrives before the entity is added to HA, we may not be
         # able to update the device registry yet. Track that and retry once the
@@ -66,10 +79,19 @@ class NestYaleEntity(CoordinatorEntity):
 
         # Get initial metadata
         metadata = self._coordinator.api_client.get_device_metadata(device_id)
+        self._where_label = _normalize_device_name(self._device_data.get("where_label"))
+        metadata["name"] = (
+            _normalize_device_name(self._device_data.get("door_label"))
+            or _normalize_device_name(metadata.get("name"))
+        )
+        self._device_name = self._compose_device_display_name(
+            metadata.get("name"),
+            self._where_label,
+        )
         # Only set _attr_name for entities that opt out of entity naming.
         # Home Assistant skips translations when _attr_name is present.
         if not entity_has_name:
-            self._attr_name = metadata["name"]
+            self._attr_name = self._device_name
         
         # Log final state for debugging
         if entity_has_name:
@@ -81,10 +103,9 @@ class NestYaleEntity(CoordinatorEntity):
                 getattr(self, "_attr_name", None),
             )
         
-        self._device_name = metadata.get("name")
-        
         # Set up device info
         self._setup_device_info(metadata)
+        self._update_device_name_from_data()
 
     async def async_added_to_hass(self) -> None:
         """Run when entity is added to Home Assistant."""
@@ -92,6 +113,7 @@ class NestYaleEntity(CoordinatorEntity):
         latest = self._coordinator.data.get(self._device_id)
         if isinstance(latest, dict):
             self._device_data.update(latest)
+        self._update_device_name_from_data()
         # If we saw trait data early, retry registry update now that hass is available.
         if not self._device_info_updated or self._device_registry_update_pending:
             self._update_device_info_from_traits()
@@ -145,9 +167,10 @@ class NestYaleEntity(CoordinatorEntity):
             "identifiers": identifiers,
             "manufacturer": "Nest",
             "model": "Nest x Yale Lock",
-            "name": self._device_name,
             "sw_version": metadata["firmware_revision"],
         }
+        if self._device_name:
+            self._attr_device_info["name"] = self._device_name
         if serial_number:
             self._attr_device_info["serial_number"] = serial_number
         
@@ -159,9 +182,92 @@ class NestYaleEntity(CoordinatorEntity):
         new_data = self._coordinator.data.get(self._device_id)
         if new_data:
             self._device_data.update(new_data)
+            self._update_device_name_from_data()
             self._update_device_info_from_traits()
             return new_data
         return None
+
+    def _update_device_name_from_data(self) -> None:
+        base_name = (
+            _normalize_device_name(self._device_data.get("door_label"))
+            or _normalize_device_name(self._device_data.get("name"))
+        )
+        new_where = _normalize_device_name(self._device_data.get("where_label"))
+        new_name = self._compose_device_display_name(base_name, new_where)
+        name_changed = new_name != self._device_name
+        where_changed = new_where != self._where_label
+        if not name_changed and not where_changed:
+            return
+        if name_changed:
+            self._device_name = new_name
+            if self._device_name:
+                self._attr_device_info["name"] = self._device_name
+            else:
+                self._attr_device_info.pop("name", None)
+            if not getattr(self, "_attr_has_entity_name", False):
+                self._attr_name = self._device_name
+        if where_changed:
+            self._where_label = new_where
+        if not hasattr(self, "hass") or self.hass is None:
+            self._device_registry_update_pending = True
+            return
+        try:
+            device_registry = dr.async_get(self.hass)
+            device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
+            if not device:
+                self._device_registry_update_pending = True
+                return
+            update_kwargs = self._build_device_registry_updates(
+                device,
+                None,
+                None,
+                None,
+                None,
+            )
+            if update_kwargs:
+                device_registry.async_update_device(device.id, **update_kwargs)
+            self._device_registry_update_pending = False
+        except Exception as err:
+            _LOGGER.debug(
+                "Failed to update device name for %s: %s",
+                self._attr_unique_id,
+                err,
+            )
+            self._device_registry_update_pending = True
+
+    @staticmethod
+    def _compose_device_display_name(base_name: str | None, where_label: str | None) -> str | None:
+        """Use the door-facing lock label as the HA display name."""
+        base = _normalize_device_name(base_name)
+        del where_label
+        if base:
+            return base
+        return None
+
+    def _desired_area_id(self) -> str | None:
+        """Resolve (or create) an HA area id from where_label."""
+        where = _normalize_device_name(self._where_label)
+        if not where or not self.hass:
+            return None
+        try:
+            area_registry = ar.async_get(self.hass)
+            area = area_registry.async_get_area_by_name(where)
+            if area is None:
+                area = area_registry.async_create(where)
+                _LOGGER.info(
+                    "Created area from where_label for %s: %s",
+                    self._attr_unique_id,
+                    where,
+                )
+            return area.id if area else None
+        except Exception as err:
+            _LOGGER.debug(
+                "Failed resolving area for %s (%s): %s",
+                self._attr_unique_id,
+                where,
+                err,
+            )
+            return None
 
     def _battery_trait(self) -> dict:
         """Return BatteryPowerSourceTrait data when available."""
@@ -214,9 +320,16 @@ class NestYaleEntity(CoordinatorEntity):
         update_kwargs: dict = {}
         if self._device_name:
             device_name_by_user = getattr(device, "name_by_user", None)
-            if not device_name_by_user and not device.name:
+            if not device_name_by_user and device.name != self._device_name:
                 update_kwargs["name"] = self._device_name
-                _LOGGER.info("Setting device name: %s", self._device_name)
+                if device.name:
+                    _LOGGER.info(
+                        "Updating device name: %s -> %s",
+                        device.name,
+                        self._device_name,
+                    )
+                else:
+                    _LOGGER.info("Setting device name: %s", self._device_name)
 
         if new_firmware:
             if device.sw_version != new_firmware:
@@ -237,6 +350,15 @@ class NestYaleEntity(CoordinatorEntity):
         if new_serial and device.serial_number != new_serial:
             update_kwargs["serial_number"] = new_serial
             _LOGGER.info("Updating device serial_number: %s -> %s", device.serial_number, new_serial)
+
+        desired_area_id = self._desired_area_id()
+        if desired_area_id and device.area_id != desired_area_id:
+            update_kwargs["area_id"] = desired_area_id
+            _LOGGER.info(
+                "Updating device area for %s to where_label=%s",
+                self._attr_unique_id,
+                self._where_label,
+            )
 
         return update_kwargs
 

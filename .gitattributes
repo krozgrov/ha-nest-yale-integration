@@ -1,4 +1,4 @@
 # AI control & dev memory (do not ship)
-agents.md export-ignore
-DEV_NOTES.md export-ignore
-skill.md export-ignore
+DECISION_LOG.md export-ignore
+EXECUTION_PLAN.md export-ignore
+baseline.config.json export-ignore

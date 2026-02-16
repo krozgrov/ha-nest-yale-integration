@@ -1,0 +1,12 @@
+{
+  "PRIMARY_BRANCH": "main",
+  "INTEGRATION_BRANCH": "dev-remove-name-fallback",
+  "VERSIONING_SCHEME": "date-based",
+  "PROTOTYPE_MODE": false,
+  "REQUIRE_TESTS": false,
+  "REQUIRE_TYPECHECK": false,
+  "README_RELEASE_HISTORY_MAX": 3,
+  "ACTIVE_PROFILES": [
+    "home-assistant"
+  ]
+}

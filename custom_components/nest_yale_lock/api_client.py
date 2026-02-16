@@ -48,6 +48,43 @@ def _transport_candidates(session_base):
 
 _LOGGER = logging.getLogger(__name__)
 
+_APP_LAUNCH_URL_FORMAT = "https://{host}/api/0.1/user/{user_id}/app_launch"
+_APP_LAUNCH_BUCKET_TYPES = [
+    "buckets",
+    "delayed_topaz",
+    "demand_response",
+    "device",
+    "device_alert_dialog",
+    "geofence_info",
+    "kryptonite",
+    "link",
+    "message",
+    "message_center",
+    "metadata",
+    "occupancy",
+    "quartz",
+    "rcs_settings",
+    "safety",
+    "safety_summary",
+    "schedule",
+    "shared",
+    "structure",
+    "structure_history",
+    "structure_metadata",
+    "topaz",
+    "topaz_resource",
+    "track",
+    "trip",
+    "tuneups",
+    "user",
+    "user_alert_dialog",
+    "user_settings",
+    "where",
+    "widget_track",
+]
+_APP_LAUNCH_TIMEOUT_SECONDS = 15
+_APP_LAUNCH_REFRESH_SECONDS = 6 * 60 * 60
+
 class ConnectionShim:
     def __init__(self, session):
         self.connected = True
@@ -143,6 +180,9 @@ class NestAPIClient:
         self._connect_failures = 0
         self._reauth_task = None
         self._auth_failure_raises = bool(auth_failure_raises)
+        self._legacy_name_overrides = {}
+        self._legacy_name_last_fetch = None
+        self._legacy_name_task = None
         _LOGGER.debug("NestAPIClient initialized with session")
 
     @property
@@ -209,10 +249,16 @@ class NestAPIClient:
         trait_names = [
             "nest.trait.user.UserInfoTrait",
             "nest.trait.structure.StructureInfoTrait",
+            "nest.trait.located.LocatedAnnotationsTrait",
+            "nest.trait.located.CustomLocatedAnnotationsTrait",
+            "nest.trait.located.DeviceLocatedSettingsTrait",
             "weave.trait.security.BoltLockTrait",
+            "weave.trait.description.LabelSettingsTrait",
             "weave.trait.security.BoltLockSettingsTrait",
             "nest.trait.security.EnhancedBoltLockSettingsTrait",
             "weave.trait.security.BoltLockCapabilitiesTrait",
+            "weave.trait.security.UserPincodesSettingsTrait",
+            "weave.trait.security.UserPincodesCapabilitiesTrait",
             "weave.trait.security.PincodeInputTrait",
             "weave.trait.security.TamperTrait",
             # HomeKit-relevant traits
@@ -230,6 +276,18 @@ class NestAPIClient:
     def _candidate_bases(self):
         return _transport_candidates(self.transport_url)
 
+    @staticmethod
+    def _is_map_field(field) -> bool:
+        if field.label != field.LABEL_REPEATED or field.type != field.TYPE_MESSAGE:
+            return False
+        message_type = getattr(field, "message_type", None)
+        if message_type is None:
+            return False
+        try:
+            return bool(message_type.GetOptions().map_entry)
+        except Exception:
+            return False
+
     def _merge_trait_state(self, existing, incoming):
         if existing is None:
             return incoming
@@ -243,7 +301,17 @@ class NestAPIClient:
             if field.label == field.LABEL_REPEATED:
                 target = getattr(merged, field.name)
                 target.clear()
-                if field.type == field.TYPE_MESSAGE:
+                if self._is_map_field(field):
+                    value_field = field.message_type.fields_by_name.get("value")
+                    value_is_message = bool(
+                        value_field and value_field.type == value_field.TYPE_MESSAGE
+                    )
+                    for map_key, map_value in value.items():
+                        if value_is_message:
+                            target[map_key].CopyFrom(map_value)
+                        else:
+                            target[map_key] = map_value
+                elif field.type == field.TYPE_MESSAGE:
                     for item in value:
                         target.add().CopyFrom(item)
                 else:
@@ -368,7 +436,24 @@ class NestAPIClient:
                 self.current_state["user_id"] = self._user_id
                 _LOGGER.info(f"Initial user_id from id_token: {self._user_id}, structure_id: {self._structure_id}")
             else:
-                _LOGGER.warning(f"No id_token in auth_data, awaiting stream for user_id and structure_id")
+                # Some accounts do not return id_token; attempt to decode the Nest JWT
+                # before falling back to observe/user-data discovery.
+                self._user_id = None
+                try:
+                    decoded_jwt = jwt.decode(self.access_token, options={"verify_signature": False})
+                    if isinstance(decoded_jwt, dict):
+                        for key in ("sub", "user_id", "userid"):
+                            candidate = decoded_jwt.get(key)
+                            if isinstance(candidate, str) and candidate.strip():
+                                self._user_id = candidate.strip()
+                                break
+                except Exception:
+                    self._user_id = None
+                self.current_state["user_id"] = self._user_id
+                _LOGGER.warning(
+                    "No id_token in auth_data; derived user_id=%s from access token (may be None)",
+                    self._user_id,
+                )
             _LOGGER.info(f"Authenticated with access_token: {self.access_token[:10]}..., user_id: {self._user_id}, structure_id: {self._structure_id}")
             # IMPORTANT: Do NOT block authentication on refresh_state().
             #
@@ -387,6 +472,7 @@ class NestAPIClient:
             except Exception as e:
                 _LOGGER.debug("StructureId fetch failed (continuing): %s", e)
             self.current_state["structure_id"] = self._structure_id
+            self._schedule_legacy_name_refresh("auth")
             # Schedule preemptive re-auth
             self._schedule_reauth()
         except Exception as e:
@@ -484,7 +570,10 @@ class NestAPIClient:
                                 _LOGGER.debug("refresh_state received partial frame; waiting for more data")
                                 self.protobuf_handler.prepend_chunk(chunk)
                                 continue
+                            had_yale_update = False
                             if locks_data.get("yale"):
+                                had_yale_update = True
+                                self._apply_legacy_name_overrides(locks_data)
                                 self.current_state["devices"]["locks"] = locks_data["yale"]
                                 if locks_data.get("user_id"):
                                     old_user_id = self._user_id
@@ -492,6 +581,7 @@ class NestAPIClient:
                                     self.current_state["user_id"] = self._user_id
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                        self._schedule_legacy_name_refresh("refresh_state")
                             if locks_data.get("all_traits"):
                                 current_traits = self.current_state.get("all_traits", {}) or {}
                                 merged_traits = {**current_traits, **locks_data["all_traits"]}
@@ -522,6 +612,8 @@ class NestAPIClient:
                                 self._apply_cached_settings_to_update(locks_data)
                                 self._last_observe_data_ts = asyncio.get_event_loop().time()
                                 self.transport_url = base_url
+                                if had_yale_update:
+                                    self._schedule_legacy_name_refresh("refresh_state")
                                 return locks_data["yale"]
                 except asyncio.TimeoutError:
                     _LOGGER.debug("refresh_state timeout after %s seconds", API_TIMEOUT_SECONDS)
@@ -625,6 +717,7 @@ class NestAPIClient:
                                 _LOGGER.debug("Observe received partial frame; skipping and waiting for next chunk")
                                 self.protobuf_handler.prepend_chunk(chunk)
                                 continue
+                            had_yale_update = False
                             # Check for authentication failure
                             if locks_data.get("auth_failed"):
                                 _LOGGER.warning("Observe stream reported authentication failure, triggering re-auth")
@@ -641,6 +734,7 @@ class NestAPIClient:
                                 break
 
                             if "yale" in locks_data:
+                                had_yale_update = True
                                 last_data_time = current_time
                                 _LOGGER.debug("Observe stream received yale data")
                                 if locks_data.get("user_id"):
@@ -649,6 +743,7 @@ class NestAPIClient:
                                     self.current_state["user_id"] = self._user_id
                                     if old_user_id != self._user_id:
                                         _LOGGER.info("Updated user_id from stream: %s (was %s)", self._user_id, old_user_id)
+                                        self._schedule_legacy_name_refresh("observe")
                             if locks_data.get("structure_id"):
                                 new_structure_id = locks_data["structure_id"]
                                 if self._is_legacy_structure_id(new_structure_id):
@@ -673,9 +768,13 @@ class NestAPIClient:
                             self._merge_trait_states(locks_data.get("trait_states"))
                             self._merge_trait_labels(locks_data.get("trait_labels"))
                             self._apply_cached_settings_to_update(locks_data)
+                            if had_yale_update:
+                                self._schedule_legacy_name_refresh("observe")
                             self.transport_url = base_url
                             self._last_observe_data_ts = current_time
                             # Yield full locks_data including all_traits so coordinator can extract trait data
+                            if locks_data.get("yale"):
+                                self._apply_legacy_name_overrides(locks_data)
                             yield locks_data
 
                         if auth_failure:
@@ -1059,6 +1158,67 @@ class NestAPIClient:
                 pass
         return raw
 
+    def _user_pincodes_trait_label(self, device_id: str) -> str | None:
+        labels = self.current_state.get("trait_labels", {}).get(device_id, {})
+        label = labels.get("weave.trait.security.UserPincodesSettingsTrait")
+        if isinstance(label, str) and label.strip():
+            return label
+        return None
+
+    async def set_guest_passcode(
+        self,
+        device_id: str,
+        guest_user_id: str,
+        passcode: str,
+        *,
+        enabled: bool = True,
+    ):
+        """Set or update a guest passcode for a given guest user resource id."""
+        if not isinstance(guest_user_id, str) or not guest_user_id.strip():
+            raise ValueError("guest_user_id is required")
+        if not isinstance(passcode, str):
+            raise ValueError("passcode must be a string")
+        passcode_text = passcode.strip()
+        if not passcode_text.isdigit():
+            raise ValueError("passcode must contain digits only")
+
+        request = weave_security_pb2.UserPincodesSettingsTrait.SetUserPincodeRequest()
+        request.userPincode.userId.resourceId = guest_user_id.strip()
+        request.userPincode.pincode = passcode_text.encode("utf-8")
+        request.userPincode.pincodeCredentialEnabled.value = bool(enabled)
+
+        cmd_any = {
+            "command": {
+                "type_url": "type.nestlabs.com/weave.trait.security.UserPincodesSettingsTrait.SetUserPincodeRequest",
+                "value": request.SerializeToString(),
+            },
+        }
+        trait_label = self._user_pincodes_trait_label(device_id)
+        if trait_label:
+            cmd_any["traitLabel"] = trait_label
+        _LOGGER.info("Sending guest passcode update for device %s", device_id)
+        return await self.send_command(cmd_any, device_id, structure_id=self._structure_id)
+
+    async def delete_guest_passcode(self, device_id: str, guest_user_id: str):
+        """Delete a guest passcode for a given guest user resource id."""
+        if not isinstance(guest_user_id, str) or not guest_user_id.strip():
+            raise ValueError("guest_user_id is required")
+
+        request = weave_security_pb2.UserPincodesSettingsTrait.DeleteUserPincodeRequest()
+        request.userId.resourceId = guest_user_id.strip()
+
+        cmd_any = {
+            "command": {
+                "type_url": "type.nestlabs.com/weave.trait.security.UserPincodesSettingsTrait.DeleteUserPincodeRequest",
+                "value": request.SerializeToString(),
+            },
+        }
+        trait_label = self._user_pincodes_trait_label(device_id)
+        if trait_label:
+            cmd_any["traitLabel"] = trait_label
+        _LOGGER.info("Sending guest passcode delete for device %s", device_id)
+        return await self.send_command(cmd_any, device_id, structure_id=self._structure_id)
+
     async def close(self):
         if self.connection and self.connection.connected:
             await self.connection.close()
@@ -1067,13 +1227,376 @@ class NestAPIClient:
         if self._reauth_task and not self._reauth_task.done():
             self._reauth_task.cancel()
             self._reauth_task = None
+        if self._legacy_name_task and not self._legacy_name_task.done():
+            self._legacy_name_task.cancel()
+            self._legacy_name_task = None
+
+    def _schedule_legacy_name_refresh(self, reason: str) -> None:
+        if not self.access_token:
+            return
+        if self._legacy_name_task and not self._legacy_name_task.done():
+            return
+        now = asyncio.get_event_loop().time()
+        if self._legacy_name_last_fetch and (now - self._legacy_name_last_fetch) < _APP_LAUNCH_REFRESH_SECONDS:
+            return
+        _LOGGER.debug("Scheduling legacy name refresh (%s)", reason)
+        self._legacy_name_task = asyncio.create_task(self._refresh_legacy_device_names(reason))
+
+    def _legacy_app_launch_host(self) -> str:
+        candidates = [
+            self.transport_url,
+            self.auth_data.get("urls", {}).get("transport_url") if isinstance(self.auth_data, dict) else None,
+            "https://home.nest.com",
+        ]
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                continue
+            host = candidate.replace("https://", "").replace("http://", "").strip("/")
+            if host:
+                return host.split("/")[0]
+        return "home.nest.com"
+
+    def _legacy_user_candidates(self) -> list[str]:
+        candidates: list[str] = []
+
+        def _add(value) -> None:
+            if not isinstance(value, str):
+                return
+            normalized = value.strip()
+            if not normalized:
+                return
+            if normalized.lower() == "unknown":
+                return
+            if normalized not in candidates:
+                candidates.append(normalized)
+
+        _add(self._user_id)
+        if isinstance(self.auth_data, dict):
+            _add(self.auth_data.get("userid"))
+            _add(self.auth_data.get("user_id"))
+            user_obj = self.auth_data.get("user")
+            if isinstance(user_obj, dict):
+                _add(user_obj.get("user_id"))
+
+        # If id_token was unavailable, try decoding the Nest JWT as a fallback source.
+        if self.access_token:
+            try:
+                decoded = jwt.decode(self.access_token, options={"verify_signature": False})
+                if isinstance(decoded, dict):
+                    for key in ("sub", "user_id", "userid"):
+                        _add(decoded.get(key))
+            except Exception:
+                pass
+
+        # Harvest observed USER_* ids from the pincode trait cache as a last resort.
+        trait_cache = self.current_state.get("traits", {}) or {}
+        for resource_traits in trait_cache.values():
+            if not isinstance(resource_traits, dict):
+                continue
+            pincode_trait = resource_traits.get("weave.trait.security.UserPincodesSettingsTrait")
+            if not pincode_trait:
+                continue
+            try:
+                for user_pincode in pincode_trait.userPincodes.values():
+                    if not user_pincode.HasField("userId"):
+                        continue
+                    _add(getattr(user_pincode.userId, "resourceId", None))
+            except Exception:
+                continue
+
+        return candidates
+
+    async def _refresh_legacy_device_names(self, reason: str) -> None:
+        try:
+            if not self.access_token:
+                return
+            user_candidates = self._legacy_user_candidates()
+            if not user_candidates:
+                _LOGGER.debug("Skipping app_launch name refresh (%s): no user id candidates", reason)
+                return
+            host = self._legacy_app_launch_host()
+            payload = {
+                "known_bucket_types": _APP_LAUNCH_BUCKET_TYPES,
+                "known_bucket_versions": [],
+            }
+            timeout = aiohttp.ClientTimeout(total=_APP_LAUNCH_TIMEOUT_SECONDS)
+            attempted = False
+            for raw_user_id in user_candidates:
+                candidate_ids: list[str] = []
+                normalized_user_id = raw_user_id.strip()
+                if normalized_user_id.upper().startswith("USER_"):
+                    stripped = normalized_user_id.split("_", 1)[1].strip()
+                    if stripped:
+                        candidate_ids.append(stripped)
+                if normalized_user_id:
+                    candidate_ids.append(normalized_user_id)
+                for request_user_id in candidate_ids:
+                    attempted = True
+                    url = _APP_LAUNCH_URL_FORMAT.format(host=host, user_id=request_user_id)
+                    headers = {
+                        "Authorization": f"Basic {self.access_token}",
+                        "X-nl-user-id": str(request_user_id),
+                        "X-nl-protocol-version": "1",
+                        "User-Agent": USER_AGENT_STRING,
+                    }
+                    _LOGGER.debug(
+                        "Requesting app_launch for legacy names (%s) with user_id=%s",
+                        reason,
+                        request_user_id,
+                    )
+                    async with self.session.post(
+                        url,
+                        json=payload,
+                        headers=headers,
+                        timeout=timeout,
+                    ) as resp:
+                        if resp.status != 200:
+                            _LOGGER.debug(
+                                "app_launch returned status %s for user_id=%s (%s)",
+                                resp.status,
+                                request_user_id,
+                                reason,
+                            )
+                            continue
+                        data = await resp.json()
+                    overrides = self._extract_legacy_device_names(data)
+                    if overrides:
+                        self._legacy_name_overrides.update(overrides)
+                        self._apply_legacy_name_overrides_to_current()
+                        _LOGGER.info(
+                            "Applied legacy app_launch names for %d devices using user_id=%s",
+                            len(overrides),
+                            request_user_id,
+                        )
+                        if attempted:
+                            self._legacy_name_last_fetch = asyncio.get_event_loop().time()
+                        return
+            if attempted:
+                self._legacy_name_last_fetch = asyncio.get_event_loop().time()
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            _LOGGER.debug("Legacy app_launch name refresh failed (%s): %s", reason, err)
+        finally:
+            self._legacy_name_task = None
+
+    def _apply_legacy_name_overrides(self, locks_data: dict) -> None:
+        if not self._legacy_name_overrides:
+            return
+        yale = locks_data.get("yale")
+        if not isinstance(yale, dict):
+            return
+        for device_id, payload in yale.items():
+            if not isinstance(payload, dict):
+                continue
+            # Trust trait-derived label_name when present; app_launch is fallback.
+            if self._normalize_device_name(payload.get("label_name")):
+                continue
+            override = self._normalize_device_name(self._legacy_name_overrides.get(device_id))
+            if not override:
+                continue
+            door_label = self._normalize_device_name(payload.get("door_label"))
+            if door_label:
+                payload["label_name"] = override
+                override = self._compose_lock_name(door_label, override)
+            current_name = self._normalize_device_name(payload.get("name"))
+            if (
+                override
+                and (
+                    not current_name
+                    or current_name.casefold() != override.casefold()
+                )
+            ):
+                payload["name"] = override
+
+    def _apply_legacy_name_overrides_to_current(self) -> None:
+        yale = self.current_state.get("devices", {}).get("locks", {})
+        if not isinstance(yale, dict):
+            return
+        for device_id, payload in yale.items():
+            if not isinstance(payload, dict):
+                continue
+            if self._normalize_device_name(payload.get("label_name")):
+                continue
+            override = self._normalize_device_name(self._legacy_name_overrides.get(device_id))
+            if not override:
+                continue
+            door_label = self._normalize_device_name(payload.get("door_label"))
+            if door_label:
+                payload["label_name"] = override
+                override = self._compose_lock_name(door_label, override)
+            current_name = self._normalize_device_name(payload.get("name"))
+            if (
+                override
+                and (
+                    not current_name
+                    or current_name.casefold() != override.casefold()
+                )
+            ):
+                payload["name"] = override
+
+    def _extract_legacy_device_names(self, payload: dict) -> dict[str, str]:
+        if not isinstance(payload, dict):
+            return {}
+        results: dict[str, str] = {}
+        serial_map = self._serial_map_from_traits()
+        self._scan_legacy_value(payload, None, None, None, serial_map, results)
+        return results
+
+    def _scan_legacy_value(
+        self,
+        value,
+        key_hint: str | None,
+        device_id_hint: str | None,
+        serial_hint: str | None,
+        serial_map: dict[str, str],
+        results: dict[str, str],
+    ) -> None:
+        if isinstance(value, dict):
+            explicit_device_id = self._extract_device_id(value, key_hint)
+            explicit_serial = self._extract_serial(value, key_hint)
+            device_id = explicit_device_id or device_id_hint
+            serial = explicit_serial or serial_hint
+            has_explicit_device_ref = bool(
+                explicit_device_id
+                or explicit_serial
+                or (
+                    isinstance(key_hint, str)
+                    and key_hint.startswith("DEVICE_")
+                )
+            )
+            name = self._extract_name(value, allow_fallback=has_explicit_device_ref)
+            if name and has_explicit_device_ref:
+                if isinstance(device_id, str) and device_id.startswith("DEVICE_"):
+                    results[device_id] = name
+                elif serial and serial in serial_map:
+                    results[serial_map[serial]] = name
+            for child_key, child_value in value.items():
+                next_hint = child_key if isinstance(child_key, str) else None
+                self._scan_legacy_value(
+                    child_value,
+                    next_hint,
+                    device_id,
+                    serial,
+                    serial_map,
+                    results,
+                )
+            return
+        if isinstance(value, list):
+            for entry in value:
+                self._scan_legacy_value(
+                    entry,
+                    key_hint,
+                    device_id_hint,
+                    serial_hint,
+                    serial_map,
+                    results,
+                )
+
+    def _extract_device_id(self, node: dict, key_hint: str | None) -> str | None:
+        for key in ("device_id", "deviceId", "deviceID", "device"):
+            val = node.get(key)
+            candidate = self._extract_value_string(val)
+            if isinstance(candidate, str) and "DEVICE_" in candidate:
+                return candidate.split()[0]
+        if isinstance(key_hint, str):
+            if key_hint.startswith("DEVICE_"):
+                return key_hint
+            if "DEVICE_" in key_hint:
+                idx = key_hint.find("DEVICE_")
+                return key_hint[idx:].split(".")[0]
+        return None
+
+    def _extract_serial(self, node: dict, key_hint: str | None) -> str | None:
+        for key in ("serial_number", "serialNumber", "serial", "sn"):
+            val = node.get(key)
+            candidate = self._extract_value_string(val)
+            if isinstance(candidate, str):
+                return candidate
+        if isinstance(key_hint, str):
+            hint = key_hint.strip()
+            if hint.lower().startswith("device.") and "." in hint:
+                return hint.split(".", 1)[1]
+        return None
+
+    def _extract_name(self, node: dict, *, allow_fallback: bool = False) -> str | None:
+        primary_keys = ("name", "device_name", "deviceName")
+        fallback_keys = ("label", "description") if allow_fallback else ()
+        for key in (*primary_keys, *fallback_keys):
+            val = node.get(key)
+            name = self._normalize_device_name(val)
+            if name:
+                return name
+            if isinstance(val, dict):
+                nested = self._normalize_device_name(val.get("value"))
+                if nested:
+                    return nested
+                for nested_key in (*primary_keys, *fallback_keys):
+                    nested = self._normalize_device_name(val.get(nested_key))
+                    if nested:
+                        return nested
+                nested = self._extract_name(val, allow_fallback=allow_fallback)
+                if nested:
+                    return nested
+        return None
+
+    @staticmethod
+    def _extract_value_string(value) -> str | None:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            for key in ("value", "device_id", "deviceId", "resource_id", "resourceId", "id"):
+                nested = value.get(key)
+                if isinstance(nested, str):
+                    return nested
+        return None
+
+    def _serial_map_from_traits(self) -> dict[str, str]:
+        serial_map: dict[str, str] = {}
+        all_traits = self.current_state.get("all_traits", {}) or {}
+        for key, info in all_traits.items():
+            if not isinstance(info, dict):
+                continue
+            if "DeviceIdentityTrait" not in str(key):
+                continue
+            data = info.get("data")
+            if not isinstance(data, dict):
+                continue
+            serial = data.get("serial_number")
+            if not isinstance(serial, str) or not serial:
+                continue
+            device_id = info.get("object_id")
+            if isinstance(device_id, str) and device_id.startswith("DEVICE_"):
+                serial_map[serial] = device_id
+        return serial_map
+
+    @staticmethod
+    def _normalize_device_name(name):
+        if not isinstance(name, str):
+            return None
+        value = name.strip()
+        if not value:
+            return None
+        if value.lower() == "undefined":
+            return None
+        return value
+
+    def _compose_lock_name(self, door_label: str | None, label_name: str | None) -> str | None:
+        door = self._normalize_device_name(door_label)
+        if door:
+            return door
+        label = self._normalize_device_name(label_name)
+        if label:
+            return label
+        return "Lock"
 
     def get_device_metadata(self, device_id):
         lock_data = self.current_state["devices"]["locks"].get(device_id, {})
+        name = self._normalize_device_name(lock_data.get("name"))
         metadata = {
             "serial_number": lock_data.get("serial_number", device_id),
             "firmware_revision": lock_data.get("firmware_revision", "unknown"),
-            "name": lock_data.get("name", "Front Door Lock"),
+            "name": name,
             "structure_id": self._structure_id if self._structure_id else "unknown",
         }
         
@@ -1101,6 +1624,27 @@ class NestAPIClient:
                 metadata["serial_number"] = trait_data["serial_number"]
             if trait_data.get("firmware_version"):
                 metadata["firmware_revision"] = trait_data["firmware_version"]
+
+        label_trait_info = None
+        label_trait_key = f"{device_id}:weave.trait.description.LabelSettingsTrait"
+        label_trait_info = all_traits.get(label_trait_key)
+        if not label_trait_info:
+            label_trait_key = f"{device_id}:type.googleapis.com/weave.trait.description.LabelSettingsTrait"
+            label_trait_info = all_traits.get(label_trait_key)
+        if not label_trait_info:
+            for candidate in all_traits.values():
+                if not isinstance(candidate, dict):
+                    continue
+                if candidate.get("object_id") != device_id:
+                    continue
+                type_url = candidate.get("type_url") or ""
+                if type_url.endswith("weave.trait.description.LabelSettingsTrait"):
+                    label_trait_info = candidate
+                    break
+        if label_trait_info and label_trait_info.get("data"):
+            label = self._normalize_device_name(label_trait_info["data"].get("label"))
+            if label:
+                metadata["name"] = label
         
         # Fallback to auth_data if trait data not available
         if "devices" in self.auth_data:
@@ -1110,7 +1654,9 @@ class NestAPIClient:
                         metadata["serial_number"] = dev.get("serial_number", device_id)
                     if metadata["firmware_revision"] == "unknown":  # Only update if not set from traits
                         metadata["firmware_revision"] = dev.get("firmware_revision", "unknown")
-                    metadata["name"] = dev.get("name", "Front Door Lock")
+                    candidate_name = self._normalize_device_name(dev.get("name"))
+                    if candidate_name and not metadata.get("name"):
+                        metadata["name"] = candidate_name
                     break
         return metadata
 

@@ -23,12 +23,15 @@ A lot of effort is going into this integration. So if you can afford it and want
 - Serial number and firmware shown in the Device Info card
 - Options: stale state timeout + masked debug attributes
 - Translated entity names (no hardcoded English labels)
+- Guest passcode services (`set_guest_passcode`, `delete_guest_passcode`)
 
 ## Status
 
 Core lock and unlock commands work reliably, and state updates are handled via an Observe stream with automatic reconnection, fallback refresh, and reauthentication support.
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
+
+Pre-release testing: `2026.02.15` beta builds include naming-path hardening with Door->Name, Where->Area, and Label attribute mapping validation.
 
 ## Release 2026.01.02 - Code health refactors + diagnostics (latest stable)
 
@@ -90,6 +93,25 @@ After onboarding:
 - `lock.unlock`
 service calls.
  - Verify entities: Battery sensor, Last Action sensor, Tamper binary sensor, Auto-Lock switch, Auto-Lock Duration select.
+
+### Guest Passcode Services
+
+Guest passcode management is available via Home Assistant services:
+
+- `nest_yale_lock.set_guest_passcode`
+- `nest_yale_lock.delete_guest_passcode`
+
+Inputs:
+
+- `guest_user_id` (required): Nest guest/user resource id (for example `USER_123...`)
+- `passcode` (required for set): numeric code; length is validated against lock capabilities when available
+- `device_id` (optional): required when multiple locks are present
+- `entry_id` (optional): target a specific config entry
+
+Notes:
+
+- This integration currently requires the guest user id instead of creating guest identities automatically.
+- Passcode data is never exposed as entity attributes; only non-sensitive capability/slot metadata is stored.
 
 ## License
 

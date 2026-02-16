@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 import logging
 import asyncio
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers import config_validation as cv
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady, ConfigEntryAuthFailed
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import (
+    ConfigEntryNotReady,
+    ConfigEntryAuthFailed,
+    HomeAssistantError,
+)
 from .const import (
     DOMAIN,
     PLATFORMS,
@@ -12,6 +19,11 @@ from .const import (
     CONF_STALE_STATE_MAX_SECONDS,
     DEFAULT_DEBUG_ATTRIBUTES,
     DEFAULT_STALE_STATE_MAX_SECONDS,
+    SERVICE_RESET_CONNECTION,
+    SERVICE_SET_GUEST_PASSCODE,
+    SERVICE_DELETE_GUEST_PASSCODE,
+    DEFAULT_MIN_PASSCODE_LENGTH,
+    DEFAULT_MAX_PASSCODE_LENGTH,
 )
 from .api_client import NestAPIClient
 from .coordinator import NestCoordinator
@@ -20,6 +32,260 @@ _LOGGER = logging.getLogger(__name__)
 
 # This integration is config-entry only (no YAML options)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+SERVICE_RESET_CONNECTION_SCHEMA = vol.Schema(
+    {
+        vol.Optional("entry_id"): cv.string,
+    }
+)
+
+SERVICE_SET_GUEST_PASSCODE_SCHEMA = vol.Schema(
+    {
+        vol.Optional("entry_id"): cv.string,
+        vol.Optional("device_id"): cv.string,
+        vol.Required("guest_user_id"): cv.string,
+        vol.Required("passcode"): cv.string,
+        vol.Optional("enabled", default=True): cv.boolean,
+    }
+)
+
+SERVICE_DELETE_GUEST_PASSCODE_SCHEMA = vol.Schema(
+    {
+        vol.Optional("entry_id"): cv.string,
+        vol.Optional("device_id"): cv.string,
+        vol.Required("guest_user_id"): cv.string,
+    }
+)
+
+
+def _active_coordinators(hass: HomeAssistant) -> dict[str, NestCoordinator]:
+    """Return currently active coordinators keyed by config entry id."""
+    domain_data = hass.data.get(DOMAIN, {})
+    active: dict[str, NestCoordinator] = {}
+    for key, value in domain_data.items():
+        if isinstance(key, str) and isinstance(value, NestCoordinator):
+            active[key] = value
+    return active
+
+
+def _cleanup_non_device_registry_entries(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove stale entities/devices that are not keyed by canonical DEVICE_* ids."""
+    entity_registry = er.async_get(hass)
+    entity_entries = er.async_entries_for_config_entry(entity_registry, entry.entry_id)
+    has_device_style_entity_ids = any(
+        isinstance(entity_entry.unique_id, str) and "DEVICE_" in entity_entry.unique_id
+        for entity_entry in entity_entries
+    )
+
+    removed_entities = 0
+    for entity_entry in entity_entries:
+        unique_id = entity_entry.unique_id
+        if not isinstance(unique_id, str):
+            continue
+        if not unique_id.startswith(f"{DOMAIN}_"):
+            continue
+        if unique_id.startswith(f"{DOMAIN}_USER_"):
+            entity_registry.async_remove(entity_entry.entity_id)
+            removed_entities += 1
+            continue
+        if has_device_style_entity_ids and "DEVICE_" not in unique_id:
+            entity_registry.async_remove(entity_entry.entity_id)
+            removed_entities += 1
+
+    device_registry = dr.async_get(hass)
+    device_entries = dr.async_entries_for_config_entry(device_registry, entry.entry_id)
+    has_device_style_identifiers = any(
+        domain == DOMAIN and isinstance(identifier, str) and identifier.startswith("DEVICE_")
+        for device in device_entries
+        for domain, identifier in device.identifiers
+    )
+
+    removed_devices = 0
+    for device in device_entries:
+        domain_identifiers = [
+            identifier
+            for domain, identifier in device.identifiers
+            if domain == DOMAIN and isinstance(identifier, str)
+        ]
+        if not domain_identifiers:
+            continue
+        has_device_identifier = any(identifier.startswith("DEVICE_") for identifier in domain_identifiers)
+        has_user_identifier = any(identifier.startswith("USER_") for identifier in domain_identifiers)
+        stale_non_device = has_device_style_identifiers and not has_device_identifier
+        if (has_user_identifier or stale_non_device) and device_registry.async_remove_device(device.id):
+            removed_devices += 1
+
+    if removed_entities or removed_devices:
+        _LOGGER.warning(
+            "Removed stale non-device Nest Yale registry entries for %s: entities=%d devices=%d",
+            entry.entry_id,
+            removed_entities,
+            removed_devices,
+        )
+
+
+def _resolve_target_coordinators(
+    hass: HomeAssistant,
+    entry_id: str | None,
+) -> dict[str, NestCoordinator]:
+    """Resolve coordinators for an optional entry id filter."""
+    coordinators = _active_coordinators(hass)
+    if not coordinators:
+        raise HomeAssistantError("No active Nest Yale config entries found.")
+    if entry_id:
+        coordinator = coordinators.get(entry_id)
+        if coordinator is None:
+            raise HomeAssistantError(f"Entry id '{entry_id}' is not active.")
+        return {entry_id: coordinator}
+    return coordinators
+
+
+def _resolve_target_device_ids(
+    coordinator: NestCoordinator,
+    requested_device_id: str | None,
+) -> list[str]:
+    """Resolve device ids for a coordinator and optional device filter."""
+    data = coordinator.data if isinstance(coordinator.data, dict) else {}
+    lock_ids = [device_id for device_id, device in data.items() if isinstance(device, dict)]
+    if requested_device_id:
+        if requested_device_id not in lock_ids:
+            raise HomeAssistantError(
+                f"Device id '{requested_device_id}' was not found in this config entry."
+            )
+        return [requested_device_id]
+    if len(lock_ids) == 1:
+        return lock_ids
+    if not lock_ids:
+        raise HomeAssistantError("No lock devices are available yet; wait for initial sync.")
+    raise HomeAssistantError(
+        "Multiple lock devices found. Provide device_id to target a specific lock."
+    )
+
+
+def _passcode_limits(device_data: dict | None) -> tuple[int, int]:
+    """Determine valid passcode length bounds for a device."""
+    min_len = DEFAULT_MIN_PASSCODE_LENGTH
+    max_len = DEFAULT_MAX_PASSCODE_LENGTH
+    if isinstance(device_data, dict):
+        traits = device_data.get("traits", {})
+        if isinstance(traits, dict):
+            caps = traits.get("UserPincodesCapabilitiesTrait", {})
+            if isinstance(caps, dict):
+                cap_min = caps.get("min_pincode_length")
+                cap_max = caps.get("max_pincode_length")
+                if isinstance(cap_min, int) and cap_min > 0:
+                    min_len = cap_min
+                if isinstance(cap_max, int) and cap_max > 0:
+                    max_len = cap_max
+    if min_len > max_len:
+        return DEFAULT_MIN_PASSCODE_LENGTH, DEFAULT_MAX_PASSCODE_LENGTH
+    return min_len, max_len
+
+
+def _validate_guest_passcode(passcode: str, device_data: dict | None) -> None:
+    """Validate guest passcode content and length."""
+    if not isinstance(passcode, str):
+        raise HomeAssistantError("Passcode must be a string of digits.")
+    value = passcode.strip()
+    if not value:
+        raise HomeAssistantError("Passcode is required.")
+    if not value.isdigit():
+        raise HomeAssistantError("Passcode must contain digits only.")
+    min_len, max_len = _passcode_limits(device_data)
+    if len(value) < min_len or len(value) > max_len:
+        raise HomeAssistantError(
+            f"Passcode length must be between {min_len} and {max_len} digits for this lock."
+        )
+
+
+def _register_services(hass: HomeAssistant) -> None:
+    """Register integration services once per running Home Assistant instance."""
+    if hass.services.has_service(DOMAIN, SERVICE_RESET_CONNECTION):
+        return
+
+    async def handle_reset_connection(call: ServiceCall) -> None:
+        entry_id = call.data.get("entry_id")
+        coordinators = _resolve_target_coordinators(hass, entry_id)
+        for target_entry_id in coordinators:
+            _LOGGER.info("Reloading Nest Yale entry %s via service call", target_entry_id)
+            await hass.config_entries.async_reload(target_entry_id)
+
+    async def handle_set_guest_passcode(call: ServiceCall) -> None:
+        entry_id = call.data.get("entry_id")
+        requested_device_id = call.data.get("device_id")
+        guest_user_id = call.data["guest_user_id"].strip()
+        passcode = call.data["passcode"].strip()
+        enabled = bool(call.data["enabled"])
+        if not guest_user_id:
+            raise HomeAssistantError("guest_user_id is required.")
+        coordinators = _resolve_target_coordinators(hass, entry_id)
+        for _, coordinator in coordinators.items():
+            target_ids = _resolve_target_device_ids(coordinator, requested_device_id)
+            for device_id in target_ids:
+                device_data = coordinator.data.get(device_id) if isinstance(coordinator.data, dict) else None
+                _validate_guest_passcode(passcode, device_data)
+                try:
+                    await coordinator.api_client.set_guest_passcode(
+                        device_id,
+                        guest_user_id,
+                        passcode,
+                        enabled=enabled,
+                    )
+                except ValueError as err:
+                    raise HomeAssistantError(str(err)) from err
+            await coordinator.async_refresh()
+
+    async def handle_delete_guest_passcode(call: ServiceCall) -> None:
+        entry_id = call.data.get("entry_id")
+        requested_device_id = call.data.get("device_id")
+        guest_user_id = call.data["guest_user_id"].strip()
+        if not guest_user_id:
+            raise HomeAssistantError("guest_user_id is required.")
+        coordinators = _resolve_target_coordinators(hass, entry_id)
+        for _, coordinator in coordinators.items():
+            target_ids = _resolve_target_device_ids(coordinator, requested_device_id)
+            for device_id in target_ids:
+                try:
+                    await coordinator.api_client.delete_guest_passcode(
+                        device_id,
+                        guest_user_id,
+                    )
+                except ValueError as err:
+                    raise HomeAssistantError(str(err)) from err
+            await coordinator.async_refresh()
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RESET_CONNECTION,
+        handle_reset_connection,
+        schema=SERVICE_RESET_CONNECTION_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_GUEST_PASSCODE,
+        handle_set_guest_passcode,
+        schema=SERVICE_SET_GUEST_PASSCODE_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_DELETE_GUEST_PASSCODE,
+        handle_delete_guest_passcode,
+        schema=SERVICE_DELETE_GUEST_PASSCODE_SCHEMA,
+    )
+
+
+def _unregister_services_if_idle(hass: HomeAssistant) -> None:
+    """Remove integration services when no active config entries remain."""
+    if _active_coordinators(hass):
+        return
+    for service_name in (
+        SERVICE_RESET_CONNECTION,
+        SERVICE_SET_GUEST_PASSCODE,
+        SERVICE_DELETE_GUEST_PASSCODE,
+    ):
+        if hass.services.has_service(DOMAIN, service_name):
+            hass.services.async_remove(DOMAIN, service_name)
+
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Nest Yale component."""
@@ -83,6 +349,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady(f"Failed to initialize: {e}") from e
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    _cleanup_non_device_registry_entries(hass, entry)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     hass.data[DOMAIN].setdefault("entities", [])
     # Reset per-entry added ids on setup to avoid stale rediscovery state.
@@ -96,6 +363,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     added_map[entry.entry_id] = set()
     added_map = hass.data[DOMAIN].setdefault("added_select_ids", {})
     added_map[entry.entry_id] = set()
+    _register_services(hass)
 
     _LOGGER.debug("Forwarding setup to platforms: %s", PLATFORMS)
     try:
@@ -139,6 +407,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         pass
     try:
         result = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        _unregister_services_if_idle(hass)
         _LOGGER.debug("Unload platforms result: %s", result)
         return result
     except Exception as e:
