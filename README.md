@@ -31,13 +31,15 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Pre-release testing: `2026.02.15` beta builds include naming-path hardening with Door->Name, Where->Area, and Label attribute mapping validation.
+Pre-release testing: `2026.02.16b1` validated naming-path hardening with live Door/Where/Label updates from the Nest app.
 
-## Release 2026.01.02 - Code health refactors + diagnostics (latest stable)
+## Release 2026.02.16 - Door/Where/Label mapping stabilization (latest stable)
 
-- Deduplicated coordinator trait handling and entity update boilerplate
-- Centralized battery parsing and simplified device_info updates
-- Diagnostics now include last command status; routine trait updates log at DEBUG
+- Door selection in the Nest app now drives the HA lock entry name
+- Where selection in the Nest app now drives the HA area assignment
+- Label selection remains exposed as an entity attribute (`label_name`)
+- Door/Where/Label changes now auto-update in Home Assistant when edited in the Nest app
+- Fixed stale door labels on located-only stream updates by resolving fixture annotation IDs first
 
 ## Known Limitations
 
