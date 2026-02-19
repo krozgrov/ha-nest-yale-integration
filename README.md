@@ -31,7 +31,7 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Pre-release testing: `2026.02.16b1` validated naming-path hardening with live Door/Where/Label updates from the Nest app.
+Pre-release testing: `2026.02.19b1` validates passcode UI workflows (`slot`/`guest_user_id` targeting) and helper validation coverage.
 
 ## Release 2026.02.16 - Door/Where/Label mapping stabilization (latest stable)
 
@@ -117,6 +117,33 @@ Notes:
 - You can discover known guest ids and slot mappings from lock attributes: `guest_user_ids` and `guest_users`.
 - This integration updates/deletes passcodes for existing Nest guest identities; creating new guest identities still needs to be done in the Nest app.
 - Passcode data is never exposed as entity attributes; only non-sensitive capability/slot metadata is stored.
+
+Automation examples (UI action or YAML):
+
+```yaml
+action: nest_yale_lock.set_guest_passcode
+data:
+  device_id: DEVICE_00177A0000060303
+  slot: 3
+  passcode: "482615"
+  enabled: true
+```
+
+```yaml
+action: nest_yale_lock.delete_guest_passcode
+data:
+  device_id: DEVICE_00177A0000060303
+  slot: 3
+```
+
+```yaml
+action: nest_yale_lock.set_guest_passcode
+data:
+  device_id: DEVICE_00177A0000060303
+  guest_user_id: USER_015EBA4EB04FAC56
+  passcode: "482615"
+  enabled: true
+```
 
 ## License
 

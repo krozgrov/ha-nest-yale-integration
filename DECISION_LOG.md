@@ -6,6 +6,24 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-02-19: Add isolated passcode utility tests and UI-first usage examples
+Why
+- Passcode slot resolution and validation behavior now drives automation reliability and needed direct unit coverage.
+- Users requested clearer UI-mode examples for Home Assistant actions.
+
+Decision
+- Move slot/passcode validation logic into a pure utility module (`passcode_utils.py`) and keep HA service behavior unchanged by converting utility `ValueError` to `HomeAssistantError` at the service boundary.
+- Add focused unit tests for slot-based user resolution and validation errors.
+- Expand README passcode docs with copy/paste action examples for `slot` and `guest_user_id` workflows.
+
+Impact
+- Non-breaking internal refactor with explicit coverage of passcode helper behavior.
+- Faster validation for future passcode changes without requiring a running HA instance.
+
+Validation
+- `python -m unittest tests/test_passcode_utils.py`
+- `python -m compileall custom_components/nest_yale_lock`
+
 ### 2026-02-16: Improve passcode service UX for Home Assistant UI mode
 Why
 - Passcode services required explicit `guest_user_id`, which is difficult to discover and use in HA action UI mode.

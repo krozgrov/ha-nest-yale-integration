@@ -27,6 +27,14 @@ from .const import (
 )
 from .api_client import NestAPIClient
 from .coordinator import NestCoordinator
+from .passcode_utils import (
+    extract_guest_user_slots as util_extract_guest_user_slots,
+    max_pincodes_supported as util_max_pincodes_supported,
+    passcode_limits as util_passcode_limits,
+    resolve_guest_user_id as util_resolve_guest_user_id,
+    validate_guest_passcode as util_validate_guest_passcode,
+    validate_guest_slot as util_validate_guest_slot,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -166,93 +174,29 @@ def _resolve_target_device_ids(
 
 def _passcode_limits(device_data: dict | None) -> tuple[int, int]:
     """Determine valid passcode length bounds for a device."""
-    min_len = DEFAULT_MIN_PASSCODE_LENGTH
-    max_len = DEFAULT_MAX_PASSCODE_LENGTH
-    if isinstance(device_data, dict):
-        traits = device_data.get("traits", {})
-        if isinstance(traits, dict):
-            caps = traits.get("UserPincodesCapabilitiesTrait", {})
-            if isinstance(caps, dict):
-                cap_min = caps.get("min_pincode_length")
-                cap_max = caps.get("max_pincode_length")
-                if isinstance(cap_min, int) and cap_min > 0:
-                    min_len = cap_min
-                if isinstance(cap_max, int) and cap_max > 0:
-                    max_len = cap_max
-    if min_len > max_len:
-        return DEFAULT_MIN_PASSCODE_LENGTH, DEFAULT_MAX_PASSCODE_LENGTH
-    return min_len, max_len
+    return util_passcode_limits(
+        device_data,
+        DEFAULT_MIN_PASSCODE_LENGTH,
+        DEFAULT_MAX_PASSCODE_LENGTH,
+    )
 
 
 def _max_pincodes_supported(device_data: dict | None) -> int:
     """Determine max supported pincode slots for a device."""
-    max_slots = 25
-    if isinstance(device_data, dict):
-        traits = device_data.get("traits", {})
-        if isinstance(traits, dict):
-            caps = traits.get("UserPincodesCapabilitiesTrait", {})
-            if isinstance(caps, dict):
-                raw_max = caps.get("max_pincodes_supported")
-                if isinstance(raw_max, int) and raw_max > 0:
-                    max_slots = raw_max
-    return max_slots
+    return util_max_pincodes_supported(device_data)
 
 
 def _extract_guest_user_slots(device_data: dict | None) -> dict[int, dict]:
     """Extract guest/user slot metadata from normalized trait data."""
-    slots: dict[int, dict] = {}
-    if not isinstance(device_data, dict):
-        return slots
-
-    traits = device_data.get("traits", {})
-    if not isinstance(traits, dict):
-        return slots
-
-    pincode_trait = traits.get("UserPincodesSettingsTrait", {})
-    if not isinstance(pincode_trait, dict):
-        return slots
-
-    user_pincodes = pincode_trait.get("user_pincodes", {})
-    if not isinstance(user_pincodes, dict):
-        return slots
-
-    for raw_slot, details in user_pincodes.items():
-        try:
-            slot = int(raw_slot)
-        except (TypeError, ValueError):
-            continue
-        if slot <= 0 or not isinstance(details, dict):
-            continue
-
-        slot_info: dict = {"slot": slot}
-        user_id = details.get("user_id")
-        if isinstance(user_id, str) and user_id.strip():
-            slot_info["user_id"] = user_id.strip()
-
-        enabled = details.get("enabled")
-        if isinstance(enabled, bool):
-            slot_info["enabled"] = enabled
-
-        has_passcode = details.get("has_passcode")
-        if isinstance(has_passcode, bool):
-            slot_info["has_passcode"] = has_passcode
-
-        slots[slot] = slot_info
-
-    return dict(sorted(slots.items()))
+    return util_extract_guest_user_slots(device_data)
 
 
 def _validate_guest_slot(slot: int | None, device_data: dict | None) -> None:
     """Validate slot range against lock capabilities."""
-    if slot is None:
-        return
-    if slot <= 0:
-        raise HomeAssistantError("slot must be a positive integer.")
-    max_slots = _max_pincodes_supported(device_data)
-    if slot > max_slots:
-        raise HomeAssistantError(
-            f"slot must be between 1 and {max_slots} for this lock."
-        )
+    try:
+        util_validate_guest_slot(slot, device_data)
+    except ValueError as err:
+        raise HomeAssistantError(str(err)) from err
 
 
 def _resolve_guest_user_id(
@@ -261,45 +205,23 @@ def _resolve_guest_user_id(
     device_data: dict | None,
 ) -> str:
     """Resolve user id from explicit id or existing slot mapping."""
-    if isinstance(guest_user_id, str):
-        normalized = guest_user_id.strip()
-        if normalized:
-            return normalized
-
-    if slot is None:
-        raise HomeAssistantError("Provide either guest_user_id or slot.")
-
-    slots = _extract_guest_user_slots(device_data)
-    slot_info = slots.get(slot)
-    if not slot_info:
-        raise HomeAssistantError(
-            "No user mapping was found for this slot. "
-            "Create the guest in the Nest app first, then retry."
-        )
-
-    resolved_user_id = slot_info.get("user_id")
-    if not isinstance(resolved_user_id, str) or not resolved_user_id.strip():
-        raise HomeAssistantError(
-            "Slot exists but has no user_id mapping. "
-            "Create or sync the guest in the Nest app first."
-        )
-    return resolved_user_id.strip()
+    try:
+        return util_resolve_guest_user_id(guest_user_id, slot, device_data)
+    except ValueError as err:
+        raise HomeAssistantError(str(err)) from err
 
 
 def _validate_guest_passcode(passcode: str, device_data: dict | None) -> None:
     """Validate guest passcode content and length."""
-    if not isinstance(passcode, str):
-        raise HomeAssistantError("Passcode must be a string of digits.")
-    value = passcode.strip()
-    if not value:
-        raise HomeAssistantError("Passcode is required.")
-    if not value.isdigit():
-        raise HomeAssistantError("Passcode must contain digits only.")
-    min_len, max_len = _passcode_limits(device_data)
-    if len(value) < min_len or len(value) > max_len:
-        raise HomeAssistantError(
-            f"Passcode length must be between {min_len} and {max_len} digits for this lock."
+    try:
+        util_validate_guest_passcode(
+            passcode,
+            device_data,
+            DEFAULT_MIN_PASSCODE_LENGTH,
+            DEFAULT_MAX_PASSCODE_LENGTH,
         )
+    except ValueError as err:
+        raise HomeAssistantError(str(err)) from err
 
 
 def _register_services(hass: HomeAssistant) -> None:
