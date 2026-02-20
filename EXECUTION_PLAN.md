@@ -173,3 +173,4 @@ Status updates
 - 2026-02-16: Added persistent located-annotation caches and fixture-ID-first door label resolution so located-only deltas can update `door_label` even when embedded fixture text is stale.
 - 2026-02-16: Started passcode UX work for HA UI mode by supporting slot-based user resolution (`slot` or `guest_user_id`) and exposing non-sensitive guest slot/user metadata in lock attributes.
 - 2026-02-19: Added isolated passcode utility tests for slot resolution and validation errors; expanded README with direct UI action examples for `slot` and `guest_user_id` flows.
+- 2026-02-20: Added coordinator startup backfill refresh logic so partial healthy observe updates no longer leave auto-lock/tamper companion entities unavailable after reboot/install.

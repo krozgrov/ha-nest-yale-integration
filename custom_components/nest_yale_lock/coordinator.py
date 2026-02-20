@@ -33,11 +33,60 @@ class NestCoordinator(DataUpdateCoordinator):
         self._last_recovery_ts: float | None = None
         self._recovery_attempts: int = 0
         self._known_lock_ids: set[str] = set()
+        self._startup_backfill_attempts: int = 0
+        self._startup_backfill_complete: bool = False
+        self._startup_backfill_task: asyncio.Task | None = None
         _LOGGER.debug("Initialized NestCoordinator with initial data: %s", self.data)
 
     @staticmethod
     def _is_device_lock_id(device_id: str | None) -> bool:
         return isinstance(device_id, str) and device_id.startswith("DEVICE_")
+
+    @staticmethod
+    def _device_has_companion_fields(device: dict) -> bool:
+        """Return True when companion entities have required source fields."""
+        required_fields = (
+            "auto_relock_on",
+            "auto_relock_duration",
+            "tamper_detected",
+        )
+        return all(field in device for field in required_fields)
+
+    def _has_required_lock_fields(self, data: dict | None) -> bool:
+        """Check whether all known locks contain fields used by companion entities."""
+        if not isinstance(data, dict):
+            return False
+        lock_count = 0
+        for device_id, device in data.items():
+            if not self._is_device_lock_id(device_id):
+                continue
+            if not isinstance(device, dict):
+                continue
+            lock_count += 1
+            if not self._device_has_companion_fields(device):
+                return False
+        return lock_count > 0
+
+    def _maybe_schedule_startup_backfill(self) -> None:
+        """Schedule a one-shot refresh when observer data is still partial at startup."""
+        if self._startup_backfill_complete:
+            return
+        if self._has_required_lock_fields(self.data):
+            self._startup_backfill_complete = True
+            return
+        if self._startup_backfill_attempts >= 3:
+            return
+        if self._startup_backfill_task and not self._startup_backfill_task.done():
+            return
+
+        async def _run_backfill() -> None:
+            await asyncio.sleep(2)
+            try:
+                await asyncio.wait_for(self.async_refresh(), timeout=20)
+            except Exception as err:
+                _LOGGER.debug("Startup companion-field backfill refresh failed: %s", err)
+
+        self._startup_backfill_task = self.hass.loop.create_task(_run_backfill())
 
     async def async_setup(self):
         """Set up the coordinator."""
@@ -165,8 +214,24 @@ class NestCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("Observer marked healthy but data is empty; forcing fallback refresh")
             self._observer_healthy = False
         elif self._observer_healthy:
-            _LOGGER.debug("Skipping fallback poll - observe stream is healthy")
-            return self.data
+            # On startup, observe frames can be partial (lock-only) and miss
+            # companion fields used by switch/select/tamper entities.
+            # Allow a few fallback refresh attempts to backfill those fields.
+            if self._has_required_lock_fields(self.data):
+                self._startup_backfill_complete = True
+                _LOGGER.debug("Skipping fallback poll - observe stream is healthy")
+                return self.data
+            if self._startup_backfill_attempts >= 3:
+                _LOGGER.debug(
+                    "Observer healthy but companion fields still incomplete after %d attempts; skipping fallback poll",
+                    self._startup_backfill_attempts,
+                )
+                return self.data
+            self._startup_backfill_attempts += 1
+            _LOGGER.warning(
+                "Observer healthy but companion lock fields are incomplete; running fallback refresh_state attempt %d/3",
+                self._startup_backfill_attempts,
+            )
         
         _LOGGER.debug("Starting fallback _async_update_data (observe stream unhealthy)")
         try:
@@ -212,6 +277,8 @@ class NestCoordinator(DataUpdateCoordinator):
                 self._empty_refresh_attempts = 0
                 self._last_good_update = asyncio.get_event_loop().time()
             merged = self._merge_device_update(normalized_data) if normalized_data else self.data
+            if self._has_required_lock_fields(merged):
+                self._startup_backfill_complete = True
             _LOGGER.debug("Normalized data from refresh_state: %s", merged)
             return merged
         except ConfigEntryAuthFailed as err:
@@ -348,6 +415,10 @@ class NestCoordinator(DataUpdateCoordinator):
                         self._last_good_update = asyncio.get_event_loop().time()
                         self.async_set_updated_data(self._merge_device_update(normalized_update))
                         self._initial_data_event.set()
+                        if self._has_required_lock_fields(self.data):
+                            self._startup_backfill_complete = True
+                        else:
+                            self._maybe_schedule_startup_backfill()
                         _LOGGER.debug("Applied normalized observer update: %s, current_state user_id: %s",
                                       normalized_update, self.api_client.current_state["user_id"])
                     elif all_traits:
@@ -377,6 +448,10 @@ class NestCoordinator(DataUpdateCoordinator):
                             self._empty_refresh_attempts = 0
                             self._last_good_update = asyncio.get_event_loop().time()
                             self.async_set_updated_data(merged_data)
+                            if self._has_required_lock_fields(self.data):
+                                self._startup_backfill_complete = True
+                            else:
+                                self._maybe_schedule_startup_backfill()
                             _LOGGER.debug("Applied trait-only observer update for %d device(s)", len(merged_data))
                         else:
                             self.async_set_updated_data(self.data)
@@ -426,6 +501,14 @@ class NestCoordinator(DataUpdateCoordinator):
             except asyncio.CancelledError:
                 pass
             self._reload_task = None
+        if self._startup_backfill_task and not self._startup_backfill_task.done():
+            _LOGGER.debug("Cancelling startup backfill task")
+            self._startup_backfill_task.cancel()
+            try:
+                await self._startup_backfill_task
+            except asyncio.CancelledError:
+                pass
+            self._startup_backfill_task = None
         await self.api_client.close()
         _LOGGER.debug("Coordinator unloaded")
 

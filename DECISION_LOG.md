@@ -6,6 +6,26 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-02-20: Backfill companion fields after partial startup observe frames
+Why
+- After installing `2026.02.19b1` and rebooting Home Assistant, lock companion entities (auto-lock switch/select and tamper sensor) could remain unavailable until a manual integration reload.
+- Root cause: observe stream could be healthy but initially partial, and fallback refresh polling was skipped when observer health was true.
+
+Decision
+- Add startup backfill logic in the coordinator to detect missing companion source fields (`auto_relock_on`, `auto_relock_duration`, `tamper_detected`) and allow limited fallback `refresh_state` attempts even while observe is healthy.
+- Trigger an immediate one-shot backfill refresh when partial observer updates are applied, capped to 3 attempts.
+- Cancel pending startup backfill tasks on unload.
+
+Impact
+- Non-breaking reliability fix for startup behavior.
+- Reduces cases where manual reload is required after reboot/install to restore companion entity availability.
+
+Validation
+- `python -m compileall custom_components/nest_yale_lock`
+- Manual HA validation after reboot/install:
+  - auto-lock switch/select populate without manual reload
+  - tamper sensor availability is restored from startup backfill.
+
 ### 2026-02-19: Add isolated passcode utility tests and UI-first usage examples
 Why
 - Passcode slot resolution and validation behavior now drives automation reliability and needed direct unit coverage.
