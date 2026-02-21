@@ -1,5 +1,8 @@
 import logging
+import os
 import random
+import secrets
+import time
 import uuid
 import aiohttp
 import asyncio
@@ -27,6 +30,23 @@ from .proto.nestlabs.gateway import v1_pb2
 from .proto.nest import rpc_pb2
 from .proto.weave.trait import security_pb2 as weave_security_pb2
 from .proto.nest.trait import security_pb2 as nest_security_pb2
+from .passcode_crypto import (
+    ROOT_KEY_CLIENT,
+    ROOT_KEY_FABRIC,
+    ROOT_KEY_SERVICE,
+    PasscodeCryptoError,
+    decrypt_passcode_config2,
+    decode_hex_bytes,
+    derive_passcode_config2_keys,
+    encrypt_passcode_config2,
+    get_app_group_local_number,
+    get_epoch_key_number,
+    get_root_key_id,
+    is_app_rotating_key,
+    parse_encrypted_passcode_metadata,
+    update_epoch_key_id,
+    uses_current_epoch_key,
+)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
@@ -85,6 +105,9 @@ _APP_LAUNCH_BUCKET_TYPES = [
 ]
 _APP_LAUNCH_TIMEOUT_SECONDS = 15
 _APP_LAUNCH_REFRESH_SECONDS = 6 * 60 * 60
+_ENV_FABRIC_SECRET_HEX = "NEST_YALE_FABRIC_SECRET_HEX"
+_ENV_CLIENT_ROOT_KEY_HEX = "NEST_YALE_CLIENT_ROOT_KEY_HEX"
+_ENV_SERVICE_ROOT_KEY_HEX = "NEST_YALE_SERVICE_ROOT_KEY_HEX"
 
 class ConnectionShim:
     def __init__(self, session):
@@ -260,6 +283,7 @@ class NestAPIClient:
             "weave.trait.security.BoltLockCapabilitiesTrait",
             "weave.trait.security.UserPincodesSettingsTrait",
             "weave.trait.security.UserPincodesCapabilitiesTrait",
+            "weave.trait.auth.ApplicationKeysTrait",
             "weave.trait.security.PincodeInputTrait",
             "weave.trait.security.TamperTrait",
             # HomeKit-relevant traits
@@ -766,6 +790,12 @@ class NestAPIClient:
                                         "Stored v2 structure_id from stream: %s",
                                         self._structure_id_v2,
                                     )
+                            if locks_data.get("all_traits"):
+                                current_traits = self.current_state.get("all_traits", {}) or {}
+                                self.current_state["all_traits"] = {
+                                    **current_traits,
+                                    **locks_data["all_traits"],
+                                }
                             self._merge_trait_states(locks_data.get("trait_states"))
                             self._merge_trait_labels(locks_data.get("trait_labels"))
                             self._apply_cached_settings_to_update(locks_data)
@@ -1213,6 +1243,400 @@ class NestAPIClient:
             err, GRPC_CODE_INVALID_ARGUMENT
         )
 
+    @staticmethod
+    def _decode_env_key(name: str, expected_len: int) -> bytes | None:
+        try:
+            return decode_hex_bytes(os.getenv(name), expected_len=expected_len)
+        except PasscodeCryptoError as err:
+            raise RuntimeError(f"Invalid {name}: {err}") from err
+
+    def _get_application_keys_data(self, device_id: str) -> dict | None:
+        all_traits = self.current_state.get("all_traits", {})
+        if not isinstance(all_traits, dict):
+            return None
+        for trait_info in all_traits.values():
+            if not isinstance(trait_info, dict):
+                continue
+            if trait_info.get("object_id") != device_id:
+                continue
+            type_url = trait_info.get("type_url")
+            if not isinstance(type_url, str):
+                continue
+            if not type_url.endswith("/weave.trait.auth.ApplicationKeysTrait"):
+                continue
+            data = trait_info.get("data")
+            if isinstance(data, dict):
+                return data
+        return None
+
+    def _collect_encrypted_pincode_metadata(self, device_id: str) -> list[dict]:
+        trait_cache = self.current_state.get("traits", {})
+        resource_traits = trait_cache.get(device_id, {}) if isinstance(trait_cache, dict) else {}
+        trait = (
+            resource_traits.get("weave.trait.security.UserPincodesSettingsTrait")
+            if isinstance(resource_traits, dict)
+            else None
+        )
+        if not trait:
+            return []
+
+        metadata: list[dict] = []
+        try:
+            for slot, user_pincode in trait.userPincodes.items():
+                pincode_bytes = bytes(getattr(user_pincode, "pincode", b""))
+                parsed = parse_encrypted_passcode_metadata(pincode_bytes)
+                if not parsed:
+                    continue
+                user_id = None
+                if user_pincode.HasField("userId"):
+                    user_id = getattr(user_pincode.userId, "resourceId", None)
+                metadata.append(
+                    {
+                        "slot": int(slot),
+                        "user_id": user_id,
+                        "config": parsed.config,
+                        "key_id": parsed.key_id,
+                        "nonce": parsed.nonce,
+                        "pincode_bytes": pincode_bytes,
+                    }
+                )
+        except Exception:
+            return []
+        return metadata
+
+    @staticmethod
+    def _passcode_material_candidates(
+        root_key_id: int,
+        *,
+        fabric_secret: bytes | None,
+        client_root_key: bytes | None,
+        service_root_key: bytes | None,
+    ) -> list[dict[str, bytes | str | None]]:
+        candidates: list[dict[str, bytes | str | None]] = []
+        if root_key_id == ROOT_KEY_CLIENT:
+            # Prefer canonical derivation from fabric secret when available.
+            if fabric_secret:
+                candidates.append(
+                    {
+                        "name": "fabric_secret",
+                        "fabric_secret": fabric_secret,
+                        "client_root_key": None,
+                        "service_root_key": service_root_key,
+                    }
+                )
+            if client_root_key:
+                candidates.append(
+                    {
+                        "name": "client_root_key",
+                        "fabric_secret": None,
+                        "client_root_key": client_root_key,
+                        "service_root_key": service_root_key,
+                    }
+                )
+            return candidates
+        if root_key_id == ROOT_KEY_FABRIC:
+            if fabric_secret:
+                candidates.append(
+                    {
+                        "name": "fabric_secret",
+                        "fabric_secret": fabric_secret,
+                        "client_root_key": client_root_key,
+                        "service_root_key": service_root_key,
+                    }
+                )
+            return candidates
+        if root_key_id == ROOT_KEY_SERVICE:
+            if service_root_key:
+                candidates.append(
+                    {
+                        "name": "service_root_key",
+                        "fabric_secret": fabric_secret,
+                        "client_root_key": client_root_key,
+                        "service_root_key": service_root_key,
+                    }
+                )
+            return candidates
+        return candidates
+
+    def _derive_passcode_keys(
+        self,
+        *,
+        app_keys_data: dict,
+        key_id: int,
+        nonce: int,
+        candidate: dict[str, bytes | str | None],
+    ) -> tuple[int, bytes, bytes, bytes]:
+        master_key = self._select_master_key(app_keys_data, key_id)
+        epoch_key, resolved_key_id = self._select_epoch_key(app_keys_data, key_id)
+        enc_key, auth_key, fingerprint_key = derive_passcode_config2_keys(
+            key_id=resolved_key_id,
+            nonce=nonce,
+            master_key=master_key,
+            epoch_key=epoch_key,
+            fabric_secret=candidate.get("fabric_secret"),
+            client_root_key=candidate.get("client_root_key"),
+            service_root_key=candidate.get("service_root_key"),
+        )
+        return resolved_key_id, enc_key, auth_key, fingerprint_key
+
+    def _material_matches_existing_encrypted_pincodes(
+        self,
+        device_id: str,
+        app_keys_data: dict,
+        candidate: dict[str, bytes | str | None],
+        expected_root_key_id: int | None = None,
+    ) -> bool:
+        samples = [
+            entry
+            for entry in self._collect_encrypted_pincode_metadata(device_id)
+            if int(entry.get("config", 0) or 0) == 2
+            and isinstance(entry.get("pincode_bytes"), (bytes, bytearray))
+        ]
+        if expected_root_key_id is not None:
+            samples = [
+                entry
+                for entry in samples
+                if get_root_key_id(int(entry.get("key_id", 0) or 0)) == expected_root_key_id
+            ]
+        if not samples:
+            return True
+
+        for sample in samples:
+            key_id = int(sample.get("key_id", 0) or 0)
+            nonce = int(sample.get("nonce", 0) or 0)
+            payload = sample.get("pincode_bytes")
+            if not isinstance(payload, (bytes, bytearray)):
+                continue
+            try:
+                _, enc_key, auth_key, fingerprint_key = self._derive_passcode_keys(
+                    app_keys_data=app_keys_data,
+                    key_id=key_id,
+                    nonce=nonce,
+                    candidate=candidate,
+                )
+                decrypt_passcode_config2(
+                    encrypted_passcode=bytes(payload),
+                    key_id=key_id,
+                    enc_key=enc_key,
+                    auth_key=auth_key,
+                    fingerprint_key=fingerprint_key,
+                )
+                return True
+            except (PasscodeCryptoError, RuntimeError, ValueError):
+                continue
+
+        return False
+
+    def _select_passcode_key_id(self, device_id: str, guest_user_id: str) -> int:
+        candidates = [
+            entry
+            for entry in self._collect_encrypted_pincode_metadata(device_id)
+            if int(entry.get("config", 0) or 0) == 2
+        ]
+        if not candidates:
+            raise RuntimeError(
+                "No encrypted pincode entries were found on this lock; cannot determine passcode key id"
+            )
+
+        for entry in candidates:
+            if entry.get("user_id") == guest_user_id:
+                return int(entry["key_id"])
+        return int(candidates[0]["key_id"])
+
+    @staticmethod
+    def _select_master_key(app_keys_data: dict, key_id: int) -> bytes:
+        master_keys = app_keys_data.get("master_keys", []) if isinstance(app_keys_data, dict) else []
+        group_short_id = get_app_group_local_number(key_id)
+        for entry in master_keys:
+            if not isinstance(entry, dict):
+                continue
+            if int(entry.get("application_group_short_id", -1)) != group_short_id:
+                continue
+            key_hex = entry.get("key_hex")
+            key_bytes = decode_hex_bytes(key_hex, expected_len=32)
+            if key_bytes:
+                return key_bytes
+        raise RuntimeError(
+            f"Application group short id {group_short_id} not found in ApplicationKeysTrait"
+        )
+
+    @staticmethod
+    def _select_epoch_key(app_keys_data: dict, key_id: int) -> tuple[bytes | None, int]:
+        if not is_app_rotating_key(key_id):
+            return None, key_id
+
+        epoch_keys = app_keys_data.get("epoch_keys", []) if isinstance(app_keys_data, dict) else []
+        if not isinstance(epoch_keys, list) or not epoch_keys:
+            raise RuntimeError("No epoch keys available for rotating passcode key id")
+
+        target_epoch = get_epoch_key_number(key_id)
+        if uses_current_epoch_key(key_id):
+            now = int(time.time())
+            active_entry = None
+            active_start = None
+            dict_entries = [entry for entry in epoch_keys if isinstance(entry, dict)]
+            if not dict_entries:
+                raise RuntimeError("No usable epoch key entries found")
+            for entry in epoch_keys:
+                if not isinstance(entry, dict):
+                    continue
+                start_time = entry.get("start_time")
+                if not isinstance(start_time, int):
+                    continue
+                if start_time > now:
+                    continue
+                if active_start is None or start_time > active_start:
+                    active_start = start_time
+                    active_entry = entry
+            if active_entry is None:
+                active_entry = min(dict_entries, key=lambda item: int(item.get("start_time", 0) or 0))
+            key_hex = active_entry.get("key_hex")
+            key_bytes = decode_hex_bytes(key_hex, expected_len=32)
+            if key_bytes:
+                resolved_key_id = update_epoch_key_id(
+                    key_id,
+                    int(active_entry.get("key_id", 0) or 0),
+                )
+                return key_bytes, resolved_key_id
+            raise RuntimeError("Active epoch key is missing valid key bytes")
+
+        for entry in epoch_keys:
+            if not isinstance(entry, dict):
+                continue
+            if int(entry.get("key_id", -1)) != target_epoch:
+                continue
+            key_hex = entry.get("key_hex")
+            key_bytes = decode_hex_bytes(key_hex, expected_len=32)
+            if key_bytes:
+                return key_bytes, key_id
+        raise RuntimeError(f"Epoch key id {target_epoch} not found in ApplicationKeysTrait")
+
+    def _generate_passcode_nonce(self, device_id: str, key_id: int) -> int:
+        used_nonces = {
+            int(entry.get("nonce", 0))
+            for entry in self._collect_encrypted_pincode_metadata(device_id)
+            if int(entry.get("key_id", -1)) == int(key_id)
+        }
+        for _ in range(64):
+            nonce = secrets.randbits(32)
+            if nonce not in used_nonces:
+                return nonce
+        raise RuntimeError("Could not generate a unique passcode nonce")
+
+    def _encrypt_guest_passcode(self, device_id: str, guest_user_id: str, passcode_text: str) -> bytes:
+        app_keys_data = self._get_application_keys_data(device_id)
+        if not app_keys_data:
+            raise RuntimeError(
+                "ApplicationKeysTrait data is not available for this lock. "
+                "Cannot derive encryption keys for passcode updates."
+            )
+
+        selected_key_id = self._select_passcode_key_id(device_id, guest_user_id)
+        try:
+            master_key = self._select_master_key(app_keys_data, selected_key_id)
+            epoch_key, resolved_key_id = self._select_epoch_key(app_keys_data, selected_key_id)
+        except PasscodeCryptoError as err:
+            raise RuntimeError(f"Invalid ApplicationKeysTrait payload: {err}") from err
+        nonce = self._generate_passcode_nonce(device_id, resolved_key_id)
+
+        fabric_secret = self._decode_env_key(_ENV_FABRIC_SECRET_HEX, 36)
+        client_root_key = self._decode_env_key(_ENV_CLIENT_ROOT_KEY_HEX, 32)
+        service_root_key = self._decode_env_key(_ENV_SERVICE_ROOT_KEY_HEX, 32)
+
+        root_key_id = get_root_key_id(resolved_key_id)
+        _LOGGER.debug(
+            (
+                "Preparing encrypted passcode for %s using selected_key_id=0x%08x "
+                "resolved_key_id=0x%08x root_key_id=0x%08x nonce=%d"
+            ),
+            device_id,
+            selected_key_id,
+            resolved_key_id,
+            root_key_id,
+            nonce,
+        )
+        material_candidates = self._passcode_material_candidates(
+            root_key_id,
+            fabric_secret=fabric_secret,
+            client_root_key=client_root_key,
+            service_root_key=service_root_key,
+        )
+        if not material_candidates:
+            if root_key_id == ROOT_KEY_CLIENT:
+                raise RuntimeError(
+                    "Missing client root key material. Set "
+                    f"{_ENV_CLIENT_ROOT_KEY_HEX} (32-byte hex) or {_ENV_FABRIC_SECRET_HEX} (36-byte hex)."
+                )
+            if root_key_id == ROOT_KEY_FABRIC:
+                raise RuntimeError(
+                    f"Missing fabric secret. Set {_ENV_FABRIC_SECRET_HEX} (36-byte hex)."
+                )
+            if root_key_id == ROOT_KEY_SERVICE:
+                raise RuntimeError(
+                    f"Missing service root key. Set {_ENV_SERVICE_ROOT_KEY_HEX} (32-byte hex)."
+                )
+            raise RuntimeError(f"Unsupported passcode root key id: 0x{root_key_id:08x}")
+
+        had_validation_samples = bool(
+            [
+                entry
+                for entry in self._collect_encrypted_pincode_metadata(device_id)
+                if int(entry.get("config", 0) or 0) == 2
+                and isinstance(entry.get("pincode_bytes"), (bytes, bytearray))
+            ]
+        )
+
+        last_crypto_error: PasscodeCryptoError | None = None
+        for candidate in material_candidates:
+            if had_validation_samples and not self._material_matches_existing_encrypted_pincodes(
+                device_id,
+                app_keys_data,
+                candidate,
+                expected_root_key_id=root_key_id,
+            ):
+                _LOGGER.debug(
+                    "Passcode root material candidate %s rejected for %s (validation mismatch)",
+                    candidate.get("name"),
+                    device_id,
+                )
+                continue
+            try:
+                enc_key, auth_key, fingerprint_key = derive_passcode_config2_keys(
+                    key_id=resolved_key_id,
+                    nonce=nonce,
+                    master_key=master_key,
+                    epoch_key=epoch_key,
+                    fabric_secret=candidate.get("fabric_secret"),
+                    client_root_key=candidate.get("client_root_key"),
+                    service_root_key=candidate.get("service_root_key"),
+                )
+            except PasscodeCryptoError as err:
+                last_crypto_error = err
+                continue
+
+            _LOGGER.debug(
+                "Using passcode root material source %s for %s",
+                candidate.get("name"),
+                device_id,
+            )
+            return encrypt_passcode_config2(
+                passcode=passcode_text,
+                key_id=resolved_key_id,
+                nonce=nonce,
+                enc_key=enc_key,
+                auth_key=auth_key,
+                fingerprint_key=fingerprint_key,
+            )
+
+        if had_validation_samples:
+            raise RuntimeError(
+                "Configured passcode key material does not match this lock's existing encrypted pincodes. "
+                "Set valid key material and retry."
+            )
+        if last_crypto_error is not None:
+            raise RuntimeError(f"Failed to encrypt passcode: {last_crypto_error}") from last_crypto_error
+        raise RuntimeError("Failed to derive passcode encryption keys")
+
     async def set_guest_passcode(
         self,
         device_id: str,
@@ -1229,24 +1653,29 @@ class NestAPIClient:
         passcode_text = passcode.strip()
         if not passcode_text.isdigit():
             raise ValueError("passcode must contain digits only")
+
+        encrypted_passcode = self._encrypt_guest_passcode(
+            device_id,
+            guest_user_id.strip(),
+            passcode_text,
+        )
         request = weave_security_pb2.UserPincodesSettingsTrait.SetUserPincodeRequest()
         request.userPincode.userId.resourceId = guest_user_id.strip()
-        request.userPincode.pincode = passcode_text.encode("utf-8")
+        request.userPincode.pincode = encrypted_passcode
         request.userPincode.pincodeCredentialEnabled.value = bool(enabled)
 
-        command_base = {
-            "command": {
-                "type_url": "type.nestlabs.com/weave.trait.security.UserPincodesSettingsTrait.SetUserPincodeRequest",
-                "value": request.SerializeToString(),
-            },
-        }
+        request_bytes = request.SerializeToString()
+        command_type_urls = [
+            "type.nestlabs.com/weave.trait.security.UserPincodesSettingsTrait.SetUserPincodeRequest",
+            "type.googleapis.com/weave.trait.security.UserPincodesSettingsTrait.SetUserPincodeRequest",
+        ]
 
-        attempts: list[tuple[str, str | None, str]] = []
-        attempts.append((device_id, self._user_pincodes_trait_label(device_id), "device"))
+        target_attempts: list[tuple[str, str | None, str]] = []
+        target_attempts.append((device_id, self._user_pincodes_trait_label(device_id), "device"))
 
         structure_resource_id = self._structure_resource_id()
         if structure_resource_id and structure_resource_id != device_id:
-            attempts.append(
+            target_attempts.append(
                 (
                     structure_resource_id,
                     self._structure_user_pincodes_trait_label(),
@@ -1254,17 +1683,37 @@ class NestAPIClient:
                 )
             )
 
+        attempts: list[tuple[str, str | None, str, str]] = []
+        seen_attempts: set[tuple[str, str | None, str]] = set()
+        for target_resource_id, trait_label, scope in target_attempts:
+            trait_label_options = [trait_label, None] if trait_label else [None]
+            for label_option in trait_label_options:
+                for type_url in command_type_urls:
+                    dedupe_key = (target_resource_id, label_option, type_url)
+                    if dedupe_key in seen_attempts:
+                        continue
+                    seen_attempts.add(dedupe_key)
+                    attempts.append((target_resource_id, label_option, scope, type_url))
+
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            attempt_targets = [f"{target}:{scope}" for target, _, scope in attempts]
+            attempt_targets = [
+                f"{target}:{scope}:{'label' if label else 'no-label'}:{type_url}"
+                for target, label, scope, type_url in attempts
+            ]
             _LOGGER.debug(
-                "Sending guest passcode update for %s via targets=%s",
+                "Sending guest passcode update for %s via attempts=%s",
                 device_id,
                 attempt_targets,
             )
 
         last_error: Exception | None = None
-        for target_resource_id, trait_label, scope in attempts:
-            cmd_any = dict(command_base)
+        for target_resource_id, trait_label, scope, type_url in attempts:
+            cmd_any = {
+                "command": {
+                    "type_url": type_url,
+                    "value": request_bytes,
+                },
+            }
             if trait_label:
                 cmd_any["traitLabel"] = trait_label
 
@@ -1278,9 +1727,14 @@ class NestAPIClient:
                 last_error = err
                 if self._is_passcode_target_rejection(err):
                     _LOGGER.warning(
-                        "Guest passcode update failed via %s target %s; trying next target if available: %s",
+                        (
+                            "Guest passcode update failed via %s target %s "
+                            "(trait_label=%s, type_url=%s); trying next variant if available: %s"
+                        ),
                         scope,
                         target_resource_id,
+                        trait_label,
+                        type_url,
                         err,
                     )
                     continue
@@ -1288,7 +1742,7 @@ class NestAPIClient:
 
         if last_error:
             raise RuntimeError(
-                "Passcode update rejected by Nest after trying device and structure targets. "
+                "Passcode update rejected by Nest after trying all command target/type variants. "
                 "This lock/account likely requires encrypted pincode payloads that are not available from this session. "
                 "Update the passcode in the Nest app."
             ) from last_error
@@ -1834,12 +2288,12 @@ class NestAPIClient:
                         saw_trait_status = True
                         status = getattr(operation, "status", None)
                         if status and getattr(status, "code", 0) not in (0, None):
-                            return int(status.code), getattr(status, "message", None)
+                            return int(status.code), self._status_message_with_details(status)
                 if saw_trait_status:
                     return 0, None
                 status = getattr(resp, "status", None)
                 if status and getattr(status, "code", 0) not in (0, None):
-                    return int(status.code), getattr(status, "message", None)
+                    return int(status.code), self._status_message_with_details(status)
                 return 0, None
         except Exception:
             pass
@@ -1855,10 +2309,10 @@ class NestAPIClient:
                         saw_trait_status = True
                         status = getattr(operation, "status", None)
                         if status and getattr(status, "code", 0) not in (0, None):
-                            return int(status.code), getattr(status, "message", None)
+                            return int(status.code), self._status_message_with_details(status)
                 status = getattr(resp, "status", None)
                 if status and getattr(status, "code", 0) not in (0, None):
-                    return int(status.code), getattr(status, "message", None)
+                    return int(status.code), self._status_message_with_details(status)
                 if saw_trait_status:
                     return 0, None
                 return 0, None
@@ -1866,6 +2320,53 @@ class NestAPIClient:
             pass
 
         return None, None
+
+    @staticmethod
+    def _status_message_with_details(status) -> str | None:
+        if not status:
+            return None
+        base_message = getattr(status, "message", None)
+        details_text: list[str] = []
+        for detail in getattr(status, "details", []):
+            type_url = getattr(detail, "type_url", "") or ""
+            raw_value = getattr(detail, "value", b"")
+            if not raw_value:
+                continue
+            try:
+                if type_url.endswith("/nestlabs.gateway.v1.WeaveStatusReport"):
+                    report = v1_pb2.WeaveStatusReport()
+                    report.ParseFromString(raw_value)
+                    details_text.append(
+                        f"WeaveStatusReport(profile_id={report.profileId}, status_code={report.statusCode})"
+                    )
+                    continue
+                if type_url.endswith(
+                    "/weave.trait.security.UserPincodesSettingsTrait.SetUserPincodeResponse"
+                ):
+                    response = (
+                        weave_security_pb2.UserPincodesSettingsTrait.SetUserPincodeResponse()
+                    )
+                    response.ParseFromString(raw_value)
+                    status_code = int(getattr(response, "status", 0) or 0)
+                    try:
+                        status_name = (
+                            weave_security_pb2.UserPincodesSettingsTrait.PincodeErrorCodes.Name(
+                                status_code
+                            )
+                        )
+                    except Exception:
+                        status_name = str(status_code)
+                    details_text.append(f"SetUserPincodeResponse(status={status_name})")
+                    continue
+            except Exception:
+                continue
+
+        if details_text:
+            suffix = "; ".join(details_text)
+            if base_message:
+                return f"{base_message} ({suffix})"
+            return suffix
+        return base_message
 
     @staticmethod
     def _format_command_error_message(

@@ -9,6 +9,7 @@ from .proto.nest.trait import structure_pb2 as nest_structure_pb2
 from .proto.nest.trait import security_pb2 as nest_security_pb2
 from .proto.nest.trait import located_pb2 as nest_located_pb2
 from .proto.nest import rpc_pb2 as rpc_pb2
+from .passcode_crypto import parse_application_keys_trait
 _LOGGER = logging.getLogger(__name__)
 
 # Import HomeKit trait decoders
@@ -28,6 +29,7 @@ _LOCK_TRAIT_HINTS = (
     "BoltLockCapabilitiesTrait",
     "TamperTrait",
     "PincodeInputTrait",
+    "ApplicationKeysTrait",
 )
 
 _NEST_TYPE_PREFIX = "type.nestlabs.com/"
@@ -350,6 +352,7 @@ class NestProtobufHandler:
                 if (
                     descriptor != "weave.trait.description.LabelSettingsTrait"
                     and descriptor != "nest.trait.located.CustomLocatedAnnotationsTrait"
+                    and descriptor != "weave.trait.auth.ApplicationKeysTrait"
                     and descriptor not in _V2_TRAIT_CLASS_MAP
                 ):
                     continue
@@ -1126,6 +1129,42 @@ class NestProtobufHandler:
                             fixture_map.update(fixtures)
                         if wheres:
                             custom_where_map.update(wheres)
+                    continue
+
+                if descriptor_name == "weave.trait.auth.ApplicationKeysTrait":
+                    if _is_device_lock_id(obj_id):
+                        lock_device_ids.add(obj_id)
+                    decoded_keys = None
+                    decoded_type_url = ""
+                    for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
+                        any_msg = entry.get("any_msg")
+                        if not any_msg or not any_msg.value:
+                            continue
+                        candidate = parse_application_keys_trait(any_msg.value)
+                        if not candidate:
+                            continue
+                        if candidate.get("epoch_keys") or candidate.get("master_keys"):
+                            decoded_keys = candidate
+                            decoded_type_url = any_msg.type_url or entry.get("type_url") or ""
+                            break
+                    if decoded_keys is not None:
+                        type_url = (
+                            decoded_type_url
+                            or "type.googleapis.com/weave.trait.auth.ApplicationKeysTrait"
+                        )
+                        trait_key = f"{obj_id}:{type_url}"
+                        all_traits[trait_key] = {
+                            "object_id": obj_id,
+                            "type_url": type_url,
+                            "decoded": True,
+                            "data": decoded_keys,
+                        }
+                        _LOGGER.debug(
+                            "Decoded ApplicationKeysTrait for %s: master_keys=%d epoch_keys=%d",
+                            obj_id,
+                            len(decoded_keys.get("master_keys", [])),
+                            len(decoded_keys.get("epoch_keys", [])),
+                        )
                     continue
 
                 trait_cls = _V2_TRAIT_CLASS_MAP.get(descriptor_name)
