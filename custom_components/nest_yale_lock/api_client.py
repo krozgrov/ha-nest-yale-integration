@@ -19,6 +19,7 @@ from .const import (
     API_GOOGLE_REAUTH_MINUTES,
     OBSERVE_IDLE_RESET_SECONDS,
     CONNECT_FAILURE_RESET_THRESHOLD,
+    GRPC_CODE_INVALID_ARGUMENT,
     GRPC_CODE_INTERNAL,
     API_TIMEOUT_SECONDS,
 )
@@ -1206,6 +1207,12 @@ class NestAPIClient:
         message = str(err)
         return f"(code {code})" in message or f"code={code}" in message
 
+    @classmethod
+    def _is_passcode_target_rejection(cls, err: Exception) -> bool:
+        return cls._is_grpc_status_error(err, GRPC_CODE_INTERNAL) or cls._is_grpc_status_error(
+            err, GRPC_CODE_INVALID_ARGUMENT
+        )
+
     async def set_guest_passcode(
         self,
         device_id: str,
@@ -1269,7 +1276,7 @@ class NestAPIClient:
                 )
             except (RuntimeError, ValueError) as err:
                 last_error = err
-                if self._is_grpc_status_error(err, GRPC_CODE_INTERNAL):
+                if self._is_passcode_target_rejection(err):
                     _LOGGER.warning(
                         "Guest passcode update failed via %s target %s; trying next target if available: %s",
                         scope,
@@ -1282,7 +1289,8 @@ class NestAPIClient:
         if last_error:
             raise RuntimeError(
                 "Passcode update rejected by Nest after trying device and structure targets. "
-                "This lock/account likely requires encrypted pincode payloads that are not available from this session."
+                "This lock/account likely requires encrypted pincode payloads that are not available from this session. "
+                "Update the passcode in the Nest app."
             ) from last_error
         raise RuntimeError("Passcode update failed before command dispatch")
 
@@ -1868,8 +1876,9 @@ class NestAPIClient:
         msg = (status_msg or "").strip()
         if msg:
             return msg
-        if status_code == GRPC_CODE_INTERNAL and command_type_url and command_type_url.endswith("SetUserPincodeRequest"):
-            return "Passcode update rejected by Nest for this target."
+        if command_type_url and command_type_url.endswith("SetUserPincodeRequest"):
+            if status_code in (GRPC_CODE_INTERNAL, GRPC_CODE_INVALID_ARGUMENT):
+                return "Passcode update rejected by Nest for this target."
         return "Unknown error"
 
     def _log_batch_update_details(self, response_data: bytes) -> None:

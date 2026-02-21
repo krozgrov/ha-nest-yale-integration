@@ -88,6 +88,7 @@ UPDATE_INTERVAL_SECONDS = timedelta(minutes=10)  # Use timedelta for DataUpdateC
 # gRPC Error Codes (from google.rpc.Code)
 # See: https://grpc.io/docs/guides/status-codes/
 GRPC_CODE_OK = 0
+GRPC_CODE_INVALID_ARGUMENT = 3  # "Request contains an invalid argument"
 GRPC_CODE_INTERNAL = 13  # "Internal error encountered" - often means lock is unreachable
 
 def parse_cookies(cookie_string):

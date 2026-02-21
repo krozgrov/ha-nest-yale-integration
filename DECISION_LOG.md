@@ -6,6 +6,23 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-02-21: Normalize passcode command rejections into a single user-facing error
+Why
+- Passcode update fallback logic now tries both device and structure targets.
+- Some accounts return mixed gRPC codes (`13` on device, `3` on structure), which exposed low-level errors in Home Assistant actions.
+
+Decision
+- Treat both `INTERNAL` (`13`) and `INVALID_ARGUMENT` (`3`) as passcode target rejections for `SetUserPincodeRequest`.
+- Continue attempting all available passcode command targets.
+- If all targets reject, raise one clear final error instructing users to update passcodes in the Nest app.
+
+Impact
+- Better UX in HA action results: fewer raw gRPC internals, clearer guidance.
+- No behavior change for successful passcode updates.
+
+Validation
+- `python -m py_compile custom_components/nest_yale_lock/api_client.py`
+
 ### 2026-02-21: Try both Nest user-pincode command targets before declaring passcode failure
 Why
 - Passcode updates were failing with gRPC `code=13` when sent only to the lock device resource.
