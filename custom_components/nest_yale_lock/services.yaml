@@ -11,7 +11,7 @@ reset_connection:
 
 set_guest_passcode:
   name: Set Guest Passcode
-  description: Set or update a guest passcode using either a guest user id or an existing slot number on a Nest x Yale lock.
+  description: Not supported yet for Nest x Yale. Nest requires encrypted pincode payloads, so this action currently returns a clear error and does not change passcodes.
   fields:
     entry_id:
       name: Entry ID

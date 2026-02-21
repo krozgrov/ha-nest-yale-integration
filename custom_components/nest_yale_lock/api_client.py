@@ -1187,22 +1187,13 @@ class NestAPIClient:
         if not passcode_text.isdigit():
             raise ValueError("passcode must contain digits only")
 
-        request = weave_security_pb2.UserPincodesSettingsTrait.SetUserPincodeRequest()
-        request.userPincode.userId.resourceId = guest_user_id.strip()
-        request.userPincode.pincode = passcode_text.encode("utf-8")
-        request.userPincode.pincodeCredentialEnabled.value = bool(enabled)
-
-        cmd_any = {
-            "command": {
-                "type_url": "type.nestlabs.com/weave.trait.security.UserPincodesSettingsTrait.SetUserPincodeRequest",
-                "value": request.SerializeToString(),
-            },
-        }
-        trait_label = self._user_pincodes_trait_label(device_id)
-        if trait_label:
-            cmd_any["traitLabel"] = trait_label
-        _LOGGER.info("Sending guest passcode update for device %s", device_id)
-        return await self.send_command(cmd_any, device_id, structure_id=self._structure_id)
+        # Nest rejects plaintext pincode values for this command; the payload
+        # must be encrypted. Until encryption support is implemented, fail fast
+        # with a clear local error instead of triggering remote retries.
+        raise ValueError(
+            "Setting/updating passcodes from Home Assistant is not supported yet. "
+            "Nest requires encrypted pincode payloads. Use the Nest app to set the passcode."
+        )
 
     async def delete_guest_passcode(self, device_id: str, guest_user_id: str):
         """Delete a guest passcode for a given guest user resource id."""
