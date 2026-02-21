@@ -403,3 +403,4 @@ Validation
 - 2026-02-14: Preserve literal trait-provided `fixture_label` as primary `door_label`, and only use annotation-id lookup as fallback (with fixture-map lookup last) to avoid stale/custom mapping precedence over current app values.
 - 2026-02-14: Treat partial varints in observe stream framing as normal chunk-boundary behavior and stop logging them per-chunk at DEBUG to reduce noise; keep only true varint errors.
 - 2026-02-15: Allow post-pass annotation-ID resolution to overwrite stale early `where_label`/`door_label` values when annotation catalogs arrive later in the same observe batch, preventing lock labels from sticking to another device's earlier location text.
+- 2026-02-21: Added passcode key-material auto-discovery from `ApplicationKeysTrait` payloads (32-byte/36-byte candidates) and automatic candidate retries before requiring explicit root-key env vars.

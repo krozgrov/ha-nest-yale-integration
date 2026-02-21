@@ -1250,6 +1250,33 @@ class NestAPIClient:
         except PasscodeCryptoError as err:
             raise RuntimeError(f"Invalid {name}: {err}") from err
 
+    @staticmethod
+    def _decode_app_keys_candidates(
+        app_keys_data: dict,
+        *,
+        field_name: str,
+        expected_len: int,
+    ) -> list[bytes]:
+        entries = app_keys_data.get(field_name, []) if isinstance(app_keys_data, dict) else []
+        if not isinstance(entries, list):
+            return []
+
+        candidates: list[bytes] = []
+        seen: set[bytes] = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            key_hex = entry.get("key_hex")
+            try:
+                key_bytes = decode_hex_bytes(key_hex, expected_len=expected_len)
+            except PasscodeCryptoError:
+                continue
+            if not key_bytes or key_bytes in seen:
+                continue
+            seen.add(key_bytes)
+            candidates.append(key_bytes)
+        return candidates
+
     def _get_application_keys_data(self, device_id: str) -> dict | None:
         all_traits = self.current_state.get("all_traits", {})
         if not isinstance(all_traits, dict):
@@ -1357,6 +1384,99 @@ class NestAPIClient:
                 )
             return candidates
         return candidates
+
+    @staticmethod
+    def _merge_passcode_material_candidates(
+        first: list[dict[str, bytes | str | None]],
+        second: list[dict[str, bytes | str | None]],
+    ) -> list[dict[str, bytes | str | None]]:
+        def _normalize_bytes(value):
+            if isinstance(value, bytes):
+                return value
+            if isinstance(value, bytearray):
+                return bytes(value)
+            return None
+
+        merged: list[dict[str, bytes | str | None]] = []
+        seen: set[tuple[bytes | None, bytes | None, bytes | None]] = set()
+        for candidate in [*first, *second]:
+            signature = (
+                _normalize_bytes(candidate.get("fabric_secret")),
+                _normalize_bytes(candidate.get("client_root_key")),
+                _normalize_bytes(candidate.get("service_root_key")),
+            )
+            if signature in seen:
+                continue
+            seen.add(signature)
+            merged.append(candidate)
+        return merged
+
+    def _auto_passcode_material_candidates(
+        self,
+        *,
+        app_keys_data: dict,
+        root_key_id: int,
+        service_root_key: bytes | None,
+    ) -> list[dict[str, bytes | str | None]]:
+        """Build root-key candidates discovered from ApplicationKeysTrait payloads."""
+        candidate_keys_32 = self._decode_app_keys_candidates(
+            app_keys_data, field_name="candidate_keys_32", expected_len=32
+        )
+        candidate_keys_36 = self._decode_app_keys_candidates(
+            app_keys_data, field_name="candidate_keys_36", expected_len=36
+        )
+        if not candidate_keys_32 and not candidate_keys_36:
+            return []
+
+        auto_candidates: list[dict[str, bytes | str | None]] = []
+        if root_key_id == ROOT_KEY_CLIENT:
+            for fabric_secret in candidate_keys_36:
+                auto_candidates.extend(
+                    self._passcode_material_candidates(
+                        root_key_id,
+                        fabric_secret=fabric_secret,
+                        client_root_key=None,
+                        service_root_key=service_root_key,
+                    )
+                )
+            for client_root_key in candidate_keys_32:
+                auto_candidates.extend(
+                    self._passcode_material_candidates(
+                        root_key_id,
+                        fabric_secret=None,
+                        client_root_key=client_root_key,
+                        service_root_key=service_root_key,
+                    )
+                )
+        elif root_key_id == ROOT_KEY_FABRIC:
+            for fabric_secret in candidate_keys_36:
+                auto_candidates.extend(
+                    self._passcode_material_candidates(
+                        root_key_id,
+                        fabric_secret=fabric_secret,
+                        client_root_key=None,
+                        service_root_key=service_root_key,
+                    )
+                )
+        elif root_key_id == ROOT_KEY_SERVICE:
+            for service_key in candidate_keys_32:
+                auto_candidates.extend(
+                    self._passcode_material_candidates(
+                        root_key_id,
+                        fabric_secret=None,
+                        client_root_key=None,
+                        service_root_key=service_key,
+                    )
+                )
+
+        if auto_candidates:
+            _LOGGER.debug(
+                "Discovered %d auto passcode key candidates from ApplicationKeysTrait (32-byte=%d, 36-byte=%d)",
+                len(auto_candidates),
+                len(candidate_keys_32),
+                len(candidate_keys_36),
+            )
+        return auto_candidates
 
     def _derive_passcode_keys(
         self,
@@ -1561,19 +1681,30 @@ class NestAPIClient:
             client_root_key=client_root_key,
             service_root_key=service_root_key,
         )
+        material_candidates = self._merge_passcode_material_candidates(
+            material_candidates,
+            self._auto_passcode_material_candidates(
+                app_keys_data=app_keys_data,
+                root_key_id=root_key_id,
+                service_root_key=service_root_key,
+            ),
+        )
         if not material_candidates:
             if root_key_id == ROOT_KEY_CLIENT:
                 raise RuntimeError(
                     "Missing client root key material. Set "
-                    f"{_ENV_CLIENT_ROOT_KEY_HEX} (32-byte hex) or {_ENV_FABRIC_SECRET_HEX} (36-byte hex)."
+                    f"{_ENV_CLIENT_ROOT_KEY_HEX} (32-byte hex) or {_ENV_FABRIC_SECRET_HEX} (36-byte hex). "
+                    "No usable key material was discovered in ApplicationKeysTrait."
                 )
             if root_key_id == ROOT_KEY_FABRIC:
                 raise RuntimeError(
-                    f"Missing fabric secret. Set {_ENV_FABRIC_SECRET_HEX} (36-byte hex)."
+                    f"Missing fabric secret. Set {_ENV_FABRIC_SECRET_HEX} (36-byte hex). "
+                    "No usable key material was discovered in ApplicationKeysTrait."
                 )
             if root_key_id == ROOT_KEY_SERVICE:
                 raise RuntimeError(
-                    f"Missing service root key. Set {_ENV_SERVICE_ROOT_KEY_HEX} (32-byte hex)."
+                    f"Missing service root key. Set {_ENV_SERVICE_ROOT_KEY_HEX} (32-byte hex). "
+                    "No usable key material was discovered in ApplicationKeysTrait."
                 )
             raise RuntimeError(f"Unsupported passcode root key id: 0x{root_key_id:08x}")
 
