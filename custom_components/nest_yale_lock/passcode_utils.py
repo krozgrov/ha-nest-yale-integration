@@ -116,10 +116,28 @@ def resolve_guest_user_id(
         if normalized:
             return normalized
 
-    if slot is None:
-        raise ValueError("Provide either guest_user_id or slot.")
-
     slots = extract_guest_user_slots(device_data)
+
+    if slot is None:
+        mapped_user_ids = sorted(
+            {
+                slot_info.get("user_id", "").strip()
+                for slot_info in slots.values()
+                if isinstance(slot_info.get("user_id"), str) and slot_info.get("user_id", "").strip()
+            }
+        )
+        if len(mapped_user_ids) == 1:
+            return mapped_user_ids[0]
+        if not mapped_user_ids:
+            raise ValueError(
+                "Provide guest_user_id or slot. "
+                "No mapped guest users are available yet."
+            )
+        raise ValueError(
+            "Provide slot or guest_user_id. "
+            "Multiple mapped guest users were found for this lock."
+        )
+
     slot_info = slots.get(slot)
     if not slot_info:
         raise ValueError(

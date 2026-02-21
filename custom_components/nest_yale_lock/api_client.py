@@ -918,7 +918,12 @@ class NestAPIClient:
                                 _LOGGER.debug("refresh_state after INTERNAL error failed: %s", err)
                             recovered = True
                             continue
-                        last_error = RuntimeError(f"Command failed (code {status_code}): {status_msg or 'Unknown error'}")
+                        error_msg = self._format_command_error_message(
+                            status_code,
+                            status_msg,
+                            command.get("command", {}).get("type_url"),
+                        )
+                        last_error = RuntimeError(f"Command failed (code {status_code}): {error_msg}")
                         break
 
                     _LOGGER.info(
@@ -1754,14 +1759,39 @@ class NestAPIClient:
             resp = v1_pb2.SendCommandResponse()
             resp.ParseFromString(response_data)
             if resp.ListFields():
+                saw_trait_status = False
+                for op_group in getattr(resp, "sendCommandResponse", []):
+                    for operation in getattr(op_group, "traitOperations", []):
+                        saw_trait_status = True
+                        status = getattr(operation, "status", None)
+                        if status and getattr(status, "code", 0) not in (0, None):
+                            return int(status.code), getattr(status, "message", None)
                 status = getattr(resp, "status", None)
                 if status and getattr(status, "code", 0) not in (0, None):
                     return int(status.code), getattr(status, "message", None)
+                if saw_trait_status:
+                    return 0, None
                 return 0, None
         except Exception:
             pass
 
         return None, None
+
+    @staticmethod
+    def _format_command_error_message(
+        status_code: int | None,
+        status_msg: str | None,
+        command_type_url: str | None,
+    ) -> str:
+        msg = (status_msg or "").strip()
+        if msg:
+            return msg
+        if status_code == GRPC_CODE_INTERNAL and command_type_url and command_type_url.endswith("SetUserPincodeRequest"):
+            return (
+                "Passcode update rejected by Nest. This command expects encrypted pincode bytes, "
+                "so plain numeric passcodes are not supported yet. Update the passcode in the Nest app."
+            )
+        return "Unknown error"
 
     def _log_batch_update_details(self, response_data: bytes) -> None:
         if not response_data:

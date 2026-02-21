@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import logging
 import asyncio
+import re
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers import config_validation as cv
@@ -37,6 +38,7 @@ from .passcode_utils import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_DEVICE_ID_PATTERN = re.compile(r"(DEVICE_[A-Za-z0-9]+)")
 
 # This integration is config-entry only (no YAML options)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -50,6 +52,7 @@ SERVICE_RESET_CONNECTION_SCHEMA = vol.Schema(
 SERVICE_SET_GUEST_PASSCODE_SCHEMA = vol.Schema(
     {
         vol.Optional("entry_id"): cv.string,
+        vol.Optional("entity_id"): vol.Any(cv.entity_id, [cv.entity_id]),
         vol.Optional("device_id"): cv.string,
         vol.Optional("guest_user_id"): cv.string,
         vol.Optional("slot"): vol.All(vol.Coerce(int), vol.Range(min=1)),
@@ -61,6 +64,7 @@ SERVICE_SET_GUEST_PASSCODE_SCHEMA = vol.Schema(
 SERVICE_DELETE_GUEST_PASSCODE_SCHEMA = vol.Schema(
     {
         vol.Optional("entry_id"): cv.string,
+        vol.Optional("entity_id"): vol.Any(cv.entity_id, [cv.entity_id]),
         vol.Optional("device_id"): cv.string,
         vol.Optional("guest_user_id"): cv.string,
         vol.Optional("slot"): vol.All(vol.Coerce(int), vol.Range(min=1)),
@@ -137,26 +141,67 @@ def _cleanup_non_device_registry_entries(hass: HomeAssistant, entry: ConfigEntry
 def _resolve_target_coordinators(
     hass: HomeAssistant,
     entry_id: str | None,
+    requested_entity_ids: list[str] | None = None,
 ) -> dict[str, NestCoordinator]:
     """Resolve coordinators for an optional entry id filter."""
     coordinators = _active_coordinators(hass)
     if not coordinators:
         raise HomeAssistantError("No active Nest Yale config entries found.")
+
+    entity_entry_ids = _resolve_entity_entry_ids(hass, requested_entity_ids)
     if entry_id:
         coordinator = coordinators.get(entry_id)
         if coordinator is None:
             raise HomeAssistantError(f"Entry id '{entry_id}' is not active.")
+        if entity_entry_ids and entry_id not in entity_entry_ids:
+            raise HomeAssistantError(
+                "Selected entity_id does not belong to the requested entry_id."
+            )
         return {entry_id: coordinator}
+
+    if entity_entry_ids:
+        active_entry_ids = set(coordinators)
+        missing_entry_ids = entity_entry_ids - active_entry_ids
+        if missing_entry_ids:
+            raise HomeAssistantError(
+                "One or more selected entities do not belong to an active Nest Yale config entry."
+            )
+        filtered = {
+            candidate_entry_id: coordinator
+            for candidate_entry_id, coordinator in coordinators.items()
+            if candidate_entry_id in entity_entry_ids
+        }
+        if not filtered:
+            raise HomeAssistantError(
+                "Selected entity_id does not belong to an active Nest Yale config entry."
+            )
+        return filtered
     return coordinators
 
 
 def _resolve_target_device_ids(
+    hass: HomeAssistant,
     coordinator: NestCoordinator,
     requested_device_id: str | None,
+    requested_entity_ids: list[str] | None = None,
 ) -> list[str]:
     """Resolve device ids for a coordinator and optional device filter."""
     data = coordinator.data if isinstance(coordinator.data, dict) else {}
     lock_ids = [device_id for device_id, device in data.items() if isinstance(device, dict)]
+
+    resolved_by_entity = _resolve_device_ids_from_entities(
+        hass,
+        coordinator,
+        requested_entity_ids,
+        lock_ids,
+    )
+    if requested_device_id and resolved_by_entity and requested_device_id not in resolved_by_entity:
+        raise HomeAssistantError(
+            "device_id and entity_id target different locks. Use one targeting method."
+        )
+    if resolved_by_entity:
+        return resolved_by_entity
+
     if requested_device_id:
         if requested_device_id not in lock_ids:
             raise HomeAssistantError(
@@ -168,8 +213,104 @@ def _resolve_target_device_ids(
     if not lock_ids:
         raise HomeAssistantError("No lock devices are available yet; wait for initial sync.")
     raise HomeAssistantError(
-        "Multiple lock devices found. Provide device_id to target a specific lock."
+        "Multiple lock devices found. Provide entity_id or device_id to target a specific lock."
     )
+
+
+def _normalize_requested_entity_ids(raw_entity_id: object) -> list[str]:
+    """Normalize entity_id service input to a list."""
+    if raw_entity_id is None:
+        return []
+    if isinstance(raw_entity_id, str):
+        value = raw_entity_id.strip()
+        return [value] if value else []
+    if isinstance(raw_entity_id, (list, tuple, set)):
+        normalized: list[str] = []
+        for item in raw_entity_id:
+            if not isinstance(item, str):
+                continue
+            value = item.strip()
+            if value and value not in normalized:
+                normalized.append(value)
+        return normalized
+    return []
+
+
+def _resolve_entity_entry_ids(
+    hass: HomeAssistant,
+    requested_entity_ids: list[str] | None,
+) -> set[str]:
+    """Resolve config-entry ids from requested entity ids."""
+    if not requested_entity_ids:
+        return set()
+
+    entity_registry = er.async_get(hass)
+    resolved_entry_ids: set[str] = set()
+    for entity_id in requested_entity_ids:
+        entity_entry = entity_registry.async_get(entity_id)
+        if entity_entry is None:
+            raise HomeAssistantError(f"Entity '{entity_id}' was not found.")
+        if not entity_entry.config_entry_id:
+            raise HomeAssistantError(
+                f"Entity '{entity_id}' is not associated with a config entry."
+            )
+        resolved_entry_ids.add(entity_entry.config_entry_id)
+    return resolved_entry_ids
+
+
+def _extract_device_id_from_unique_id(unique_id: str | None) -> str | None:
+    """Extract DEVICE_* token from an entity unique_id."""
+    if not isinstance(unique_id, str):
+        return None
+    match = _DEVICE_ID_PATTERN.search(unique_id)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _resolve_device_ids_from_entities(
+    hass: HomeAssistant,
+    coordinator: NestCoordinator,
+    requested_entity_ids: list[str] | None,
+    lock_ids: list[str],
+) -> list[str]:
+    """Resolve lock device ids from selected entity ids."""
+    if not requested_entity_ids:
+        return []
+
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+    resolved_ids: list[str] = []
+    for entity_id in requested_entity_ids:
+        entity_entry = entity_registry.async_get(entity_id)
+        if entity_entry is None:
+            raise HomeAssistantError(f"Entity '{entity_id}' was not found.")
+
+        if entity_entry.config_entry_id != coordinator.entry_id:
+            # Ignore entities from other entries; coordinator filtering happens at the entry layer.
+            continue
+
+        resolved_device_id = _extract_device_id_from_unique_id(entity_entry.unique_id)
+        if not resolved_device_id and entity_entry.device_id:
+            device_entry = device_registry.async_get(entity_entry.device_id)
+            if device_entry:
+                for domain, identifier in device_entry.identifiers:
+                    if domain == DOMAIN and isinstance(identifier, str) and identifier.startswith("DEVICE_"):
+                        resolved_device_id = identifier
+                        break
+
+        if not resolved_device_id:
+            raise HomeAssistantError(
+                f"Entity '{entity_id}' does not map to a Nest Yale lock device id."
+            )
+        if resolved_device_id not in lock_ids:
+            raise HomeAssistantError(
+                f"Entity '{entity_id}' maps to '{resolved_device_id}', which is not currently available."
+            )
+        if resolved_device_id not in resolved_ids:
+            resolved_ids.append(resolved_device_id)
+
+    return resolved_ids
 
 
 def _passcode_limits(device_data: dict | None) -> tuple[int, int]:
@@ -238,14 +379,22 @@ def _register_services(hass: HomeAssistant) -> None:
 
     async def handle_set_guest_passcode(call: ServiceCall) -> None:
         entry_id = call.data.get("entry_id")
+        requested_entity_ids = _normalize_requested_entity_ids(call.data.get("entity_id"))
         requested_device_id = call.data.get("device_id")
         guest_user_id = call.data.get("guest_user_id")
         slot = call.data.get("slot")
         passcode = call.data["passcode"].strip()
         enabled = bool(call.data["enabled"])
-        coordinators = _resolve_target_coordinators(hass, entry_id)
+        coordinators = _resolve_target_coordinators(hass, entry_id, requested_entity_ids)
         for _, coordinator in coordinators.items():
-            target_ids = _resolve_target_device_ids(coordinator, requested_device_id)
+            target_ids = _resolve_target_device_ids(
+                hass,
+                coordinator,
+                requested_device_id,
+                requested_entity_ids,
+            )
+            if not target_ids:
+                continue
             for device_id in target_ids:
                 device_data = coordinator.data.get(device_id) if isinstance(coordinator.data, dict) else None
                 _validate_guest_slot(slot, device_data)
@@ -258,18 +407,26 @@ def _register_services(hass: HomeAssistant) -> None:
                         passcode,
                         enabled=enabled,
                     )
-                except ValueError as err:
+                except (ValueError, RuntimeError) as err:
                     raise HomeAssistantError(str(err)) from err
             await coordinator.async_refresh()
 
     async def handle_delete_guest_passcode(call: ServiceCall) -> None:
         entry_id = call.data.get("entry_id")
+        requested_entity_ids = _normalize_requested_entity_ids(call.data.get("entity_id"))
         requested_device_id = call.data.get("device_id")
         guest_user_id = call.data.get("guest_user_id")
         slot = call.data.get("slot")
-        coordinators = _resolve_target_coordinators(hass, entry_id)
+        coordinators = _resolve_target_coordinators(hass, entry_id, requested_entity_ids)
         for _, coordinator in coordinators.items():
-            target_ids = _resolve_target_device_ids(coordinator, requested_device_id)
+            target_ids = _resolve_target_device_ids(
+                hass,
+                coordinator,
+                requested_device_id,
+                requested_entity_ids,
+            )
+            if not target_ids:
+                continue
             for device_id in target_ids:
                 device_data = coordinator.data.get(device_id) if isinstance(coordinator.data, dict) else None
                 _validate_guest_slot(slot, device_data)
@@ -279,7 +436,7 @@ def _register_services(hass: HomeAssistant) -> None:
                         device_id,
                         resolved_guest_user_id,
                     )
-                except ValueError as err:
+                except (ValueError, RuntimeError) as err:
                     raise HomeAssistantError(str(err)) from err
             await coordinator.async_refresh()
 

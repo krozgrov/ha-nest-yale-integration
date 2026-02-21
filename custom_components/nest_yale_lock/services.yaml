@@ -19,15 +19,22 @@ set_guest_passcode:
       example: "01ABCDEF1234567890"
       selector:
         text:
+    entity_id:
+      name: Lock Entity
+      description: Recommended. Select the lock entity to target; this auto-resolves the underlying Nest device id.
+      selector:
+        entity:
+          domain: lock
+          integration: nest_yale_lock
     device_id:
       name: Device ID
-      description: Optional lock device id. Required when multiple locks exist in the targeted entry.
+      description: Advanced fallback. Optional lock device id (DEVICE_*). Required only when you do not use lock entity selection.
       example: "DEVICE_1234567890"
       selector:
         text:
     guest_user_id:
       name: Guest User ID
-      description: Optional guest user resource id (for example, USER_1234567890123456). Provide this or slot.
+      description: Optional guest user resource id (for example, USER_1234567890123456). If omitted, slot is used. If omitted and only one mapped user exists, it is auto-selected.
       example: "USER_1234567890123456"
       selector:
         text:
@@ -65,15 +72,22 @@ delete_guest_passcode:
       example: "01ABCDEF1234567890"
       selector:
         text:
+    entity_id:
+      name: Lock Entity
+      description: Recommended. Select the lock entity to target; this auto-resolves the underlying Nest device id.
+      selector:
+        entity:
+          domain: lock
+          integration: nest_yale_lock
     device_id:
       name: Device ID
-      description: Optional lock device id. Required when multiple locks exist in the targeted entry.
+      description: Advanced fallback. Optional lock device id (DEVICE_*). Required only when you do not use lock entity selection.
       example: "DEVICE_1234567890"
       selector:
         text:
     guest_user_id:
       name: Guest User ID
-      description: Optional guest user resource id (for example, USER_1234567890123456). Provide this or slot.
+      description: Optional guest user resource id (for example, USER_1234567890123456). If omitted, slot is used. If omitted and only one mapped user exists, it is auto-selected.
       example: "USER_1234567890123456"
       selector:
         text:
