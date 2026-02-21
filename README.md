@@ -80,6 +80,64 @@ You can install the **Google Nest x Yale Lock** integration either via **HACS** 
 
 The integration will automatically reuse the same headers and protobuf payloads as the standalone test client.
 
+### Using A Google Account (Issue Token + Cookies)
+
+Google Accounts are fully supported and required for newer Nest device setups.
+
+Note:
+- Older guides may mention two Google auth methods (refresh token and cookies).
+- The refresh token method is no longer reliable due to Google-side changes (October 2022).
+- Use the cookies method only.
+
+Equivalent values in other tooling are often shown like:
+
+```json
+"platform": "Nest",
+"googleAuth": {
+  "issueToken": "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken...",
+  "cookies": "OCAK=...; SID=...; HSID=...; ...; SIDCC=..."
+}
+```
+
+In this Home Assistant integration, paste these into:
+- **Issue token URL**
+- **Cookies**
+
+You only need to collect these once, as long as you remain logged in and cookies stay valid.
+
+Important:
+- If you experience frequent disconnections after using an Incognito/Private window, try generating the token/cookies from a normal browser window instead.
+
+#### Chrome Steps
+
+1. Open a Chrome tab in Incognito Mode (or clear cache in a normal profile).
+2. Open Developer Tools (`View` -> `Developer` -> `Developer Tools`).
+3. Open the `Network` tab and enable `Preserve log`.
+4. In the Network filter, enter `issueToken`.
+5. Go to `home.nest.com`.
+6. If prompted, click the eye icon in the address bar and allow third-party cookies for the site.
+7. Click `Sign in with Google` and log in.
+8. Find the `iframerpc` network request.
+9. Open it and copy the full `Request URL` (starts with `https://accounts.google.com...`). This is your **Issue token URL**.
+10. Change the filter to `oauth2/iframe`.
+11. Open the latest `iframe` request.
+12. Under `Request Headers`, copy the full cookie header value (all key/value pairs; do not include the literal `cookie:` header name). This is your **Cookies** value.
+13. Do not sign out of `home.nest.com`; just close the tab.
+
+#### Safari Steps
+
+1. Open a Safari Private Browsing tab.
+2. Enable Developer tools if needed: `Safari` -> `Settings` -> `Advanced` -> `Show features for web developers`.
+3. Open Web Inspector (`Develop` -> `Show JavaScript Console`), then open `Network`.
+4. Enable `Preserve Log` (second filter icon near the `All` dropdown).
+5. In the filter box, enter `issueToken`.
+6. Go to `home.nest.com`, click `Sign in with Google`, and log in.
+7. Open the `iframerpc` request and copy the full URL from `Headers` -> `Summary`. This is your **Issue token URL**.
+8. Change the filter to `oauth2/iframe`.
+9. Open the latest `iframe` request.
+10. Under `Headers` -> `Request`, copy the full cookie header value (all key/value pairs; do not include the literal `cookie:` name). This is your **Cookies** value.
+11. Do not sign out of `home.nest.com`; just close the tab.
+
 ### Options (Optional)
 
 After setup, open the integration options to:
@@ -115,6 +173,8 @@ Notes:
 
 - Provide either `guest_user_id` or `slot` for set/delete actions.
 - You can discover known guest ids and slot mappings from lock attributes: `guest_user_ids` and `guest_users`.
+- The set action now tries both device-level and structure-level user pincode targets before failing.
+- Some lock/account combinations still reject plaintext passcode updates because Nest expects encrypted pincode payloads.
 - This integration updates/deletes passcodes for existing Nest guest identities; creating new guest identities still needs to be done in the Nest app.
 - Passcode data is never exposed as entity attributes; only non-sensitive capability/slot metadata is stored.
 

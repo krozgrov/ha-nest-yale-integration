@@ -1170,6 +1170,42 @@ class NestAPIClient:
             return label
         return None
 
+    def _structure_resource_id(self) -> str | None:
+        """Return the canonical STRUCTURE_* resource id when available."""
+        trait_labels = self.current_state.get("trait_labels", {})
+        if not isinstance(trait_labels, dict):
+            trait_labels = {}
+
+        structure_id = self._structure_id or self.current_state.get("structure_id")
+        if isinstance(structure_id, str) and structure_id:
+            candidate = f"STRUCTURE_{structure_id}"
+            if candidate in trait_labels:
+                return candidate
+            return candidate
+
+        for resource_id in trait_labels:
+            if isinstance(resource_id, str) and resource_id.startswith("STRUCTURE_"):
+                return resource_id
+        return None
+
+    def _structure_user_pincodes_trait_label(self) -> str | None:
+        """Resolve structure-level user_pincodes trait label, if present."""
+        structure_resource_id = self._structure_resource_id()
+        if not structure_resource_id:
+            return None
+        labels = self.current_state.get("trait_labels", {}).get(structure_resource_id, {})
+        if not isinstance(labels, dict):
+            return None
+        label = labels.get("weave.trait.security.UserPincodesSettingsTrait")
+        if isinstance(label, str) and label.strip():
+            return label
+        return None
+
+    @staticmethod
+    def _is_grpc_status_error(err: Exception, code: int) -> bool:
+        message = str(err)
+        return f"(code {code})" in message or f"code={code}" in message
+
     async def set_guest_passcode(
         self,
         device_id: str,
@@ -1186,14 +1222,69 @@ class NestAPIClient:
         passcode_text = passcode.strip()
         if not passcode_text.isdigit():
             raise ValueError("passcode must contain digits only")
+        request = weave_security_pb2.UserPincodesSettingsTrait.SetUserPincodeRequest()
+        request.userPincode.userId.resourceId = guest_user_id.strip()
+        request.userPincode.pincode = passcode_text.encode("utf-8")
+        request.userPincode.pincodeCredentialEnabled.value = bool(enabled)
 
-        # Nest rejects plaintext pincode values for this command; the payload
-        # must be encrypted. Until encryption support is implemented, fail fast
-        # with a clear local error instead of triggering remote retries.
-        raise ValueError(
-            "Setting/updating passcodes from Home Assistant is not supported yet. "
-            "Nest requires encrypted pincode payloads. Use the Nest app to set the passcode."
-        )
+        command_base = {
+            "command": {
+                "type_url": "type.nestlabs.com/weave.trait.security.UserPincodesSettingsTrait.SetUserPincodeRequest",
+                "value": request.SerializeToString(),
+            },
+        }
+
+        attempts: list[tuple[str, str | None, str]] = []
+        attempts.append((device_id, self._user_pincodes_trait_label(device_id), "device"))
+
+        structure_resource_id = self._structure_resource_id()
+        if structure_resource_id and structure_resource_id != device_id:
+            attempts.append(
+                (
+                    structure_resource_id,
+                    self._structure_user_pincodes_trait_label(),
+                    "structure",
+                )
+            )
+
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            attempt_targets = [f"{target}:{scope}" for target, _, scope in attempts]
+            _LOGGER.debug(
+                "Sending guest passcode update for %s via targets=%s",
+                device_id,
+                attempt_targets,
+            )
+
+        last_error: Exception | None = None
+        for target_resource_id, trait_label, scope in attempts:
+            cmd_any = dict(command_base)
+            if trait_label:
+                cmd_any["traitLabel"] = trait_label
+
+            try:
+                return await self.send_command(
+                    cmd_any,
+                    target_resource_id,
+                    structure_id=self._structure_id,
+                )
+            except (RuntimeError, ValueError) as err:
+                last_error = err
+                if self._is_grpc_status_error(err, GRPC_CODE_INTERNAL):
+                    _LOGGER.warning(
+                        "Guest passcode update failed via %s target %s; trying next target if available: %s",
+                        scope,
+                        target_resource_id,
+                        err,
+                    )
+                    continue
+                raise
+
+        if last_error:
+            raise RuntimeError(
+                "Passcode update rejected by Nest after trying device and structure targets. "
+                "This lock/account likely requires encrypted pincode payloads that are not available from this session."
+            ) from last_error
+        raise RuntimeError("Passcode update failed before command dispatch")
 
     async def delete_guest_passcode(self, device_id: str, guest_user_id: str):
         """Delete a guest passcode for a given guest user resource id."""
@@ -1778,10 +1869,7 @@ class NestAPIClient:
         if msg:
             return msg
         if status_code == GRPC_CODE_INTERNAL and command_type_url and command_type_url.endswith("SetUserPincodeRequest"):
-            return (
-                "Passcode update rejected by Nest. This command expects encrypted pincode bytes, "
-                "so plain numeric passcodes are not supported yet. Update the passcode in the Nest app."
-            )
+            return "Passcode update rejected by Nest for this target."
         return "Unknown error"
 
     def _log_batch_update_details(self, response_data: bytes) -> None:

@@ -6,6 +6,25 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-02-21: Try both Nest user-pincode command targets before declaring passcode failure
+Why
+- Passcode updates were failing with gRPC `code=13` when sent only to the lock device resource.
+- Observe data includes user-pincode traits on both lock and structure resources, so write-target mismatch was possible.
+
+Decision
+- Update `set_guest_passcode` command flow to try:
+  - device-level `UserPincodesSettingsTrait`
+  - structure-level `UserPincodesSettingsTrait` (when available)
+- Keep delete behavior unchanged.
+- If both targets reject the command, return a clear final error that encryption-dependent Nest behavior may still block plaintext passcode updates.
+
+Impact
+- Backward-compatible passcode write improvement with broader target coverage.
+- Better operator diagnostics when Nest rejects both command paths.
+
+Validation
+- `python -m py_compile custom_components/nest_yale_lock/api_client.py`
+
 ### 2026-02-20: Backfill companion fields after partial startup observe frames
 Why
 - After installing `2026.02.19b1` and rebooting Home Assistant, lock companion entities (auto-lock switch/select and tamper sensor) could remain unavailable until a manual integration reload.
