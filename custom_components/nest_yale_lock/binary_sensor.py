@@ -37,6 +37,8 @@ async def async_setup_entry(
         for device_id, device in data.items():
             if not isinstance(device, dict):
                 continue
+            if not coordinator.is_lock_device(device_id, device):
+                continue
             device.setdefault("device_id", device_id)
             uid = f"{DOMAIN}_tamper_{device_id}"
             if uid in added:

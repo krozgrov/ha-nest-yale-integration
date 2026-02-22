@@ -209,7 +209,9 @@ def parse_application_keys_trait(payload: bytes) -> dict[str, list[dict[str, int
         elif len(value) == 36:
             candidate_36.add(value.hex())
 
-    def _scan_length_delimited_keys(data: bytes) -> None:
+    def _scan_length_delimited_keys(data: bytes, depth: int) -> None:
+        if depth < 0:
+            return
         scan_pos = 0
         while scan_pos < len(data):
             scan_tag, scan_pos = _read_varint(data, scan_pos)
@@ -223,6 +225,8 @@ def parse_application_keys_trait(payload: bytes) -> dict[str, list[dict[str, int
             if scan_value is None:
                 break
             _record_candidate(scan_value)
+            if scan_value:
+                _scan_length_delimited_keys(scan_value, depth - 1)
 
     pos = 0
     while pos < len(payload):
@@ -241,15 +245,17 @@ def parse_application_keys_trait(payload: bytes) -> dict[str, list[dict[str, int
             entry = _decode_epoch_key(value)
             if entry:
                 decoded["epoch_keys"].append(entry)
+            _scan_length_delimited_keys(value, depth=5)
         elif field == 2:
             entry = _decode_master_key(value)
             if entry:
                 decoded["master_keys"].append(entry)
+            _scan_length_delimited_keys(value, depth=5)
         else:
             _record_candidate(value)
             # Some variants can wrap key bytes in an unknown nested message.
             if len(value) not in (32, 36):
-                _scan_length_delimited_keys(value)
+                _scan_length_delimited_keys(value, depth=5)
     if candidate_32:
         decoded["candidate_keys_32"] = [{"key_hex": key_hex} for key_hex in sorted(candidate_32)]
     if candidate_36:

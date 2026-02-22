@@ -175,3 +175,5 @@ Status updates
 - 2026-02-19: Added isolated passcode utility tests for slot resolution and validation errors; expanded README with direct UI action examples for `slot` and `guest_user_id` flows.
 - 2026-02-20: Added coordinator startup backfill refresh logic so partial healthy observe updates no longer leave auto-lock/tamper companion entities unavailable after reboot/install.
 - 2026-02-21: Added passcode encryption root-key auto-discovery from `ApplicationKeysTrait` candidate bytes and retry paths before env-var fallback; prepared pre-release for HACS validation.
+- 2026-02-22: Tightened lock classification/filtering in parser + coordinator/platform setup paths to block non-lock resources from being created as entities; extended setup cleanup to remove stale non-lock `DEVICE_*` registry entries.
+- 2026-02-22: Expanded `ApplicationKeysTrait` candidate-key extraction to recurse nested payloads (including epoch/master sections) and added deep-nesting test coverage to improve passcode encryption auto-discovery.

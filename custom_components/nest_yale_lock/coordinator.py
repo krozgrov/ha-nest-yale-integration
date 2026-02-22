@@ -43,6 +43,29 @@ class NestCoordinator(DataUpdateCoordinator):
         return isinstance(device_id, str) and device_id.startswith("DEVICE_")
 
     @staticmethod
+    def _device_has_lock_markers(device: dict | None) -> bool:
+        if not isinstance(device, dict):
+            return False
+        lock_keys = (
+            "bolt_locked",
+            "actuator_state",
+            "tamper_state",
+            "tamper_detected",
+            "auto_relock_on",
+            "auto_relock_duration",
+            "max_auto_relock_duration",
+            "last_action",
+        )
+        return any(key in device for key in lock_keys)
+
+    def is_lock_device(self, device_id: str | None, device: dict | None = None) -> bool:
+        if not self._is_device_lock_id(device_id):
+            return False
+        if isinstance(device_id, str) and device_id in self._known_lock_ids:
+            return True
+        return self._device_has_lock_markers(device)
+
+    @staticmethod
     def _device_has_companion_fields(device: dict) -> bool:
         """Return True when companion entities have required source fields."""
         required_fields = (
@@ -58,7 +81,7 @@ class NestCoordinator(DataUpdateCoordinator):
             return False
         lock_count = 0
         for device_id, device in data.items():
-            if not self._is_device_lock_id(device_id):
+            if not self.is_lock_device(device_id, device):
                 continue
             if not isinstance(device, dict):
                 continue
@@ -128,7 +151,7 @@ class NestCoordinator(DataUpdateCoordinator):
             current = {}
         merged: dict = {**current}
         for device_id, device in update.items():
-            if not self._is_device_lock_id(device_id):
+            if not self.is_lock_device(device_id, device):
                 continue
             if not isinstance(device, dict):
                 continue
@@ -247,7 +270,7 @@ class NestCoordinator(DataUpdateCoordinator):
             normalized_data = {
                 device_id: device
                 for device_id, device in normalized_data.items()
-                if self._is_device_lock_id(device_id)
+                if self.is_lock_device(device_id, device)
             }
             for device_id, device in normalized_data.items():
                 # Ensure required fields exist even if absent in payload
@@ -352,7 +375,7 @@ class NestCoordinator(DataUpdateCoordinator):
                         normalized_update = {
                             device_id: device
                             for device_id, device in normalized_update.items()
-                            if self._is_device_lock_id(device_id)
+                            if self.is_lock_device(device_id, device)
                         }
                         lock_ids_from_traits = _extract_lock_ids_from_traits(trait_states)
                         if lock_ids_from_traits:

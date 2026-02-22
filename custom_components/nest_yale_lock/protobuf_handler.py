@@ -27,9 +27,11 @@ _LOCK_TRAIT_HINTS = (
     "BoltLockTrait",
     "BoltLockSettingsTrait",
     "BoltLockCapabilitiesTrait",
+    "EnhancedBoltLockSettingsTrait",
     "TamperTrait",
     "PincodeInputTrait",
-    "ApplicationKeysTrait",
+    "UserPincodesSettingsTrait",
+    "UserPincodesCapabilitiesTrait",
 )
 
 _NEST_TYPE_PREFIX = "type.nestlabs.com/"
@@ -1132,8 +1134,13 @@ class NestProtobufHandler:
                     continue
 
                 if descriptor_name == "weave.trait.auth.ApplicationKeysTrait":
-                    if _is_device_lock_id(obj_id):
-                        lock_device_ids.add(obj_id)
+                    if not _is_device_lock_id(obj_id):
+                        continue
+                    # ApplicationKeys can appear on non-lock devices. Only retain it
+                    # when this resource is already known to be a lock.
+                    if not (is_lock or obj_id in known_lock_ids):
+                        continue
+                    lock_device_ids.add(obj_id)
                     decoded_keys = None
                     decoded_type_url = ""
                     for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
@@ -1352,7 +1359,13 @@ class NestProtobufHandler:
                     ):
                         try:
                             if merged_msg.HasField("fixtureType"):
-                                is_lock = True
+                                fixture_type = getattr(merged_msg, "fixtureType", None)
+                                major_type = getattr(fixture_type, "majorType", None)
+                                if (
+                                    major_type
+                                    == nest_located_pb2.LocatedTrait.LOCATED_MAJOR_FIXTURE_TYPE_DOOR
+                                ):
+                                    is_lock = True
                         except Exception:
                             pass
                     if is_lock:

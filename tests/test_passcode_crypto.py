@@ -98,7 +98,7 @@ class TestPasscodeCrypto(unittest.TestCase):
 
         candidate_hex_32 = {entry["key_hex"] for entry in parsed["candidate_keys_32"]}
         candidate_hex_36 = {entry["key_hex"] for entry in parsed["candidate_keys_36"]}
-        self.assertEqual({candidate_32.hex(), nested_32.hex()}, candidate_hex_32)
+        self.assertTrue({candidate_32.hex(), nested_32.hex()}.issubset(candidate_hex_32))
         self.assertEqual({candidate_36.hex(), nested_36.hex()}, candidate_hex_36)
 
     def test_parse_application_keys_trait_empty_payload(self) -> None:
@@ -107,6 +107,25 @@ class TestPasscodeCrypto(unittest.TestCase):
         self.assertEqual([], parsed["master_keys"])
         self.assertEqual([], parsed["candidate_keys_32"])
         self.assertEqual([], parsed["candidate_keys_36"])
+
+    def test_parse_application_keys_trait_collects_deep_nested_candidates(self) -> None:
+        deep_32 = bytes([0x77] * 32)
+        deep_36 = bytes([0x88] * 36)
+
+        deep_nested = _len_field(1, _len_field(1, _len_field(1, deep_32) + _len_field(2, deep_36)))
+        payload = b"".join(
+            [
+                _len_field(1, deep_nested),
+                _len_field(2, deep_nested),
+            ]
+        )
+
+        parsed = parse_application_keys_trait(payload)
+
+        candidate_hex_32 = {entry["key_hex"] for entry in parsed["candidate_keys_32"]}
+        candidate_hex_36 = {entry["key_hex"] for entry in parsed["candidate_keys_36"]}
+        self.assertIn(deep_32.hex(), candidate_hex_32)
+        self.assertIn(deep_36.hex(), candidate_hex_36)
 
 
 if __name__ == "__main__":

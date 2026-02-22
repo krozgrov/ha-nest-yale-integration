@@ -28,6 +28,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         for device_id, device in data.items():
             if not isinstance(device, dict):
                 continue
+            if not coordinator.is_lock_device(device_id, device):
+                continue
             # Backfill device_id from key when missing
             device.setdefault("device_id", device_id)
             unique_id = f"{DOMAIN}_{device_id}"

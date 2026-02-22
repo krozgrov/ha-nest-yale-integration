@@ -82,8 +82,18 @@ def _active_coordinators(hass: HomeAssistant) -> dict[str, NestCoordinator]:
     return active
 
 
-def _cleanup_non_device_registry_entries(hass: HomeAssistant, entry: ConfigEntry) -> None:
+def _cleanup_non_device_registry_entries(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    valid_lock_ids: set[str] | None = None,
+) -> None:
     """Remove stale entities/devices that are not keyed by canonical DEVICE_* ids."""
+    valid_lock_ids = {
+        lock_id
+        for lock_id in (valid_lock_ids or set())
+        if isinstance(lock_id, str) and lock_id.startswith("DEVICE_")
+    }
+    has_valid_lock_ids = bool(valid_lock_ids)
     entity_registry = er.async_get(hass)
     entity_entries = er.async_entries_for_config_entry(entity_registry, entry.entry_id)
     has_device_style_entity_ids = any(
@@ -105,6 +115,12 @@ def _cleanup_non_device_registry_entries(hass: HomeAssistant, entry: ConfigEntry
         if has_device_style_entity_ids and "DEVICE_" not in unique_id:
             entity_registry.async_remove(entity_entry.entity_id)
             removed_entities += 1
+            continue
+        if has_valid_lock_ids and "DEVICE_" in unique_id:
+            match = _DEVICE_ID_PATTERN.search(unique_id)
+            if match and match.group(1) not in valid_lock_ids:
+                entity_registry.async_remove(entity_entry.entity_id)
+                removed_entities += 1
 
     device_registry = dr.async_get(hass)
     device_entries = dr.async_entries_for_config_entry(device_registry, entry.entry_id)
@@ -126,7 +142,12 @@ def _cleanup_non_device_registry_entries(hass: HomeAssistant, entry: ConfigEntry
         has_device_identifier = any(identifier.startswith("DEVICE_") for identifier in domain_identifiers)
         has_user_identifier = any(identifier.startswith("USER_") for identifier in domain_identifiers)
         stale_non_device = has_device_style_identifiers and not has_device_identifier
-        if (has_user_identifier or stale_non_device) and device_registry.async_remove_device(device.id):
+        stale_non_lock = False
+        if has_valid_lock_ids:
+            device_ids = {identifier for identifier in domain_identifiers if identifier.startswith("DEVICE_")}
+            if device_ids and not (device_ids & valid_lock_ids):
+                stale_non_lock = True
+        if (has_user_identifier or stale_non_device or stale_non_lock) and device_registry.async_remove_device(device.id):
             removed_devices += 1
 
     if removed_entities or removed_devices:
@@ -187,7 +208,11 @@ def _resolve_target_device_ids(
 ) -> list[str]:
     """Resolve device ids for a coordinator and optional device filter."""
     data = coordinator.data if isinstance(coordinator.data, dict) else {}
-    lock_ids = [device_id for device_id, device in data.items() if isinstance(device, dict)]
+    lock_ids = [
+        device_id
+        for device_id, device in data.items()
+        if isinstance(device, dict) and coordinator.is_lock_device(device_id, device)
+    ]
 
     resolved_by_entity = _resolve_device_ids_from_entities(
         hass,
@@ -535,7 +560,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady(f"Failed to initialize: {e}") from e
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
-    _cleanup_non_device_registry_entries(hass, entry)
+    _cleanup_non_device_registry_entries(hass, entry, valid_lock_ids=set(coordinator.data.keys()))
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     hass.data[DOMAIN].setdefault("entities", [])
     # Reset per-entry added ids on setup to avoid stale rediscovery state.

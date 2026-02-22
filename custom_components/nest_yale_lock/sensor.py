@@ -43,6 +43,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         for device_id, device in data.items():
             if not isinstance(device, dict):
                 continue
+            if not coordinator.is_lock_device(device_id, device):
+                continue
             device.setdefault("device_id", device_id)
             try:
                 # Battery (diagnostic)

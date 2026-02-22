@@ -6,6 +6,42 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-02-22: Tighten lock classification and stale non-lock cleanup
+Why
+- Some accounts were surfacing extra HA entries (for example thermostat/annotation artifacts) during lock stream updates.
+- Root cause was over-broad lock inference in parser/entity setup paths.
+
+Decision
+- Restrict lock trait hinting to lock-specific traits (remove `ApplicationKeysTrait` as a lock classifier).
+- Treat `DeviceLocatedSettingsTrait` as lock-identifying only when `fixtureType.majorType == DOOR`.
+- Filter platform entity creation and action target resolution through coordinator lock checks.
+- Expand setup-time registry cleanup to remove stale `DEVICE_*` entries that are not in currently discovered lock IDs.
+
+Impact
+- Prevents non-lock resources from being created as Nest Yale entities.
+- Cleans up stale ghost entries left by prior over-classification.
+- No intended behavior change for real Yale lock entities.
+
+Validation
+- `python3 -m compileall custom_components/nest_yale_lock`
+
+### 2026-02-22: Deep-scan ApplicationKeysTrait payloads for passcode key material
+Why
+- Passcode updates were still blocked on some accounts with "Missing client root key material" despite `ApplicationKeysTrait` presence.
+- Candidate key extraction was too shallow for nested payload variants.
+
+Decision
+- Expand `ApplicationKeysTrait` candidate extraction to recursively scan nested length-delimited fields.
+- Scan known epoch/master submessages as well as unknown submessages for 32-byte and 36-byte candidate material.
+- Add unit coverage for deep nested candidate extraction.
+
+Impact
+- Increases chance of auto-discovering required passcode root material without manual env vars.
+- Keeps existing validation gates (candidate must decrypt known encrypted pincodes when samples exist).
+
+Validation
+- `python3 -m unittest tests/test_passcode_crypto.py`
+
 ### 2026-02-21: Normalize passcode command rejections into a single user-facing error
 Why
 - Passcode update fallback logic now tries both device and structure targets.
@@ -404,3 +440,5 @@ Validation
 - 2026-02-14: Treat partial varints in observe stream framing as normal chunk-boundary behavior and stop logging them per-chunk at DEBUG to reduce noise; keep only true varint errors.
 - 2026-02-15: Allow post-pass annotation-ID resolution to overwrite stale early `where_label`/`door_label` values when annotation catalogs arrive later in the same observe batch, preventing lock labels from sticking to another device's earlier location text.
 - 2026-02-21: Added passcode key-material auto-discovery from `ApplicationKeysTrait` payloads (32-byte/36-byte candidates) and automatic candidate retries before requiring explicit root-key env vars.
+- 2026-02-22: Tightened lock classification and setup cleanup to stop non-lock devices/resources from creating Nest Yale entities (including stale thermostat/annotation artifacts).
+- 2026-02-22: Deepened `ApplicationKeysTrait` nested candidate scanning (including epoch/master submessages) to improve automatic passcode root-key discovery.
