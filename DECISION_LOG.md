@@ -6,6 +6,23 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-02-22: Keep passcode fallback flow alive across timeout/network failures
+Why
+- Passcode updates were still aborting early when one command attempt hit transport timeout (`POST ... timed out after 40 seconds`) before all remaining command variants were tried.
+- That prevented the intended full fallback matrix (encryption variant + target + type_url) from completing.
+
+Decision
+- Treat transport timeout/network failures as retryable in passcode command flow.
+- In `set_guest_passcode`, continue to the next target/type attempt on retryable transport failures instead of aborting the whole service call.
+- In `send_command`, retry transient transport failures (`TimeoutError`, `aiohttp.ClientError`) within the existing per-endpoint retry loop before final failure.
+
+Impact
+- Improves resilience against intermittent Nest transport failures during passcode updates.
+- Preserves existing behavior for non-retryable failures while expanding successful recovery paths.
+
+Validation
+- `python3 -m py_compile custom_components/nest_yale_lock/api_client.py`
+
 ### 2026-02-21: Attempt unvalidated encryption candidates when local passcode validation mismatches
 Why
 - Some locks expose candidate key material but local decryption checks still fail for all candidates, which blocked command dispatch entirely.
