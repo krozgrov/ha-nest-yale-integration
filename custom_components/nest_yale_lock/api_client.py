@@ -923,7 +923,7 @@ class NestAPIClient:
             api_url = f"{base_url}{ENDPOINT_SENDCOMMAND}"
             reauthed = False
             recovered = False
-            for _ in range(3):
+            for attempt_index in range(3):
                 try:
                     raw_data = await self.connection.post(api_url, headers, encoded_data, read_timeout=API_TIMEOUT_SECONDS)
                     self.transport_url = base_url
@@ -992,6 +992,15 @@ class NestAPIClient:
                     last_error = err
                     _LOGGER.error("Failed to send command to %s via %s: %s", device_id, api_url, err, exc_info=True)
                     self._note_connect_failure(err)
+                    if isinstance(err, (asyncio.TimeoutError, aiohttp.ClientError)) and attempt_index < 2:
+                        _LOGGER.warning(
+                            "Transient command transport error for %s via %s; retrying (%d/3)",
+                            device_id,
+                            api_url,
+                            attempt_index + 2,
+                        )
+                        await asyncio.sleep(API_RETRY_DELAY_SECONDS)
+                        continue
                     break
             if last_error and not forced_refresh:
                 forced_refresh = True
@@ -1242,6 +1251,12 @@ class NestAPIClient:
         return cls._is_grpc_status_error(err, GRPC_CODE_INTERNAL) or cls._is_grpc_status_error(
             err, GRPC_CODE_INVALID_ARGUMENT
         )
+
+    @classmethod
+    def _is_passcode_retryable_error(cls, err: Exception) -> bool:
+        if isinstance(err, (asyncio.TimeoutError, aiohttp.ClientError)):
+            return True
+        return cls._is_passcode_target_rejection(err)
 
     @staticmethod
     def _decode_env_key(name: str, expected_len: int) -> bytes | None:
@@ -1906,10 +1921,10 @@ class NestAPIClient:
                         target_resource_id,
                         structure_id=self._structure_id,
                     )
-                except (RuntimeError, ValueError) as err:
+                except Exception as err:
                     variant_error = err
                     last_error = err
-                    if self._is_passcode_target_rejection(err):
+                    if self._is_passcode_retryable_error(err):
                         _LOGGER.warning(
                             (
                                 "Guest passcode update failed via %s target %s "
