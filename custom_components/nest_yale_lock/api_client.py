@@ -1643,7 +1643,12 @@ class NestAPIClient:
                 return nonce
         raise RuntimeError("Could not generate a unique passcode nonce")
 
-    def _encrypt_guest_passcode(self, device_id: str, guest_user_id: str, passcode_text: str) -> bytes:
+    def _encrypt_guest_passcode_variants(
+        self,
+        device_id: str,
+        guest_user_id: str,
+        passcode_text: str,
+    ) -> list[tuple[bytes, str]]:
         app_keys_data = self._get_application_keys_data(device_id)
         if not app_keys_data:
             raise RuntimeError(
@@ -1717,20 +1722,25 @@ class NestAPIClient:
             ]
         )
 
+        validated_variants: list[tuple[bytes, str]] = []
+        fallback_variants: list[tuple[bytes, str]] = []
+        seen_payloads: set[bytes] = set()
         last_crypto_error: PasscodeCryptoError | None = None
         for candidate in material_candidates:
+            candidate_name = str(candidate.get("name") or "unknown")
+            is_validated = True
             if had_validation_samples and not self._material_matches_existing_encrypted_pincodes(
                 device_id,
                 app_keys_data,
                 candidate,
                 expected_root_key_id=root_key_id,
             ):
+                is_validated = False
                 _LOGGER.debug(
                     "Passcode root material candidate %s rejected for %s (validation mismatch)",
-                    candidate.get("name"),
+                    candidate_name,
                     device_id,
                 )
-                continue
             try:
                 enc_key, auth_key, fingerprint_key = derive_passcode_config2_keys(
                     key_id=resolved_key_id,
@@ -1745,12 +1755,7 @@ class NestAPIClient:
                 last_crypto_error = err
                 continue
 
-            _LOGGER.debug(
-                "Using passcode root material source %s for %s",
-                candidate.get("name"),
-                device_id,
-            )
-            return encrypt_passcode_config2(
+            payload = encrypt_passcode_config2(
                 passcode=passcode_text,
                 key_id=resolved_key_id,
                 nonce=nonce,
@@ -1758,6 +1763,31 @@ class NestAPIClient:
                 auth_key=auth_key,
                 fingerprint_key=fingerprint_key,
             )
+            if payload in seen_payloads:
+                continue
+            seen_payloads.add(payload)
+            if is_validated:
+                validated_variants.append((payload, candidate_name))
+            else:
+                fallback_variants.append((payload, candidate_name))
+
+        if validated_variants:
+            _LOGGER.debug(
+                "Prepared %d validated encrypted passcode variant(s) for %s",
+                len(validated_variants),
+                device_id,
+            )
+            return validated_variants
+        if fallback_variants:
+            _LOGGER.warning(
+                (
+                    "No passcode key candidates validated against existing encrypted pincodes for %s. "
+                    "Proceeding with %d unvalidated encryption candidate(s)."
+                ),
+                device_id,
+                len(fallback_variants),
+            )
+            return fallback_variants
 
         if had_validation_samples:
             raise RuntimeError(
@@ -1767,6 +1797,16 @@ class NestAPIClient:
         if last_crypto_error is not None:
             raise RuntimeError(f"Failed to encrypt passcode: {last_crypto_error}") from last_crypto_error
         raise RuntimeError("Failed to derive passcode encryption keys")
+
+    def _encrypt_guest_passcode(self, device_id: str, guest_user_id: str, passcode_text: str) -> bytes:
+        variants = self._encrypt_guest_passcode_variants(device_id, guest_user_id, passcode_text)
+        payload, material_source = variants[0]
+        _LOGGER.debug(
+            "Using passcode root material source %s for %s",
+            material_source,
+            device_id,
+        )
+        return payload
 
     async def set_guest_passcode(
         self,
@@ -1785,17 +1825,11 @@ class NestAPIClient:
         if not passcode_text.isdigit():
             raise ValueError("passcode must contain digits only")
 
-        encrypted_passcode = self._encrypt_guest_passcode(
+        encrypted_variants = self._encrypt_guest_passcode_variants(
             device_id,
             guest_user_id.strip(),
             passcode_text,
         )
-        request = weave_security_pb2.UserPincodesSettingsTrait.SetUserPincodeRequest()
-        request.userPincode.userId.resourceId = guest_user_id.strip()
-        request.userPincode.pincode = encrypted_passcode
-        request.userPincode.pincodeCredentialEnabled.value = bool(enabled)
-
-        request_bytes = request.SerializeToString()
         command_type_urls = [
             "type.nestlabs.com/weave.trait.security.UserPincodesSettingsTrait.SetUserPincodeRequest",
             "type.googleapis.com/weave.trait.security.UserPincodesSettingsTrait.SetUserPincodeRequest",
@@ -1838,42 +1872,74 @@ class NestAPIClient:
             )
 
         last_error: Exception | None = None
-        for target_resource_id, trait_label, scope, type_url in attempts:
-            cmd_any = {
-                "command": {
-                    "type_url": type_url,
-                    "value": request_bytes,
-                },
-            }
-            if trait_label:
-                cmd_any["traitLabel"] = trait_label
+        total_variants = len(encrypted_variants)
+        for variant_index, (encrypted_passcode, material_source) in enumerate(
+            encrypted_variants, start=1
+        ):
+            _LOGGER.debug(
+                "Trying encrypted passcode variant %d/%d for %s (source=%s)",
+                variant_index,
+                total_variants,
+                device_id,
+                material_source,
+            )
+            request = weave_security_pb2.UserPincodesSettingsTrait.SetUserPincodeRequest()
+            request.userPincode.userId.resourceId = guest_user_id.strip()
+            request.userPincode.pincode = encrypted_passcode
+            request.userPincode.pincodeCredentialEnabled.value = bool(enabled)
+            request_bytes = request.SerializeToString()
 
-            try:
-                return await self.send_command(
-                    cmd_any,
-                    target_resource_id,
-                    structure_id=self._structure_id,
-                )
-            except (RuntimeError, ValueError) as err:
-                last_error = err
-                if self._is_passcode_target_rejection(err):
-                    _LOGGER.warning(
-                        (
-                            "Guest passcode update failed via %s target %s "
-                            "(trait_label=%s, type_url=%s); trying next variant if available: %s"
-                        ),
-                        scope,
+            variant_error: Exception | None = None
+            for target_resource_id, trait_label, scope, type_url in attempts:
+                cmd_any = {
+                    "command": {
+                        "type_url": type_url,
+                        "value": request_bytes,
+                    },
+                }
+                if trait_label:
+                    cmd_any["traitLabel"] = trait_label
+
+                try:
+                    return await self.send_command(
+                        cmd_any,
                         target_resource_id,
-                        trait_label,
-                        type_url,
-                        err,
+                        structure_id=self._structure_id,
                     )
-                    continue
-                raise
+                except (RuntimeError, ValueError) as err:
+                    variant_error = err
+                    last_error = err
+                    if self._is_passcode_target_rejection(err):
+                        _LOGGER.warning(
+                            (
+                                "Guest passcode update failed via %s target %s "
+                                "(trait_label=%s, type_url=%s, source=%s); trying next variant if available: %s"
+                            ),
+                            scope,
+                            target_resource_id,
+                            trait_label,
+                            type_url,
+                            material_source,
+                            err,
+                        )
+                        continue
+                    raise
+
+            if variant_error is not None:
+                _LOGGER.warning(
+                    (
+                        "Guest passcode update rejected for encryption variant %d/%d "
+                        "(source=%s); trying next encryption candidate if available"
+                    ),
+                    variant_index,
+                    total_variants,
+                    material_source,
+                )
+                continue
 
         if last_error:
             raise RuntimeError(
-                "Passcode update rejected by Nest after trying all command target/type variants. "
+                "Passcode update rejected by Nest after trying all encryption and command target/type variants. "
                 "This lock/account likely requires encrypted pincode payloads that are not available from this session. "
                 "Update the passcode in the Nest app."
             ) from last_error

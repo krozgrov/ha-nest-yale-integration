@@ -6,6 +6,24 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-02-21: Attempt unvalidated encryption candidates when local passcode validation mismatches
+Why
+- Some locks expose candidate key material but local decryption checks still fail for all candidates, which blocked command dispatch entirely.
+- In these cases, local validation can be a false negative for real Nest command acceptance.
+
+Decision
+- Keep validated candidates preferred, but when none validate, continue by trying unvalidated encrypted passcode candidates against Nest.
+- Try all encryption variants across existing target/type command attempts before failing.
+- Preserve existing clear final error when all variants are rejected by Nest.
+
+Impact
+- Improves chance of successful passcode updates on accounts where local validation cannot prove candidate correctness.
+- Removes early-stop behavior that previously failed before any command attempt.
+
+Validation
+- `python3 -m compileall custom_components/nest_yale_lock`
+- `python3 -m unittest tests/test_passcode_crypto.py`
+
 ### 2026-02-22: Tighten lock classification and stale non-lock cleanup
 Why
 - Some accounts were surfacing extra HA entries (for example thermostat/annotation artifacts) during lock stream updates.
@@ -440,5 +458,6 @@ Validation
 - 2026-02-14: Treat partial varints in observe stream framing as normal chunk-boundary behavior and stop logging them per-chunk at DEBUG to reduce noise; keep only true varint errors.
 - 2026-02-15: Allow post-pass annotation-ID resolution to overwrite stale early `where_label`/`door_label` values when annotation catalogs arrive later in the same observe batch, preventing lock labels from sticking to another device's earlier location text.
 - 2026-02-21: Added passcode key-material auto-discovery from `ApplicationKeysTrait` payloads (32-byte/36-byte candidates) and automatic candidate retries before requiring explicit root-key env vars.
+- 2026-02-21: Passcode updates now continue with unvalidated encryption candidates when local decrypt-validation mismatches, trying all encryption variants against Nest before failing.
 - 2026-02-22: Tightened lock classification and setup cleanup to stop non-lock devices/resources from creating Nest Yale entities (including stale thermostat/annotation artifacts).
 - 2026-02-22: Deepened `ApplicationKeysTrait` nested candidate scanning (including epoch/master submessages) to improve automatic passcode root-key discovery.

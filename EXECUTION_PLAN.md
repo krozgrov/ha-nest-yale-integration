@@ -177,3 +177,4 @@ Status updates
 - 2026-02-21: Added passcode encryption root-key auto-discovery from `ApplicationKeysTrait` candidate bytes and retry paths before env-var fallback; prepared pre-release for HACS validation.
 - 2026-02-22: Tightened lock classification/filtering in parser + coordinator/platform setup paths to block non-lock resources from being created as entities; extended setup cleanup to remove stale non-lock `DEVICE_*` registry entries.
 - 2026-02-22: Expanded `ApplicationKeysTrait` candidate-key extraction to recurse nested payloads (including epoch/master sections) and added deep-nesting test coverage to improve passcode encryption auto-discovery.
+- 2026-02-21: Updated passcode flow to try unvalidated encryption candidates when local decryption validation mismatches, so Nest command attempts are still executed before final failure.
