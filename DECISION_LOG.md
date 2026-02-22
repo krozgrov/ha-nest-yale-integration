@@ -6,6 +6,23 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-02-22: Use structure-level ApplicationKeysTrait in passcode encryption key resolution
+Why
+- Passcode update logs still showed all auto-discovered key candidates failing validation (`validation mismatch`) followed by Nest `code=13` rejections.
+- Stream payloads contained `ApplicationKeysTrait` on both lock and structure resources, but key resolution only read lock-device trait data.
+
+Decision
+- Parse and retain `ApplicationKeysTrait` from `STRUCTURE_*` resources in the v2 observer parser.
+- Update passcode key lookup to merge lock + structure `ApplicationKeysTrait` datasets (with deduping) before deriving encryption keys.
+
+Impact
+- Expands available key material for passcode encryption derivation without broadening lock entity discovery.
+- Improves likelihood of finding valid client/fabric root material for `SetUserPincodeRequest`.
+
+Validation
+- `python3 -m py_compile custom_components/nest_yale_lock/api_client.py custom_components/nest_yale_lock/protobuf_handler.py`
+- `python3 -m unittest tests/test_passcode_crypto.py`
+
 ### 2026-02-22: Keep passcode fallback flow alive across timeout/network failures
 Why
 - Passcode updates were still aborting early when one command attempt hit transport timeout (`POST ... timed out after 40 seconds`) before all remaining command variants were tried.

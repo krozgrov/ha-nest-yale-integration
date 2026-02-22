@@ -1134,13 +1134,15 @@ class NestProtobufHandler:
                     continue
 
                 if descriptor_name == "weave.trait.auth.ApplicationKeysTrait":
-                    if not _is_device_lock_id(obj_id):
+                    is_structure_resource = isinstance(obj_id, str) and obj_id.startswith("STRUCTURE_")
+                    if not (_is_device_lock_id(obj_id) or is_structure_resource):
                         continue
-                    # ApplicationKeys can appear on non-lock devices. Only retain it
-                    # when this resource is already known to be a lock.
-                    if not (is_lock or obj_id in known_lock_ids):
-                        continue
-                    lock_device_ids.add(obj_id)
+                    if _is_device_lock_id(obj_id):
+                        # ApplicationKeys can appear on non-lock devices. Only retain it
+                        # when this resource is already known to be a lock.
+                        if not (is_lock or obj_id in known_lock_ids):
+                            continue
+                        lock_device_ids.add(obj_id)
                     decoded_keys = None
                     decoded_type_url = ""
                     for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):

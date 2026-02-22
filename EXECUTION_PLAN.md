@@ -179,3 +179,4 @@ Status updates
 - 2026-02-22: Expanded `ApplicationKeysTrait` candidate-key extraction to recurse nested payloads (including epoch/master sections) and added deep-nesting test coverage to improve passcode encryption auto-discovery.
 - 2026-02-21: Updated passcode flow to try unvalidated encryption candidates when local decryption validation mismatches, so Nest command attempts are still executed before final failure.
 - 2026-02-22: Hardened passcode dispatch retry behavior so transient timeout/network failures continue through remaining command variants instead of aborting early.
+- 2026-02-22: Added structure-level `ApplicationKeysTrait` retention + lock/structure key-data merge for passcode encryption derivation to address lock-only key-source gaps.

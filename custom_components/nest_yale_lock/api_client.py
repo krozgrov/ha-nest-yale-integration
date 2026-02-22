@@ -1292,14 +1292,62 @@ class NestAPIClient:
             candidates.append(key_bytes)
         return candidates
 
+    @staticmethod
+    def _application_key_entry_signature(entry: dict) -> tuple[tuple[str, str], ...] | None:
+        if not isinstance(entry, dict):
+            return None
+        pairs: list[tuple[str, str]] = []
+        for key in sorted(entry.keys()):
+            value = entry.get(key)
+            if isinstance(value, (str, int)):
+                pairs.append((str(key), str(value)))
+            else:
+                pairs.append((str(key), repr(value)))
+        return tuple(pairs)
+
+    @classmethod
+    def _dedupe_application_key_entries(cls, entries: list) -> list[dict]:
+        if not isinstance(entries, list):
+            return []
+        deduped: list[dict] = []
+        seen: set[tuple[tuple[str, str], ...]] = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            signature = cls._application_key_entry_signature(entry)
+            if signature is None or signature in seen:
+                continue
+            seen.add(signature)
+            deduped.append(entry)
+        return deduped
+
     def _get_application_keys_data(self, device_id: str) -> dict | None:
         all_traits = self.current_state.get("all_traits", {})
         if not isinstance(all_traits, dict):
             return None
+
+        structure_resource_id = self._structure_resource_id()
+        source_priority = [device_id]
+        if isinstance(structure_resource_id, str) and structure_resource_id:
+            source_priority.append(structure_resource_id)
+        else:
+            for trait_info in all_traits.values():
+                if not isinstance(trait_info, dict):
+                    continue
+                object_id = trait_info.get("object_id")
+                if (
+                    isinstance(object_id, str)
+                    and object_id.startswith("STRUCTURE_")
+                    and object_id not in source_priority
+                ):
+                    source_priority.append(object_id)
+
+        candidate_sets: list[tuple[int, str, dict]] = []
         for trait_info in all_traits.values():
             if not isinstance(trait_info, dict):
                 continue
-            if trait_info.get("object_id") != device_id:
+            object_id = trait_info.get("object_id")
+            if object_id not in source_priority:
                 continue
             type_url = trait_info.get("type_url")
             if not isinstance(type_url, str):
@@ -1308,8 +1356,41 @@ class NestAPIClient:
                 continue
             data = trait_info.get("data")
             if isinstance(data, dict):
-                return data
-        return None
+                priority = source_priority.index(object_id)
+                candidate_sets.append((priority, object_id, data))
+
+        if not candidate_sets:
+            return None
+
+        candidate_sets.sort(key=lambda item: item[0])
+        merged: dict = {}
+        for _, _, data in candidate_sets:
+            for key, value in data.items():
+                if isinstance(value, list):
+                    existing = merged.get(key, [])
+                    if not isinstance(existing, list):
+                        existing = []
+                    existing.extend(value)
+                    merged[key] = existing
+                elif key not in merged:
+                    merged[key] = value
+
+        for key in ("epoch_keys", "master_keys", "candidate_keys_32", "candidate_keys_36"):
+            merged[key] = self._dedupe_application_key_entries(merged.get(key, []))
+
+        _LOGGER.debug(
+            (
+                "Resolved ApplicationKeysTrait for %s using sources=%s "
+                "(master_keys=%d, epoch_keys=%d, candidate32=%d, candidate36=%d)"
+            ),
+            device_id,
+            [obj_id for _, obj_id, _ in candidate_sets],
+            len(merged.get("master_keys", [])),
+            len(merged.get("epoch_keys", [])),
+            len(merged.get("candidate_keys_32", [])),
+            len(merged.get("candidate_keys_36", [])),
+        )
+        return merged
 
     def _collect_encrypted_pincode_metadata(self, device_id: str) -> list[dict]:
         trait_cache = self.current_state.get("traits", {})
