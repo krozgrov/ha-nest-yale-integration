@@ -193,6 +193,7 @@ Notes:
 - You can discover known guest ids and slot mappings from lock attributes: `guest_user_ids` and `guest_users`.
 - The set action now tries both device-level and structure-level user pincode targets before failing.
 - The set action auto-attempts encryption key discovery from `ApplicationKeysTrait`. If Nest does not expose usable root key material for your account, set one of these Home Assistant environment variables: `NEST_YALE_CLIENT_ROOT_KEY_HEX` (32-byte hex), `NEST_YALE_FABRIC_SECRET_HEX` (36-byte hex), or `NEST_YALE_SERVICE_ROOT_KEY_HEX` (32-byte hex).
+- For safety, unvalidated encryption candidates are blocked by default to avoid silent passcode clears in the Nest app. You can force unvalidated attempts only for debugging by setting `NEST_YALE_ALLOW_UNVALIDATED_PASSCODE_MATERIAL=1`.
 - Some lock/account combinations still reject plaintext passcode updates because Nest expects encrypted pincode payloads.
 - This integration updates/deletes passcodes for existing Nest guest identities; creating new guest identities still needs to be done in the Nest app.
 - Passcode data is never exposed as entity attributes; only non-sensitive capability/slot metadata is stored.

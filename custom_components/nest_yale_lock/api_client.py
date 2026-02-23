@@ -108,6 +108,7 @@ _APP_LAUNCH_REFRESH_SECONDS = 6 * 60 * 60
 _ENV_FABRIC_SECRET_HEX = "NEST_YALE_FABRIC_SECRET_HEX"
 _ENV_CLIENT_ROOT_KEY_HEX = "NEST_YALE_CLIENT_ROOT_KEY_HEX"
 _ENV_SERVICE_ROOT_KEY_HEX = "NEST_YALE_SERVICE_ROOT_KEY_HEX"
+_ENV_ALLOW_UNVALIDATED_PASSCODE_MATERIAL = "NEST_YALE_ALLOW_UNVALIDATED_PASSCODE_MATERIAL"
 _PASSCODE_FALLBACK_TIMEOUT_SECONDS = 12
 _PASSCODE_FALLBACK_TRANSPORT_ATTEMPTS = 1
 
@@ -1902,6 +1903,18 @@ class NestAPIClient:
             )
             return validated_variants
         if fallback_variants:
+            allow_unvalidated = (
+                str(os.getenv(_ENV_ALLOW_UNVALIDATED_PASSCODE_MATERIAL, "")).strip().lower()
+                in {"1", "true", "yes", "on"}
+            )
+            if not allow_unvalidated:
+                raise RuntimeError(
+                    (
+                        "No passcode key candidates validated against existing encrypted pincodes for this lock. "
+                        "Aborting update to avoid clearing passcodes. "
+                        f"If you need to force unvalidated attempts for debugging, set {_ENV_ALLOW_UNVALIDATED_PASSCODE_MATERIAL}=1."
+                    )
+                )
             _LOGGER.warning(
                 (
                     "No passcode key candidates validated against existing encrypted pincodes for %s. "

@@ -183,3 +183,4 @@ Status updates
 - 2026-02-22: Updated `ApplicationKeysTrait` parsing to keep candidate-only key payloads (no epoch/master) so structure-sourced candidate root keys are not dropped.
 - 2026-02-22: Reordered passcode command attempts to prefer `type.nestlabs.com`, reduced fallback timeout/retries for `type.googleapis.com`, and skip googleapis fallback after INTERNAL rejection on the same target/trait label.
 - 2026-02-23: Added a prerelease guard script (`scripts/cut_prerelease.sh`) plus `release-notes/TEMPLATE.md` so HACS description text is mandatory and validated before publishing prereleases.
+- 2026-02-23: Added passcode safety gate: do not send unvalidated encryption candidates by default when candidate key material cannot decrypt existing encrypted pincodes. Added explicit debug opt-in env var for forced unvalidated attempts.
