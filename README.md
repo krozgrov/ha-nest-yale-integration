@@ -41,6 +41,24 @@ Pre-release testing: `2026.02.21b10` adds structure-level `ApplicationKeysTrait`
 - Door/Where/Label changes now auto-update in Home Assistant when edited in the Nest app
 - Fixed stale door labels on located-only stream updates by resolving fixture annotation IDs first
 
+## Maintainer Prerelease Workflow (HACS Description Required)
+
+To prevent empty/missing HACS release descriptions, use the release helper script:
+
+1. Copy the template:
+   - `cp release-notes/TEMPLATE.md release-notes/<tag>.md`
+2. Edit `release-notes/<tag>.md`:
+   - The first non-empty line must be a plain one-line summary. This is the HACS-visible description.
+3. Update the integration version in:
+   - `custom_components/nest_yale_lock/manifest.json`
+4. Create the prerelease:
+   - `scripts/cut_prerelease.sh <tag> release-notes/<tag>.md <target_branch>`
+
+The script fails if:
+- The notes file is missing/empty
+- The first line is missing, too short, or a markdown header
+- `manifest.json` version does not match the tag
+
 ## Known Limitations
 
 - Logs may show `DecodeError in StreamBody: Error parsing message with type 'nest.rpc.StreamBody'` due to incomplete protobuf decoding. This is **harmless** and does not affect functionality.

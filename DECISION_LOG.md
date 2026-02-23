@@ -497,3 +497,4 @@ Validation
 - 2026-02-22: Deepened `ApplicationKeysTrait` nested candidate scanning (including epoch/master submessages) to improve automatic passcode root-key discovery.
 - 2026-02-22: Retain candidate-only `ApplicationKeysTrait` payloads (no epoch/master keys) so structure-level candidate root keys are available for passcode encryption derivation.
 - 2026-02-22: Prioritize `type.nestlabs.com` passcode commands and constrain `type.googleapis.com` fallback retries/timeouts; skip googleapis fallback after INTERNAL rejection on the same target/trait label to prevent 40s stalls.
+- 2026-02-23: Added a guarded prerelease helper script (`scripts/cut_prerelease.sh`) and release notes template to enforce a non-empty one-line HACS-visible description for every prerelease.
