@@ -108,6 +108,8 @@ _APP_LAUNCH_REFRESH_SECONDS = 6 * 60 * 60
 _ENV_FABRIC_SECRET_HEX = "NEST_YALE_FABRIC_SECRET_HEX"
 _ENV_CLIENT_ROOT_KEY_HEX = "NEST_YALE_CLIENT_ROOT_KEY_HEX"
 _ENV_SERVICE_ROOT_KEY_HEX = "NEST_YALE_SERVICE_ROOT_KEY_HEX"
+_PASSCODE_FALLBACK_TIMEOUT_SECONDS = 12
+_PASSCODE_FALLBACK_TRANSPORT_ATTEMPTS = 1
 
 class ConnectionShim:
     def __init__(self, session):
@@ -860,7 +862,15 @@ class NestAPIClient:
             await asyncio.sleep(sleep_for)
             backoff = min(backoff * 2, 60)
 
-    async def send_command(self, command, device_id, structure_id=None):
+    async def send_command(
+        self,
+        command,
+        device_id,
+        structure_id=None,
+        *,
+        read_timeout: int | float | None = None,
+        max_transport_attempts: int = 3,
+    ):
         # Ensure we have a valid token before sending command
         if not self.access_token:
             _LOGGER.warning("No access token before send_command, authenticating")
@@ -911,6 +921,14 @@ class NestAPIClient:
             len(encoded_data),
         )
 
+        command_read_timeout = API_TIMEOUT_SECONDS if read_timeout is None else read_timeout
+        try:
+            transport_attempts = int(max_transport_attempts)
+        except (TypeError, ValueError):
+            transport_attempts = 3
+        if transport_attempts < 1:
+            transport_attempts = 1
+
         last_error = None
         forced_refresh = False  # Track whether forced refresh was already attempted
 
@@ -923,9 +941,14 @@ class NestAPIClient:
             api_url = f"{base_url}{ENDPOINT_SENDCOMMAND}"
             reauthed = False
             recovered = False
-            for attempt_index in range(3):
+            for attempt_index in range(transport_attempts):
                 try:
-                    raw_data = await self.connection.post(api_url, headers, encoded_data, read_timeout=API_TIMEOUT_SECONDS)
+                    raw_data = await self.connection.post(
+                        api_url,
+                        headers,
+                        encoded_data,
+                        read_timeout=command_read_timeout,
+                    )
                     self.transport_url = base_url
                     # Prefer gateway v1 response parsing when possible (more accurate than StreamBody fallback)
                     status_code, status_msg = self._parse_v1_operation_status(raw_data)
@@ -992,12 +1015,16 @@ class NestAPIClient:
                     last_error = err
                     _LOGGER.error("Failed to send command to %s via %s: %s", device_id, api_url, err, exc_info=True)
                     self._note_connect_failure(err)
-                    if isinstance(err, (asyncio.TimeoutError, aiohttp.ClientError)) and attempt_index < 2:
+                    if (
+                        isinstance(err, (asyncio.TimeoutError, aiohttp.ClientError))
+                        and attempt_index < (transport_attempts - 1)
+                    ):
                         _LOGGER.warning(
-                            "Transient command transport error for %s via %s; retrying (%d/3)",
+                            "Transient command transport error for %s via %s; retrying (%d/%d)",
                             device_id,
                             api_url,
                             attempt_index + 2,
+                            transport_attempts,
                         )
                         await asyncio.sleep(API_RETRY_DELAY_SECONDS)
                         continue
@@ -1946,10 +1973,10 @@ class NestAPIClient:
 
         attempts: list[tuple[str, str | None, str, str]] = []
         seen_attempts: set[tuple[str, str | None, str]] = set()
-        for target_resource_id, trait_label, scope in target_attempts:
-            trait_label_options = [trait_label, None] if trait_label else [None]
-            for label_option in trait_label_options:
-                for type_url in command_type_urls:
+        for type_url in command_type_urls:
+            for target_resource_id, trait_label, scope in target_attempts:
+                trait_label_options = [trait_label, None] if trait_label else [None]
+                for label_option in trait_label_options:
                     dedupe_key = (target_resource_id, label_option, type_url)
                     if dedupe_key in seen_attempts:
                         continue
@@ -1969,6 +1996,7 @@ class NestAPIClient:
 
         last_error: Exception | None = None
         total_variants = len(encrypted_variants)
+        skip_googleapis_for: set[tuple[str, str | None]] = set()
         for variant_index, (encrypted_passcode, material_source) in enumerate(
             encrypted_variants, start=1
         ):
@@ -1987,6 +2015,20 @@ class NestAPIClient:
 
             variant_error: Exception | None = None
             for target_resource_id, trait_label, scope, type_url in attempts:
+                if type_url.startswith("type.googleapis.com/") and (
+                    target_resource_id,
+                    trait_label,
+                ) in skip_googleapis_for:
+                    _LOGGER.debug(
+                        (
+                            "Skipping type.googleapis.com passcode request for %s "
+                            "(trait_label=%s) after prior INTERNAL rejection"
+                        ),
+                        target_resource_id,
+                        trait_label,
+                    )
+                    continue
+
                 cmd_any = {
                     "command": {
                         "type_url": type_url,
@@ -1996,15 +2038,27 @@ class NestAPIClient:
                 if trait_label:
                     cmd_any["traitLabel"] = trait_label
 
+                command_timeout = API_TIMEOUT_SECONDS
+                transport_attempts = 3
+                if type_url.startswith("type.googleapis.com/"):
+                    command_timeout = min(API_TIMEOUT_SECONDS, _PASSCODE_FALLBACK_TIMEOUT_SECONDS)
+                    transport_attempts = _PASSCODE_FALLBACK_TRANSPORT_ATTEMPTS
+
                 try:
                     return await self.send_command(
                         cmd_any,
                         target_resource_id,
                         structure_id=self._structure_id,
+                        read_timeout=command_timeout,
+                        max_transport_attempts=transport_attempts,
                     )
                 except Exception as err:
                     variant_error = err
                     last_error = err
+                    if type_url.startswith("type.nestlabs.com/") and self._is_grpc_status_error(
+                        err, GRPC_CODE_INTERNAL
+                    ):
+                        skip_googleapis_for.add((target_resource_id, trait_label))
                     if self._is_passcode_retryable_error(err):
                         _LOGGER.warning(
                             (

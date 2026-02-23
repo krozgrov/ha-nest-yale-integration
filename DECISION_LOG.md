@@ -495,3 +495,5 @@ Validation
 - 2026-02-21: Passcode updates now continue with unvalidated encryption candidates when local decrypt-validation mismatches, trying all encryption variants against Nest before failing.
 - 2026-02-22: Tightened lock classification and setup cleanup to stop non-lock devices/resources from creating Nest Yale entities (including stale thermostat/annotation artifacts).
 - 2026-02-22: Deepened `ApplicationKeysTrait` nested candidate scanning (including epoch/master submessages) to improve automatic passcode root-key discovery.
+- 2026-02-22: Retain candidate-only `ApplicationKeysTrait` payloads (no epoch/master keys) so structure-level candidate root keys are available for passcode encryption derivation.
+- 2026-02-22: Prioritize `type.nestlabs.com` passcode commands and constrain `type.googleapis.com` fallback retries/timeouts; skip googleapis fallback after INTERNAL rejection on the same target/trait label to prevent 40s stalls.

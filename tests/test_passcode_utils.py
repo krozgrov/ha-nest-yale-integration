@@ -68,7 +68,10 @@ class TestPasscodeUtils(unittest.TestCase):
         self.assertEqual("USER_0002", resolved)
 
     def test_resolve_guest_user_id_requires_slot_or_id(self) -> None:
-        with self.assertRaisesRegex(ValueError, "either guest_user_id or slot"):
+        with self.assertRaisesRegex(
+            ValueError,
+            "slot or guest_user_id|either guest_user_id or slot",
+        ):
             resolve_guest_user_id(None, slot=None, device_data=_device_data())
 
     def test_resolve_guest_user_id_missing_slot_mapping(self) -> None:

@@ -1152,7 +1152,13 @@ class NestProtobufHandler:
                         candidate = parse_application_keys_trait(any_msg.value)
                         if not candidate:
                             continue
-                        if candidate.get("epoch_keys") or candidate.get("master_keys"):
+                        has_key_material = bool(
+                            candidate.get("epoch_keys")
+                            or candidate.get("master_keys")
+                            or candidate.get("candidate_keys_32")
+                            or candidate.get("candidate_keys_36")
+                        )
+                        if has_key_material:
                             decoded_keys = candidate
                             decoded_type_url = any_msg.type_url or entry.get("type_url") or ""
                             break
@@ -1169,10 +1175,15 @@ class NestProtobufHandler:
                             "data": decoded_keys,
                         }
                         _LOGGER.debug(
-                            "Decoded ApplicationKeysTrait for %s: master_keys=%d epoch_keys=%d",
+                            (
+                                "Decoded ApplicationKeysTrait for %s: "
+                                "master_keys=%d epoch_keys=%d candidate32=%d candidate36=%d"
+                            ),
                             obj_id,
                             len(decoded_keys.get("master_keys", [])),
                             len(decoded_keys.get("epoch_keys", [])),
+                            len(decoded_keys.get("candidate_keys_32", [])),
+                            len(decoded_keys.get("candidate_keys_36", [])),
                         )
                     continue
 

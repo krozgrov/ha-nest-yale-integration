@@ -180,3 +180,5 @@ Status updates
 - 2026-02-21: Updated passcode flow to try unvalidated encryption candidates when local decryption validation mismatches, so Nest command attempts are still executed before final failure.
 - 2026-02-22: Hardened passcode dispatch retry behavior so transient timeout/network failures continue through remaining command variants instead of aborting early.
 - 2026-02-22: Added structure-level `ApplicationKeysTrait` retention + lock/structure key-data merge for passcode encryption derivation to address lock-only key-source gaps.
+- 2026-02-22: Updated `ApplicationKeysTrait` parsing to keep candidate-only key payloads (no epoch/master) so structure-sourced candidate root keys are not dropped.
+- 2026-02-22: Reordered passcode command attempts to prefer `type.nestlabs.com`, reduced fallback timeout/retries for `type.googleapis.com`, and skip googleapis fallback after INTERNAL rejection on the same target/trait label.
