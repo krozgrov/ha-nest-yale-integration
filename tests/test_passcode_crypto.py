@@ -59,7 +59,7 @@ def _uint_field(field_number: int, value: int) -> bytes:
 
 class TestPasscodeCrypto(unittest.TestCase):
     @unittest.skipUnless(HAS_CRYPTOGRAPHY, "cryptography dependency is required")
-    def test_config2_authenticator_binds_key_id_header(self) -> None:
+    def test_config2_authenticator_does_not_cover_key_id_header(self) -> None:
         key_id = 0x00004401
         nonce = 0x12345678
         client_root_key = bytes([0xA1] * 32)
@@ -87,10 +87,42 @@ class TestPasscodeCrypto(unittest.TestCase):
         tampered_key_id = 0x00004402
         encrypted[1:5] = tampered_key_id.to_bytes(4, "little")
 
-        self.assertFalse(
+        self.assertTrue(
             verify_encrypted_passcode_config2(
                 encrypted_passcode=bytes(encrypted),
                 key_id=tampered_key_id,
+                enc_key=enc_key,
+                auth_key=auth_key,
+                fingerprint_key=fingerprint_key,
+            )
+        )
+
+    @unittest.skipUnless(HAS_CRYPTOGRAPHY, "cryptography dependency is required")
+    def test_config2_matches_openweave_static_test_vector(self) -> None:
+        key_id = 0x00004404
+        nonce = 0xF4A825C9
+        passcode = "0123456789AB"
+        enc_key = bytes.fromhex("7e733334e66824dc2ad21dd01a197c88")
+        auth_key = bytes.fromhex("b1ae24e8b1d8c36292e7780e55a13111a206f2bf")
+        fingerprint_key = bytes.fromhex("64fff9a8bc5f49f846aaf294c6c13cc3a5d34f1d")
+        expected = bytes.fromhex(
+            "0204440000c925a8f43e8da768c76791f916c3422c82264bde14392b387bda88f8fd7277e7a695fbac"
+        )
+
+        actual = encrypt_passcode_config2(
+            passcode=passcode,
+            key_id=key_id,
+            nonce=nonce,
+            enc_key=enc_key,
+            auth_key=auth_key,
+            fingerprint_key=fingerprint_key,
+        )
+
+        self.assertEqual(expected, actual)
+        self.assertTrue(
+            verify_encrypted_passcode_config2(
+                encrypted_passcode=actual,
+                key_id=key_id,
                 enc_key=enc_key,
                 auth_key=auth_key,
                 fingerprint_key=fingerprint_key,

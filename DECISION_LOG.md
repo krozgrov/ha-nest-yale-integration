@@ -526,5 +526,5 @@ Validation
 - 2026-02-23: Added a guarded prerelease helper script (`scripts/cut_prerelease.sh`) and release notes template to enforce a non-empty one-line HACS-visible description for every prerelease.
 - 2026-02-24: Broaden passcode candidate validation by trying all decoded master-key candidates per slot/key-id and validating via cryptographic authenticator+fingerprint checks (not ASCII decode), reducing false-negative key-material rejection.
 - 2026-02-24: Extend auto key-material probing to also try 32-byte ApplicationKeysTrait candidates as HKDF seed material for client-root derivation and retain epoch-key entries even when key_id is omitted.
-- 2026-02-24: Fix Config2 passcode authenticator input to include `key_id` (`config + key_id + nonce + encrypted_block`) per OpenWeave behavior; previous omission prevented encrypted pincode validation and could produce writes that Nest accepted but lock passcode checks rejected.
+- 2026-02-24: Verified Config2 authenticator semantics against OpenWeave (`WeavePasscodes.cpp`): authenticator input is `config + nonce + encrypted_block` (key_id excluded). Added OpenWeave static-vector regression coverage in tests.
 - 2026-02-24: Ignore temporary reverse-engineering sandboxes (`.tmp_check*/`, `.tmp_weave*/`) in `.gitignore` and remove the local `.tmp_*` directories from the workspace.

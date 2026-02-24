@@ -445,8 +445,8 @@ def encrypt_passcode_config2(
 
     key_id_le = int(key_id & 0xFFFFFFFF).to_bytes(4, "little")
     nonce_le = int(nonce & 0xFFFFFFFF).to_bytes(4, "little")
-    # Config2 authenticator covers header+payload (config + key_id + nonce + encrypted passcode).
-    auth_input = bytes([PASSCODE_CONFIG2]) + key_id_le + nonce_le + encrypted_block
+    # OpenWeave Config2 authenticator covers config + nonce + encrypted passcode.
+    auth_input = bytes([PASSCODE_CONFIG2]) + nonce_le + encrypted_block
     authenticator_full = hmac.new(auth_key, auth_input, hashlib.sha1).digest()
     authenticator = authenticator_full[:PASSCODE_AUTH_LEN]
 
@@ -515,13 +515,12 @@ def decrypt_passcode_config2_padded(
     if len(fingerprint_key) != 20:
         raise PasscodeCryptoError("Fingerprint key must be 20 bytes")
 
-    key_id_le = encrypted_passcode[1:5]
     nonce_le = encrypted_passcode[5:9]
     encrypted_block = encrypted_passcode[9:25]
     authenticator = encrypted_passcode[25:33]
     fingerprint = encrypted_passcode[33:41]
 
-    auth_input = bytes([PASSCODE_CONFIG2]) + key_id_le + nonce_le + encrypted_block
+    auth_input = bytes([PASSCODE_CONFIG2]) + nonce_le + encrypted_block
     expected_auth = hmac.new(auth_key, auth_input, hashlib.sha1).digest()[:PASSCODE_AUTH_LEN]
     if not hmac.compare_digest(authenticator, expected_auth):
         raise PasscodeCryptoError("Encrypted passcode authenticator mismatch")

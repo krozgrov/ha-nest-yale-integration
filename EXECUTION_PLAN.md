@@ -188,5 +188,5 @@ Status updates
 - 2026-02-24: Applied one-time GitHub release hygiene cleanup: updated missing prerelease titles (`b12`, `b11`) and removed stale prerelease tags beyond the keep-last-3 beta policy.
 - 2026-02-24: Updated passcode candidate validation to verify authenticator/fingerprint (not ASCII decode), iterate all decoded master-key candidates, and try 32-byte auto candidates as HKDF seed material for client-root derivation.
 - 2026-02-24: Retained epoch-key entries when key_id is omitted in ApplicationKeysTrait payloads to improve compatibility with partial epoch-key records.
-- 2026-02-24: Fixed Config2 passcode authenticator derivation to include `key_id` in HMAC input (`config + key_id + nonce + encrypted_block`), aligning with OpenWeave and restoring encrypted-pincode validation compatibility.
+- 2026-02-24: Verified Config2 passcode authenticator derivation against OpenWeave source: HMAC input is `config + nonce + encrypted_block` (key_id excluded), and added static-vector coverage to prevent regressions.
 - 2026-02-24: Added `.tmp_check*/` and `.tmp_weave*/` to `.gitignore` and removed the local `.tmp_*` work folders from this workspace.

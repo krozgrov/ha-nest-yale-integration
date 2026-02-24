@@ -31,7 +31,7 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Pre-release testing: `2026.02.21b13` fixes Config2 passcode authenticator derivation to include `key_id`, which is required for encrypted pincode validation and updates.
+Pre-release testing: `2026.02.21b14` re-aligns Config2 authenticator logic with OpenWeave (`config + nonce + encrypted_block`) and adds fixture-vector tests for static passcode encryption output.
 
 ## Release 2026.02.16 - Door/Where/Label mapping stabilization (latest stable)
 
