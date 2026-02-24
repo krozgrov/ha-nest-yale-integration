@@ -8,5 +8,9 @@
   "README_RELEASE_HISTORY_MAX": 3,
   "ACTIVE_PROFILES": [
     "home-assistant"
-  ]
+  ],
+  "HA_STABLE_TAG_FORMAT": "YYYY.MM.DD",
+  "HA_BETA_TAG_FORMAT": "YYYY.MM.DDbN",
+  "HA_RETAIN_STABLE": 2,
+  "HA_RETAIN_BETA": 3
 }

@@ -35,7 +35,6 @@ from .passcode_crypto import (
     ROOT_KEY_FABRIC,
     ROOT_KEY_SERVICE,
     PasscodeCryptoError,
-    decrypt_passcode_config2,
     decode_hex_bytes,
     derive_passcode_config2_keys,
     encrypt_passcode_config2,
@@ -46,6 +45,7 @@ from .passcode_crypto import (
     parse_encrypted_passcode_metadata,
     update_epoch_key_id,
     uses_current_epoch_key,
+    verify_encrypted_passcode_config2,
 )
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -1572,6 +1572,16 @@ class NestAPIClient:
                         service_root_key=service_root_key,
                     )
                 )
+                # Some streams appear to expose client derivation seed material as 32-byte
+                # blobs. Try those as HKDF source material as well.
+                auto_candidates.extend(
+                    self._passcode_material_candidates(
+                        root_key_id,
+                        fabric_secret=client_root_key,
+                        client_root_key=None,
+                        service_root_key=service_root_key,
+                    )
+                )
         elif root_key_id == ROOT_KEY_FABRIC:
             for fabric_secret in candidate_keys_36:
                 auto_candidates.extend(
@@ -1609,13 +1619,14 @@ class NestAPIClient:
         key_id: int,
         nonce: int,
         candidate: dict[str, bytes | str | None],
+        master_key: bytes | None = None,
     ) -> tuple[int, bytes, bytes, bytes]:
-        master_key = self._select_master_key(app_keys_data, key_id)
+        selected_master_key = master_key or self._select_master_key(app_keys_data, key_id)
         epoch_key, resolved_key_id = self._select_epoch_key(app_keys_data, key_id)
         enc_key, auth_key, fingerprint_key = derive_passcode_config2_keys(
             key_id=resolved_key_id,
             nonce=nonce,
-            master_key=master_key,
+            master_key=selected_master_key,
             epoch_key=epoch_key,
             fabric_secret=candidate.get("fabric_secret"),
             client_root_key=candidate.get("client_root_key"),
@@ -1629,6 +1640,7 @@ class NestAPIClient:
         app_keys_data: dict,
         candidate: dict[str, bytes | str | None],
         expected_root_key_id: int | None = None,
+        master_key: bytes | None = None,
     ) -> bool:
         samples = [
             entry
@@ -1651,23 +1663,30 @@ class NestAPIClient:
             payload = sample.get("pincode_bytes")
             if not isinstance(payload, (bytes, bytearray)):
                 continue
-            try:
-                _, enc_key, auth_key, fingerprint_key = self._derive_passcode_keys(
-                    app_keys_data=app_keys_data,
-                    key_id=key_id,
-                    nonce=nonce,
-                    candidate=candidate,
-                )
-                decrypt_passcode_config2(
+            master_key_candidates = (
+                [master_key]
+                if isinstance(master_key, (bytes, bytearray))
+                else self._select_master_key_candidates(app_keys_data, key_id)
+            )
+            for master_key in master_key_candidates:
+                try:
+                    _, enc_key, auth_key, fingerprint_key = self._derive_passcode_keys(
+                        app_keys_data=app_keys_data,
+                        key_id=key_id,
+                        nonce=nonce,
+                        candidate=candidate,
+                        master_key=master_key,
+                    )
+                except (PasscodeCryptoError, RuntimeError, ValueError):
+                    continue
+                if verify_encrypted_passcode_config2(
                     encrypted_passcode=bytes(payload),
                     key_id=key_id,
                     enc_key=enc_key,
                     auth_key=auth_key,
                     fingerprint_key=fingerprint_key,
-                )
-                return True
-            except (PasscodeCryptoError, RuntimeError, ValueError):
-                continue
+                ):
+                    return True
 
         return False
 
@@ -1687,10 +1706,13 @@ class NestAPIClient:
                 return int(entry["key_id"])
         return int(candidates[0]["key_id"])
 
-    @staticmethod
-    def _select_master_key(app_keys_data: dict, key_id: int) -> bytes:
+    @classmethod
+    def _select_master_key_candidates(cls, app_keys_data: dict, key_id: int) -> list[bytes]:
         master_keys = app_keys_data.get("master_keys", []) if isinstance(app_keys_data, dict) else []
         group_short_id = get_app_group_local_number(key_id)
+        candidates: list[bytes] = []
+        seen: set[bytes] = set()
+
         for entry in master_keys:
             if not isinstance(entry, dict):
                 continue
@@ -1698,8 +1720,28 @@ class NestAPIClient:
                 continue
             key_hex = entry.get("key_hex")
             key_bytes = decode_hex_bytes(key_hex, expected_len=32)
-            if key_bytes:
-                return key_bytes
+            if key_bytes and key_bytes not in seen:
+                seen.add(key_bytes)
+                candidates.append(key_bytes)
+
+        # Fallback for variant payloads where master key records don't decode cleanly but
+        # raw 32-byte key blobs are still present.
+        for key_bytes in cls._decode_app_keys_candidates(
+            app_keys_data, field_name="candidate_keys_32", expected_len=32
+        ):
+            if key_bytes in seen:
+                continue
+            seen.add(key_bytes)
+            candidates.append(key_bytes)
+
+        return candidates
+
+    @classmethod
+    def _select_master_key(cls, app_keys_data: dict, key_id: int) -> bytes:
+        candidates = cls._select_master_key_candidates(app_keys_data, key_id)
+        if candidates:
+            return candidates[0]
+        group_short_id = get_app_group_local_number(key_id)
         raise RuntimeError(
             f"Application group short id {group_short_id} not found in ApplicationKeysTrait"
         )
@@ -1782,7 +1824,13 @@ class NestAPIClient:
 
         selected_key_id = self._select_passcode_key_id(device_id, guest_user_id)
         try:
-            master_key = self._select_master_key(app_keys_data, selected_key_id)
+            master_key_candidates = self._select_master_key_candidates(
+                app_keys_data, selected_key_id
+            )
+            if not master_key_candidates:
+                raise RuntimeError(
+                    "No application master key candidates were found in ApplicationKeysTrait"
+                )
             epoch_key, resolved_key_id = self._select_epoch_key(app_keys_data, selected_key_id)
         except PasscodeCryptoError as err:
             raise RuntimeError(f"Invalid ApplicationKeysTrait payload: {err}") from err
@@ -1849,51 +1897,81 @@ class NestAPIClient:
         validated_variants: list[tuple[bytes, str]] = []
         fallback_variants: list[tuple[bytes, str]] = []
         seen_payloads: set[bytes] = set()
+        validation_cache: dict[tuple[tuple[bytes | None, bytes | None, bytes | None], bytes], bool] = {}
         last_crypto_error: PasscodeCryptoError | None = None
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Evaluating %d root-material candidate(s) across %d master-key candidate(s) for %s",
+                len(material_candidates),
+                len(master_key_candidates),
+                device_id,
+            )
         for candidate in material_candidates:
             candidate_name = str(candidate.get("name") or "unknown")
-            is_validated = True
-            if had_validation_samples and not self._material_matches_existing_encrypted_pincodes(
-                device_id,
-                app_keys_data,
-                candidate,
-                expected_root_key_id=root_key_id,
-            ):
-                is_validated = False
-                _LOGGER.debug(
-                    "Passcode root material candidate %s rejected for %s (validation mismatch)",
-                    candidate_name,
-                    device_id,
-                )
-            try:
-                enc_key, auth_key, fingerprint_key = derive_passcode_config2_keys(
+            candidate_signature = (
+                bytes(candidate.get("fabric_secret"))
+                if isinstance(candidate.get("fabric_secret"), (bytes, bytearray))
+                else None,
+                bytes(candidate.get("client_root_key"))
+                if isinstance(candidate.get("client_root_key"), (bytes, bytearray))
+                else None,
+                bytes(candidate.get("service_root_key"))
+                if isinstance(candidate.get("service_root_key"), (bytes, bytearray))
+                else None,
+            )
+            for master_index, master_key in enumerate(master_key_candidates, start=1):
+                source_name = f"{candidate_name}:master_{master_index}"
+                is_validated = True
+                if had_validation_samples:
+                    cache_key = (candidate_signature, master_key)
+                    if cache_key not in validation_cache:
+                        validation_cache[cache_key] = self._material_matches_existing_encrypted_pincodes(
+                            device_id,
+                            app_keys_data,
+                            candidate,
+                            expected_root_key_id=root_key_id,
+                            master_key=master_key,
+                        )
+                    is_validated = validation_cache[cache_key]
+                    if not is_validated:
+                        _LOGGER.debug(
+                            (
+                                "Passcode key-material candidate %s (master_%d) "
+                                "rejected for %s (validation mismatch)"
+                            ),
+                            candidate_name,
+                            master_index,
+                            device_id,
+                        )
+                try:
+                    enc_key, auth_key, fingerprint_key = derive_passcode_config2_keys(
+                        key_id=resolved_key_id,
+                        nonce=nonce,
+                        master_key=master_key,
+                        epoch_key=epoch_key,
+                        fabric_secret=candidate.get("fabric_secret"),
+                        client_root_key=candidate.get("client_root_key"),
+                        service_root_key=candidate.get("service_root_key"),
+                    )
+                except PasscodeCryptoError as err:
+                    last_crypto_error = err
+                    continue
+
+                payload = encrypt_passcode_config2(
+                    passcode=passcode_text,
                     key_id=resolved_key_id,
                     nonce=nonce,
-                    master_key=master_key,
-                    epoch_key=epoch_key,
-                    fabric_secret=candidate.get("fabric_secret"),
-                    client_root_key=candidate.get("client_root_key"),
-                    service_root_key=candidate.get("service_root_key"),
+                    enc_key=enc_key,
+                    auth_key=auth_key,
+                    fingerprint_key=fingerprint_key,
                 )
-            except PasscodeCryptoError as err:
-                last_crypto_error = err
-                continue
-
-            payload = encrypt_passcode_config2(
-                passcode=passcode_text,
-                key_id=resolved_key_id,
-                nonce=nonce,
-                enc_key=enc_key,
-                auth_key=auth_key,
-                fingerprint_key=fingerprint_key,
-            )
-            if payload in seen_payloads:
-                continue
-            seen_payloads.add(payload)
-            if is_validated:
-                validated_variants.append((payload, candidate_name))
-            else:
-                fallback_variants.append((payload, candidate_name))
+                if payload in seen_payloads:
+                    continue
+                seen_payloads.add(payload)
+                if is_validated:
+                    validated_variants.append((payload, source_name))
+                else:
+                    fallback_variants.append((payload, source_name))
 
         if validated_variants:
             _LOGGER.debug(

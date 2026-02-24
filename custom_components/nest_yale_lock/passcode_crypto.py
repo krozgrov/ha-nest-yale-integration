@@ -138,12 +138,13 @@ def _decode_epoch_key(payload: bytes) -> dict[str, int | str] | None:
             continue
         pos = _skip_field(payload, pos, wire_type)
 
-    if key_id is None or not key_bytes:
+    if not key_bytes:
         return None
     result: dict[str, int | str] = {
-        "key_id": key_id,
         "key_hex": key_bytes.hex(),
     }
+    if key_id is not None:
+        result["key_id"] = key_id
     if start_time is not None:
         result["start_time"] = start_time
     return result
@@ -442,14 +443,16 @@ def encrypt_passcode_config2(
     encryptor = cipher.encryptor()
     encrypted_block = encryptor.update(padded_passcode) + encryptor.finalize()
 
+    key_id_le = int(key_id & 0xFFFFFFFF).to_bytes(4, "little")
     nonce_le = int(nonce & 0xFFFFFFFF).to_bytes(4, "little")
-    auth_input = bytes([PASSCODE_CONFIG2]) + nonce_le + encrypted_block
+    # Config2 authenticator covers header+payload (config + key_id + nonce + encrypted passcode).
+    auth_input = bytes([PASSCODE_CONFIG2]) + key_id_le + nonce_le + encrypted_block
     authenticator_full = hmac.new(auth_key, auth_input, hashlib.sha1).digest()
     authenticator = authenticator_full[:PASSCODE_AUTH_LEN]
 
     output = bytearray(PASSCODE_ENCRYPTED_LEN)
     output[0] = PASSCODE_CONFIG2
-    output[1:5] = int(key_id & 0xFFFFFFFF).to_bytes(4, "little")
+    output[1:5] = key_id_le
     output[5:9] = nonce_le
     output[9:25] = encrypted_block
     output[25:33] = authenticator
@@ -466,6 +469,35 @@ def decrypt_passcode_config2(
     fingerprint_key: bytes,
 ) -> str:
     """Decrypt and verify a Weave Config2 passcode payload."""
+    padded_passcode = decrypt_passcode_config2_padded(
+        encrypted_passcode=encrypted_passcode,
+        key_id=key_id,
+        enc_key=enc_key,
+        auth_key=auth_key,
+        fingerprint_key=fingerprint_key,
+    )
+
+    passcode_end = padded_passcode.find(b"\x00")
+    if passcode_end < 0:
+        passcode_end = len(padded_passcode)
+    passcode_bytes = padded_passcode[:passcode_end]
+    if not passcode_bytes:
+        raise PasscodeCryptoError("Decrypted passcode is empty")
+    try:
+        return passcode_bytes.decode("ascii")
+    except UnicodeDecodeError as err:
+        raise PasscodeCryptoError("Decrypted passcode is not valid ASCII") from err
+
+
+def decrypt_passcode_config2_padded(
+    *,
+    encrypted_passcode: bytes,
+    key_id: int,
+    enc_key: bytes,
+    auth_key: bytes,
+    fingerprint_key: bytes,
+) -> bytes:
+    """Decrypt and verify a Weave Config2 payload, returning 16-byte padded passcode."""
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
     if len(encrypted_passcode) != PASSCODE_ENCRYPTED_LEN:
@@ -483,12 +515,13 @@ def decrypt_passcode_config2(
     if len(fingerprint_key) != 20:
         raise PasscodeCryptoError("Fingerprint key must be 20 bytes")
 
+    key_id_le = encrypted_passcode[1:5]
     nonce_le = encrypted_passcode[5:9]
     encrypted_block = encrypted_passcode[9:25]
     authenticator = encrypted_passcode[25:33]
     fingerprint = encrypted_passcode[33:41]
 
-    auth_input = bytes([PASSCODE_CONFIG2]) + nonce_le + encrypted_block
+    auth_input = bytes([PASSCODE_CONFIG2]) + key_id_le + nonce_le + encrypted_block
     expected_auth = hmac.new(auth_key, auth_input, hashlib.sha1).digest()[:PASSCODE_AUTH_LEN]
     if not hmac.compare_digest(authenticator, expected_auth):
         raise PasscodeCryptoError("Encrypted passcode authenticator mismatch")
@@ -502,17 +535,29 @@ def decrypt_passcode_config2(
     ).digest()[:PASSCODE_FINGERPRINT_LEN]
     if not hmac.compare_digest(fingerprint, expected_fingerprint):
         raise PasscodeCryptoError("Encrypted passcode fingerprint mismatch")
+    return padded_passcode
 
-    passcode_end = padded_passcode.find(b"\x00")
-    if passcode_end < 0:
-        passcode_end = len(padded_passcode)
-    passcode_bytes = padded_passcode[:passcode_end]
-    if not passcode_bytes:
-        raise PasscodeCryptoError("Decrypted passcode is empty")
+
+def verify_encrypted_passcode_config2(
+    *,
+    encrypted_passcode: bytes,
+    key_id: int,
+    enc_key: bytes,
+    auth_key: bytes,
+    fingerprint_key: bytes,
+) -> bool:
+    """Return True when auth+fingerprint verification succeeds for a Config2 payload."""
     try:
-        return passcode_bytes.decode("ascii")
-    except UnicodeDecodeError as err:
-        raise PasscodeCryptoError("Decrypted passcode is not valid ASCII") from err
+        decrypt_passcode_config2_padded(
+            encrypted_passcode=encrypted_passcode,
+            key_id=key_id,
+            enc_key=enc_key,
+            auth_key=auth_key,
+            fingerprint_key=fingerprint_key,
+        )
+        return True
+    except PasscodeCryptoError:
+        return False
 
 
 def decode_hex_bytes(value: Any, *, expected_len: int | None = None) -> bytes | None:

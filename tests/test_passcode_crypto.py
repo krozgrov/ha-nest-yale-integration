@@ -7,6 +7,13 @@ from pathlib import Path
 import sys
 import unittest
 
+try:
+    import cryptography  # noqa: F401
+except Exception:  # pragma: no cover - dependency may be unavailable in lightweight test envs
+    HAS_CRYPTOGRAPHY = False
+else:
+    HAS_CRYPTOGRAPHY = True
+
 MODULE_PATH = (
     Path(__file__).resolve().parents[1]
     / "custom_components"
@@ -21,6 +28,9 @@ sys.modules[SPEC.name] = PASSCODE_CRYPTO
 SPEC.loader.exec_module(PASSCODE_CRYPTO)
 
 parse_application_keys_trait = PASSCODE_CRYPTO.parse_application_keys_trait
+derive_passcode_config2_keys = PASSCODE_CRYPTO.derive_passcode_config2_keys
+encrypt_passcode_config2 = PASSCODE_CRYPTO.encrypt_passcode_config2
+verify_encrypted_passcode_config2 = PASSCODE_CRYPTO.verify_encrypted_passcode_config2
 
 
 def _varint(value: int) -> bytes:
@@ -48,6 +58,45 @@ def _uint_field(field_number: int, value: int) -> bytes:
 
 
 class TestPasscodeCrypto(unittest.TestCase):
+    @unittest.skipUnless(HAS_CRYPTOGRAPHY, "cryptography dependency is required")
+    def test_config2_authenticator_binds_key_id_header(self) -> None:
+        key_id = 0x00004401
+        nonce = 0x12345678
+        client_root_key = bytes([0xA1] * 32)
+        master_key = bytes([0xB2] * 32)
+        enc_key, auth_key, fingerprint_key = derive_passcode_config2_keys(
+            key_id=key_id,
+            nonce=nonce,
+            master_key=master_key,
+            epoch_key=None,
+            fabric_secret=None,
+            client_root_key=client_root_key,
+            service_root_key=None,
+        )
+        encrypted = bytearray(
+            encrypt_passcode_config2(
+                passcode="1234",
+                key_id=key_id,
+                nonce=nonce,
+                enc_key=enc_key,
+                auth_key=auth_key,
+                fingerprint_key=fingerprint_key,
+            )
+        )
+
+        tampered_key_id = 0x00004402
+        encrypted[1:5] = tampered_key_id.to_bytes(4, "little")
+
+        self.assertFalse(
+            verify_encrypted_passcode_config2(
+                encrypted_passcode=bytes(encrypted),
+                key_id=tampered_key_id,
+                enc_key=enc_key,
+                auth_key=auth_key,
+                fingerprint_key=fingerprint_key,
+            )
+        )
+
     def test_parse_application_keys_trait_collects_candidates(self) -> None:
         epoch_key = bytes([0x11] * 32)
         master_key = bytes([0x22] * 32)
@@ -126,6 +175,23 @@ class TestPasscodeCrypto(unittest.TestCase):
         candidate_hex_36 = {entry["key_hex"] for entry in parsed["candidate_keys_36"]}
         self.assertIn(deep_32.hex(), candidate_hex_32)
         self.assertIn(deep_36.hex(), candidate_hex_36)
+
+    def test_parse_application_keys_trait_keeps_epoch_key_without_id(self) -> None:
+        epoch_key = bytes([0x99] * 32)
+        timestamp = _uint_field(1, 1)
+        epoch_entry = b"".join(
+            [
+                _len_field(2, timestamp),
+                _len_field(3, epoch_key),
+            ]
+        )
+        payload = _len_field(1, epoch_entry)
+
+        parsed = parse_application_keys_trait(payload)
+
+        self.assertEqual(1, len(parsed["epoch_keys"]))
+        self.assertEqual(epoch_key.hex(), parsed["epoch_keys"][0]["key_hex"])
+        self.assertNotIn("key_id", parsed["epoch_keys"][0])
 
 
 if __name__ == "__main__":

@@ -52,3 +52,7 @@ htmlcov/
 
 # Local research / comparisons (do not commit)
 _research/
+
+# Temporary reverse-engineering sandboxes (do not commit)
+.tmp_check*/
+.tmp_weave*/

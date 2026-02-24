@@ -31,7 +31,7 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Pre-release testing: `2026.02.21b12` blocks unvalidated passcode key-material writes by default to prevent silent passcode clears in the Nest app.
+Pre-release testing: `2026.02.21b13` fixes Config2 passcode authenticator derivation to include `key_id`, which is required for encrypted pincode validation and updates.
 
 ## Release 2026.02.16 - Door/Where/Label mapping stabilization (latest stable)
 
@@ -53,11 +53,16 @@ To prevent empty/missing HACS release descriptions, use the release helper scrip
    - `custom_components/nest_yale_lock/manifest.json`
 4. Create the prerelease:
    - `scripts/cut_prerelease.sh <tag> release-notes/<tag>.md <target_branch>`
+   - The script sets a descriptive release title from the first summary line and enforces release retention.
 
 The script fails if:
 - The notes file is missing/empty
 - The first line is missing, too short, or a markdown header
 - `manifest.json` version does not match the tag
+
+Retention policy enforced by script:
+- Keep latest `HA_RETAIN_BETA` pre-releases (default `3`)
+- Keep latest `HA_RETAIN_STABLE` stable releases (default `2`)
 
 ## Known Limitations
 
