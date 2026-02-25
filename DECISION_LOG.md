@@ -6,6 +6,26 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-02-25: Expand ApplicationKeysTrait fallback sources for passcode validation
+Why
+- `2026.02.21b14` still failed with `No passcode key candidates validated...` despite lock/structure key merging.
+- Observed streams can carry relevant `ApplicationKeysTrait` data on non-lock `DEVICE_*` resources (for example bridge/connect devices), and multiple entries for the same resource may contain partial key material.
+
+Decision
+- Retain `ApplicationKeysTrait` for all `DEVICE_*`/`STRUCTURE_*` resources in parser output (without classifying non-lock devices as locks).
+- Merge all decoded ApplicationKeys entries per resource instead of selecting the first decodable entry.
+- Expand passcode key-resolution source list beyond lock+structure to include additional observed ApplicationKeys resources as fallback inputs.
+- Cap verbose validation-mismatch debug lines and summarize suppressed counts.
+
+Impact
+- Increases chance of discovering usable root/master key material required to validate existing encrypted pincodes.
+- Reduces debug-log spam during candidate matrix evaluation.
+- Does not relax the safety gate: passcode updates still abort when no candidate validates.
+
+Validation
+- `python3 -m py_compile custom_components/nest_yale_lock/api_client.py custom_components/nest_yale_lock/protobuf_handler.py custom_components/nest_yale_lock/passcode_crypto.py tests/test_passcode_crypto.py`
+- `python3 -m unittest tests/test_passcode_crypto.py`
+
 ### 2026-02-24: Enforce descriptive prerelease titles and mandatory retention cleanup
 Why
 - `2026.02.21b12` shipped with a valid notes body but a non-descriptive release title (`2026.02.21b12`), making HACS-facing release context inconsistent.

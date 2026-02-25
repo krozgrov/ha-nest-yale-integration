@@ -190,3 +190,4 @@ Status updates
 - 2026-02-24: Retained epoch-key entries when key_id is omitted in ApplicationKeysTrait payloads to improve compatibility with partial epoch-key records.
 - 2026-02-24: Verified Config2 passcode authenticator derivation against OpenWeave source: HMAC input is `config + nonce + encrypted_block` (key_id excluded), and added static-vector coverage to prevent regressions.
 - 2026-02-24: Added `.tmp_check*/` and `.tmp_weave*/` to `.gitignore` and removed the local `.tmp_*` work folders from this workspace.
+- 2026-02-25: Expanded passcode key-source fallback to include additional `DEVICE_*` ApplicationKeysTrait providers, merged all per-resource ApplicationKeys entries before decode output, and reduced validation-mismatch debug spam while keeping strict validated-only passcode updates by default.

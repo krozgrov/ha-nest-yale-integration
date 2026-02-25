@@ -1358,17 +1358,24 @@ class NestAPIClient:
         source_priority = [device_id]
         if isinstance(structure_resource_id, str) and structure_resource_id:
             source_priority.append(structure_resource_id)
-        else:
-            for trait_info in all_traits.values():
-                if not isinstance(trait_info, dict):
-                    continue
-                object_id = trait_info.get("object_id")
-                if (
-                    isinstance(object_id, str)
-                    and object_id.startswith("STRUCTURE_")
-                    and object_id not in source_priority
-                ):
-                    source_priority.append(object_id)
+
+        # Fall back to additional resources (e.g. bridge/connect devices) that may carry
+        # related ApplicationKeysTrait material for the lock.
+        for trait_info in all_traits.values():
+            if not isinstance(trait_info, dict):
+                continue
+            type_url = trait_info.get("type_url")
+            if not isinstance(type_url, str) or not type_url.endswith(
+                "/weave.trait.auth.ApplicationKeysTrait"
+            ):
+                continue
+            object_id = trait_info.get("object_id")
+            if (
+                isinstance(object_id, str)
+                and object_id.startswith(("DEVICE_", "STRUCTURE_"))
+                and object_id not in source_priority
+            ):
+                source_priority.append(object_id)
 
         candidate_sets: list[tuple[int, str, dict]] = []
         for trait_info in all_traits.values():
@@ -1898,6 +1905,8 @@ class NestAPIClient:
         fallback_variants: list[tuple[bytes, str]] = []
         seen_payloads: set[bytes] = set()
         validation_cache: dict[tuple[tuple[bytes | None, bytes | None, bytes | None], bytes], bool] = {}
+        validation_mismatch_logs = 0
+        validation_mismatch_suppressed = 0
         last_crypto_error: PasscodeCryptoError | None = None
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
@@ -1934,15 +1943,19 @@ class NestAPIClient:
                         )
                     is_validated = validation_cache[cache_key]
                     if not is_validated:
-                        _LOGGER.debug(
-                            (
-                                "Passcode key-material candidate %s (master_%d) "
-                                "rejected for %s (validation mismatch)"
-                            ),
-                            candidate_name,
-                            master_index,
-                            device_id,
-                        )
+                        if validation_mismatch_logs < 12:
+                            validation_mismatch_logs += 1
+                            _LOGGER.debug(
+                                (
+                                    "Passcode key-material candidate %s (master_%d) "
+                                    "rejected for %s (validation mismatch)"
+                                ),
+                                candidate_name,
+                                master_index,
+                                device_id,
+                            )
+                        else:
+                            validation_mismatch_suppressed += 1
                 try:
                     enc_key, auth_key, fingerprint_key = derive_passcode_config2_keys(
                         key_id=resolved_key_id,
@@ -1972,6 +1985,13 @@ class NestAPIClient:
                     validated_variants.append((payload, source_name))
                 else:
                     fallback_variants.append((payload, source_name))
+
+        if validation_mismatch_suppressed and _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Suppressed %d additional validation mismatch log lines for %s",
+                validation_mismatch_suppressed,
+                device_id,
+            )
 
         if validated_variants:
             _LOGGER.debug(

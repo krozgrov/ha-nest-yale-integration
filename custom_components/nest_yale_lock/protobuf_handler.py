@@ -1135,15 +1135,18 @@ class NestProtobufHandler:
 
                 if descriptor_name == "weave.trait.auth.ApplicationKeysTrait":
                     is_structure_resource = isinstance(obj_id, str) and obj_id.startswith("STRUCTURE_")
-                    if not (_is_device_lock_id(obj_id) or is_structure_resource):
+                    is_device_resource = isinstance(obj_id, str) and obj_id.startswith("DEVICE_")
+                    if not (is_device_resource or is_structure_resource):
                         continue
-                    if _is_device_lock_id(obj_id):
-                        # ApplicationKeys can appear on non-lock devices. Only retain it
-                        # when this resource is already known to be a lock.
-                        if not (is_lock or obj_id in known_lock_ids):
-                            continue
+                    if is_device_resource and (is_lock or obj_id in known_lock_ids):
                         lock_device_ids.add(obj_id)
-                    decoded_keys = None
+
+                    merged_keys = {
+                        "epoch_keys": [],
+                        "master_keys": [],
+                        "candidate_keys_32": [],
+                        "candidate_keys_36": [],
+                    }
                     decoded_type_url = ""
                     for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
                         any_msg = entry.get("any_msg")
@@ -1152,17 +1155,40 @@ class NestProtobufHandler:
                         candidate = parse_application_keys_trait(any_msg.value)
                         if not candidate:
                             continue
-                        has_key_material = bool(
-                            candidate.get("epoch_keys")
-                            or candidate.get("master_keys")
-                            or candidate.get("candidate_keys_32")
-                            or candidate.get("candidate_keys_36")
-                        )
-                        if has_key_material:
-                            decoded_keys = candidate
+                        for key in (
+                            "epoch_keys",
+                            "master_keys",
+                            "candidate_keys_32",
+                            "candidate_keys_36",
+                        ):
+                            value = candidate.get(key)
+                            if isinstance(value, list):
+                                merged_keys[key].extend(item for item in value if isinstance(item, dict))
+                        if not decoded_type_url:
                             decoded_type_url = any_msg.type_url or entry.get("type_url") or ""
-                            break
-                    if decoded_keys is not None:
+
+                    # De-duplicate by deterministic dict signature.
+                    for key in ("epoch_keys", "master_keys", "candidate_keys_32", "candidate_keys_36"):
+                        deduped: list[dict] = []
+                        seen_signatures: set[tuple[tuple[str, str], ...]] = set()
+                        for entry in merged_keys[key]:
+                            signature = tuple(
+                                (str(k), str(entry.get(k)))
+                                for k in sorted(entry.keys())
+                            )
+                            if signature in seen_signatures:
+                                continue
+                            seen_signatures.add(signature)
+                            deduped.append(entry)
+                        merged_keys[key] = deduped
+
+                    has_key_material = bool(
+                        merged_keys.get("epoch_keys")
+                        or merged_keys.get("master_keys")
+                        or merged_keys.get("candidate_keys_32")
+                        or merged_keys.get("candidate_keys_36")
+                    )
+                    if has_key_material:
                         type_url = (
                             decoded_type_url
                             or "type.googleapis.com/weave.trait.auth.ApplicationKeysTrait"
@@ -1172,7 +1198,7 @@ class NestProtobufHandler:
                             "object_id": obj_id,
                             "type_url": type_url,
                             "decoded": True,
-                            "data": decoded_keys,
+                            "data": merged_keys,
                         }
                         _LOGGER.debug(
                             (
@@ -1180,10 +1206,10 @@ class NestProtobufHandler:
                                 "master_keys=%d epoch_keys=%d candidate32=%d candidate36=%d"
                             ),
                             obj_id,
-                            len(decoded_keys.get("master_keys", [])),
-                            len(decoded_keys.get("epoch_keys", [])),
-                            len(decoded_keys.get("candidate_keys_32", [])),
-                            len(decoded_keys.get("candidate_keys_36", [])),
+                            len(merged_keys.get("master_keys", [])),
+                            len(merged_keys.get("epoch_keys", [])),
+                            len(merged_keys.get("candidate_keys_32", [])),
+                            len(merged_keys.get("candidate_keys_36", [])),
                         )
                     continue
 
