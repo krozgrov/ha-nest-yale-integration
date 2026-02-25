@@ -109,6 +109,7 @@ _ENV_FABRIC_SECRET_HEX = "NEST_YALE_FABRIC_SECRET_HEX"
 _ENV_CLIENT_ROOT_KEY_HEX = "NEST_YALE_CLIENT_ROOT_KEY_HEX"
 _ENV_SERVICE_ROOT_KEY_HEX = "NEST_YALE_SERVICE_ROOT_KEY_HEX"
 _ENV_ALLOW_UNVALIDATED_PASSCODE_MATERIAL = "NEST_YALE_ALLOW_UNVALIDATED_PASSCODE_MATERIAL"
+_ENV_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES = "NEST_YALE_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES"
 _PASSCODE_FALLBACK_TIMEOUT_SECONDS = 12
 _PASSCODE_FALLBACK_TRANSPORT_ATTEMPTS = 1
 
@@ -1561,6 +1562,13 @@ class NestAPIClient:
 
         auto_candidates: list[dict[str, bytes | str | None]] = []
         if root_key_id == ROOT_KEY_CLIENT:
+            # ApplicationKeysTrait formally carries epoch keys + app group master keys.
+            # Treating arbitrary 32-byte entries as client root key material causes
+            # false-positive encryptions that can overwrite passcodes with unusable values.
+            allow_client_root_from_appkeys = (
+                str(os.getenv(_ENV_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES, "")).strip().lower()
+                in {"1", "true", "yes", "on"}
+            )
             for fabric_secret in candidate_keys_36:
                 auto_candidates.extend(
                     self._passcode_material_candidates(
@@ -1570,24 +1578,33 @@ class NestAPIClient:
                         service_root_key=service_root_key,
                     )
                 )
-            for client_root_key in candidate_keys_32:
-                auto_candidates.extend(
-                    self._passcode_material_candidates(
-                        root_key_id,
-                        fabric_secret=None,
-                        client_root_key=client_root_key,
-                        service_root_key=service_root_key,
+            if allow_client_root_from_appkeys:
+                for client_root_key in candidate_keys_32:
+                    auto_candidates.extend(
+                        self._passcode_material_candidates(
+                            root_key_id,
+                            fabric_secret=None,
+                            client_root_key=client_root_key,
+                            service_root_key=service_root_key,
+                        )
                     )
-                )
-                # Some streams appear to expose client derivation seed material as 32-byte
-                # blobs. Try those as HKDF source material as well.
-                auto_candidates.extend(
-                    self._passcode_material_candidates(
-                        root_key_id,
-                        fabric_secret=client_root_key,
-                        client_root_key=None,
-                        service_root_key=service_root_key,
+                    # Optional debug fallback: treat 32-byte blobs as possible HKDF seed.
+                    auto_candidates.extend(
+                        self._passcode_material_candidates(
+                            root_key_id,
+                            fabric_secret=client_root_key,
+                            client_root_key=None,
+                            service_root_key=service_root_key,
+                        )
                     )
+            elif candidate_keys_32 and _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    (
+                        "Skipping %d 32-byte ApplicationKeysTrait candidates for client root derivation; "
+                        "set %s=1 to re-enable legacy probing."
+                    ),
+                    len(candidate_keys_32),
+                    _ENV_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES,
                 )
         elif root_key_id == ROOT_KEY_FABRIC:
             for fabric_secret in candidate_keys_36:
@@ -1731,15 +1748,16 @@ class NestAPIClient:
                 seen.add(key_bytes)
                 candidates.append(key_bytes)
 
-        # Fallback for variant payloads where master key records don't decode cleanly but
-        # raw 32-byte key blobs are still present.
-        for key_bytes in cls._decode_app_keys_candidates(
-            app_keys_data, field_name="candidate_keys_32", expected_len=32
-        ):
-            if key_bytes in seen:
-                continue
-            seen.add(key_bytes)
-            candidates.append(key_bytes)
+        if not candidates:
+            # Fallback for variant payloads where master key records don't decode cleanly
+            # but raw 32-byte key blobs are still present.
+            for key_bytes in cls._decode_app_keys_candidates(
+                app_keys_data, field_name="candidate_keys_32", expected_len=32
+            ):
+                if key_bytes in seen:
+                    continue
+                seen.add(key_bytes)
+                candidates.append(key_bytes)
 
         return candidates
 

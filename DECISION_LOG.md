@@ -548,3 +548,4 @@ Validation
 - 2026-02-24: Extend auto key-material probing to also try 32-byte ApplicationKeysTrait candidates as HKDF seed material for client-root derivation and retain epoch-key entries even when key_id is omitted.
 - 2026-02-24: Verified Config2 authenticator semantics against OpenWeave (`WeavePasscodes.cpp`): authenticator input is `config + nonce + encrypted_block` (key_id excluded). Added OpenWeave static-vector regression coverage in tests.
 - 2026-02-24: Ignore temporary reverse-engineering sandboxes (`.tmp_check*/`, `.tmp_weave*/`) in `.gitignore` and remove the local `.tmp_*` directories from the workspace.
+- 2026-02-25: Treat `ApplicationKeysTrait` as epoch/master-key material by default (not client-root material); disable 32-byte client-root probing unless explicitly enabled via `NEST_YALE_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES=1`, and only use `candidate_keys_32` as master-key fallback when decoded `master_keys` are unavailable.
