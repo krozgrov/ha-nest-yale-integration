@@ -192,3 +192,4 @@ Status updates
 - 2026-02-24: Added `.tmp_check*/` and `.tmp_weave*/` to `.gitignore` and removed the local `.tmp_*` work folders from this workspace.
 - 2026-02-25: Expanded passcode key-source fallback to include additional `DEVICE_*` ApplicationKeysTrait providers, merged all per-resource ApplicationKeys entries before decode output, and reduced validation-mismatch debug spam while keeping strict validated-only passcode updates by default.
 - 2026-02-25: Disabled default client-root probing from 32-byte `ApplicationKeysTrait` candidates, gated legacy probing behind `NEST_YALE_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES=1`, and restricted `candidate_keys_32` master-key fallback to decode-failure cases only.
+- 2026-02-25: Re-enabled validated 32-byte client-root probing by default after b16 field feedback; probing can be disabled with `NEST_YALE_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES=0`, while unvalidated writes remain blocked unless explicitly forced.

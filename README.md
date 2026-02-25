@@ -31,7 +31,7 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Pre-release testing: `2026.02.21b16` tightens passcode key handling by treating `ApplicationKeysTrait` data as epoch/master-key material (not client-root material by default), reducing false encryption candidates and surfacing root-key requirements earlier.
+Pre-release testing: `2026.02.21b17` restores validated client-root probing from discovered 32-byte candidates by default (writes still require validation unless explicitly forced), avoiding premature "missing key material" aborts.
 
 ## Release 2026.02.16 - Door/Where/Label mapping stabilization (latest stable)
 
@@ -199,7 +199,7 @@ Notes:
 - The set action now tries both device-level and structure-level user pincode targets before failing.
 - The set action derives passcode keys from encrypted pincode metadata plus `ApplicationKeysTrait` epoch/master keys. Root key material is still required for root-based key derivation; set one of these Home Assistant environment variables when needed: `NEST_YALE_CLIENT_ROOT_KEY_HEX` (32-byte hex), `NEST_YALE_FABRIC_SECRET_HEX` (36-byte hex), or `NEST_YALE_SERVICE_ROOT_KEY_HEX` (32-byte hex).
 - For safety, unvalidated encryption candidates are blocked by default to avoid silent passcode clears in the Nest app. You can force unvalidated attempts only for debugging by setting `NEST_YALE_ALLOW_UNVALIDATED_PASSCODE_MATERIAL=1`.
-- Legacy probing that treats 32-byte `ApplicationKeysTrait` blobs as client-root material is disabled by default. Re-enable only for debugging with `NEST_YALE_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES=1`.
+- Candidate probing that treats discovered 32-byte `ApplicationKeysTrait` blobs as possible client-root material is enabled by default, but writes still require validation unless forced with `NEST_YALE_ALLOW_UNVALIDATED_PASSCODE_MATERIAL=1`. You can disable this probing by setting `NEST_YALE_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES=0`.
 - Some lock/account combinations still reject plaintext passcode updates because Nest expects encrypted pincode payloads.
 - This integration updates/deletes passcodes for existing Nest guest identities; creating new guest identities still needs to be done in the Nest app.
 - Passcode data is never exposed as entity attributes; only non-sensitive capability/slot metadata is stored.

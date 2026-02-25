@@ -1565,10 +1565,15 @@ class NestAPIClient:
             # ApplicationKeysTrait formally carries epoch keys + app group master keys.
             # Treating arbitrary 32-byte entries as client root key material causes
             # false-positive encryptions that can overwrite passcodes with unusable values.
-            allow_client_root_from_appkeys = (
-                str(os.getenv(_ENV_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES, "")).strip().lower()
-                in {"1", "true", "yes", "on"}
-            )
+            # Keep this probing enabled by default because validation against existing
+            # encrypted pincodes gates all writes unless explicitly overridden.
+            raw_probe_flag = os.getenv(_ENV_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES)
+            if raw_probe_flag is None:
+                allow_client_root_from_appkeys = True
+            else:
+                allow_client_root_from_appkeys = (
+                    str(raw_probe_flag).strip().lower() in {"1", "true", "yes", "on"}
+                )
             for fabric_secret in candidate_keys_36:
                 auto_candidates.extend(
                     self._passcode_material_candidates(
@@ -1601,7 +1606,7 @@ class NestAPIClient:
                 _LOGGER.debug(
                     (
                         "Skipping %d 32-byte ApplicationKeysTrait candidates for client root derivation; "
-                        "set %s=1 to re-enable legacy probing."
+                        "set %s=1 to enable probing."
                     ),
                     len(candidate_keys_32),
                     _ENV_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES,
