@@ -6,6 +6,24 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-02-26: Expand passcode key-candidate sourcing to all auth traits
+Why
+- `2026.02.21b17` still fails with `No passcode key candidates validated...` after trying all `ApplicationKeysTrait` candidates.
+- Some accounts may expose additional auth key material on non-`ApplicationKeysTrait` `weave.trait.auth.*` payloads.
+
+Decision
+- Parse and retain candidate 32-byte/36-byte key blobs from any observed `weave.trait.auth.*` trait payload on `DEVICE_*`/`STRUCTURE_*` resources.
+- Merge those auth-trait candidates into passcode key candidate pools alongside `ApplicationKeysTrait` data.
+- Keep existing safety gate unchanged: passcode writes still abort unless at least one candidate validates (unless explicitly forced).
+
+Impact
+- Broadens key-material discovery without weakening validated-write safeguards.
+- Improves compatibility where Nest exposes usable auth key bytes outside `ApplicationKeysTrait`.
+
+Validation
+- `python3 -m py_compile custom_components/nest_yale_lock/api_client.py custom_components/nest_yale_lock/protobuf_handler.py`
+- `python3 -m unittest tests/test_passcode_crypto.py`
+
 ### 2026-02-25: Expand ApplicationKeysTrait fallback sources for passcode validation
 Why
 - `2026.02.21b14` still failed with `No passcode key candidates validated...` despite lock/structure key merging.

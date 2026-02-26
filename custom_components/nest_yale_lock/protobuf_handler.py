@@ -1215,6 +1215,73 @@ class NestProtobufHandler:
 
                 trait_cls = _V2_TRAIT_CLASS_MAP.get(descriptor_name)
                 if not trait_cls:
+                    if (
+                        descriptor_name.startswith("weave.trait.auth.")
+                        and descriptor_name != "weave.trait.auth.ApplicationKeysTrait"
+                    ):
+                        is_structure_resource = isinstance(obj_id, str) and obj_id.startswith("STRUCTURE_")
+                        is_device_resource = isinstance(obj_id, str) and obj_id.startswith("DEVICE_")
+                        if not (is_device_resource or is_structure_resource):
+                            continue
+
+                        merged_candidates = {
+                            "candidate_keys_32": [],
+                            "candidate_keys_36": [],
+                        }
+                        decoded_type_url = ""
+                        for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
+                            any_msg = entry.get("any_msg")
+                            if not any_msg or not any_msg.value:
+                                continue
+                            candidate_data = parse_application_keys_trait(any_msg.value)
+                            if not candidate_data:
+                                continue
+                            for key in ("candidate_keys_32", "candidate_keys_36"):
+                                value = candidate_data.get(key)
+                                if isinstance(value, list):
+                                    merged_candidates[key].extend(
+                                        item for item in value if isinstance(item, dict)
+                                    )
+                            if not decoded_type_url:
+                                decoded_type_url = any_msg.type_url or entry.get("type_url") or ""
+
+                        for key in ("candidate_keys_32", "candidate_keys_36"):
+                            deduped: list[dict] = []
+                            seen_signatures: set[tuple[tuple[str, str], ...]] = set()
+                            for candidate_entry in merged_candidates[key]:
+                                signature = tuple(
+                                    (str(k), str(candidate_entry.get(k)))
+                                    for k in sorted(candidate_entry.keys())
+                                )
+                                if signature in seen_signatures:
+                                    continue
+                                seen_signatures.add(signature)
+                                deduped.append(candidate_entry)
+                            merged_candidates[key] = deduped
+
+                        has_candidates = bool(
+                            merged_candidates.get("candidate_keys_32")
+                            or merged_candidates.get("candidate_keys_36")
+                        )
+                        if has_candidates:
+                            type_url = decoded_type_url or f"type.googleapis.com/{descriptor_name}"
+                            trait_key = f"{obj_id}:{type_url}"
+                            all_traits[trait_key] = {
+                                "object_id": obj_id,
+                                "type_url": type_url,
+                                "decoded": True,
+                                "data": merged_candidates,
+                            }
+                            _LOGGER.debug(
+                                (
+                                    "Decoded auth trait key candidates for %s (%s): "
+                                    "candidate32=%d candidate36=%d"
+                                ),
+                                obj_id,
+                                descriptor_name,
+                                len(merged_candidates.get("candidate_keys_32", [])),
+                                len(merged_candidates.get("candidate_keys_36", [])),
+                            )
                     continue
 
                 merged_msg = None

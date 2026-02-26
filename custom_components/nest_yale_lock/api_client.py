@@ -1355,20 +1355,24 @@ class NestAPIClient:
         if not isinstance(all_traits, dict):
             return None
 
+        def _is_auth_type_url(type_url: str) -> bool:
+            return "/weave.trait.auth." in type_url
+
+        def _is_application_keys_type_url(type_url: str) -> bool:
+            return type_url.endswith("/weave.trait.auth.ApplicationKeysTrait")
+
         structure_resource_id = self._structure_resource_id()
         source_priority = [device_id]
         if isinstance(structure_resource_id, str) and structure_resource_id:
             source_priority.append(structure_resource_id)
 
         # Fall back to additional resources (e.g. bridge/connect devices) that may carry
-        # related ApplicationKeysTrait material for the lock.
+        # related auth/ApplicationKeys material for the lock.
         for trait_info in all_traits.values():
             if not isinstance(trait_info, dict):
                 continue
             type_url = trait_info.get("type_url")
-            if not isinstance(type_url, str) or not type_url.endswith(
-                "/weave.trait.auth.ApplicationKeysTrait"
-            ):
+            if not isinstance(type_url, str) or not _is_auth_type_url(type_url):
                 continue
             object_id = trait_info.get("object_id")
             if (
@@ -1379,6 +1383,7 @@ class NestAPIClient:
                 source_priority.append(object_id)
 
         candidate_sets: list[tuple[int, str, dict]] = []
+        auth_candidate_sets: list[tuple[int, str, dict, str]] = []
         for trait_info in all_traits.values():
             if not isinstance(trait_info, dict):
                 continue
@@ -1388,17 +1393,21 @@ class NestAPIClient:
             type_url = trait_info.get("type_url")
             if not isinstance(type_url, str):
                 continue
-            if not type_url.endswith("/weave.trait.auth.ApplicationKeysTrait"):
+            if not _is_auth_type_url(type_url):
                 continue
             data = trait_info.get("data")
             if isinstance(data, dict):
                 priority = source_priority.index(object_id)
-                candidate_sets.append((priority, object_id, data))
+                if _is_application_keys_type_url(type_url):
+                    candidate_sets.append((priority, object_id, data))
+                else:
+                    auth_candidate_sets.append((priority, object_id, data, type_url))
 
-        if not candidate_sets:
+        if not candidate_sets and not auth_candidate_sets:
             return None
 
         candidate_sets.sort(key=lambda item: item[0])
+        auth_candidate_sets.sort(key=lambda item: item[0])
         merged: dict = {}
         for _, _, data in candidate_sets:
             for key, value in data.items():
@@ -1411,20 +1420,40 @@ class NestAPIClient:
                 elif key not in merged:
                     merged[key] = value
 
+        # Some accounts expose key blobs on auth traits other than
+        # ApplicationKeysTrait. Merge those candidate bytes into the same
+        # candidate pools so validation can test them safely before writes.
+        for _, _, data, _ in auth_candidate_sets:
+            for key in ("candidate_keys_32", "candidate_keys_36"):
+                value = data.get(key)
+                if not isinstance(value, list):
+                    continue
+                existing = merged.get(key, [])
+                if not isinstance(existing, list):
+                    existing = []
+                existing.extend(value)
+                merged[key] = existing
+
         for key in ("epoch_keys", "master_keys", "candidate_keys_32", "candidate_keys_36"):
             merged[key] = self._dedupe_application_key_entries(merged.get(key, []))
+
+        source_objects = [obj_id for _, obj_id, _ in candidate_sets]
+        for _, obj_id, _, _ in auth_candidate_sets:
+            if obj_id not in source_objects:
+                source_objects.append(obj_id)
 
         _LOGGER.debug(
             (
                 "Resolved ApplicationKeysTrait for %s using sources=%s "
-                "(master_keys=%d, epoch_keys=%d, candidate32=%d, candidate36=%d)"
+                "(master_keys=%d, epoch_keys=%d, candidate32=%d, candidate36=%d, extra_auth_traits=%d)"
             ),
             device_id,
-            [obj_id for _, obj_id, _ in candidate_sets],
+            source_objects,
             len(merged.get("master_keys", [])),
             len(merged.get("epoch_keys", [])),
             len(merged.get("candidate_keys_32", [])),
             len(merged.get("candidate_keys_36", [])),
+            len(auth_candidate_sets),
         )
         return merged
 
