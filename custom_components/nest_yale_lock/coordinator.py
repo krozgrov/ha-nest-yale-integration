@@ -48,15 +48,33 @@ class NestCoordinator(DataUpdateCoordinator):
             return False
         lock_keys = (
             "bolt_locked",
-            "actuator_state",
+            "bolt_moving",
             "tamper_state",
             "tamper_detected",
             "auto_relock_on",
             "auto_relock_duration",
             "max_auto_relock_duration",
-            "last_action",
         )
-        return any(key in device for key in lock_keys)
+        if any(key in device for key in lock_keys):
+            return True
+
+        traits = device.get("traits")
+        if not isinstance(traits, dict):
+            return False
+        lock_trait_markers = (
+            "BoltLockTrait",
+            "BoltLockSettingsTrait",
+            "BoltLockCapabilitiesTrait",
+            "EnhancedBoltLockSettingsTrait",
+            "TamperTrait",
+            "PincodeInputTrait",
+            "UserPincodesSettingsTrait",
+            "UserPincodesCapabilitiesTrait",
+        )
+        for trait_name in traits.keys():
+            if any(marker in str(trait_name) for marker in lock_trait_markers):
+                return True
+        return False
 
     def is_lock_device(self, device_id: str | None, device: dict | None = None) -> bool:
         if not self._is_device_lock_id(device_id):
@@ -332,8 +350,11 @@ class NestCoordinator(DataUpdateCoordinator):
                         "BoltLockTrait",
                         "BoltLockSettingsTrait",
                         "BoltLockCapabilitiesTrait",
+                        "EnhancedBoltLockSettingsTrait",
                         "TamperTrait",
                         "PincodeInputTrait",
+                        "UserPincodesSettingsTrait",
+                        "UserPincodesCapabilitiesTrait",
                     )
 
                     def _extract_lock_ids_from_traits(states: dict) -> set[str]:
@@ -350,18 +371,7 @@ class NestCoordinator(DataUpdateCoordinator):
                         return lock_ids
 
                     def _is_lock_payload(device: dict) -> bool:
-                        if not isinstance(device, dict):
-                            return False
-                        lock_keys = (
-                            "bolt_locked",
-                            "actuator_state",
-                            "tamper_state",
-                            "auto_relock_on",
-                            "auto_relock_duration",
-                            "max_auto_relock_duration",
-                            "last_action",
-                        )
-                        return any(key in device for key in lock_keys)
+                        return self._device_has_lock_markers(device)
 
                     cached_traits = self.api_client.current_state.get("all_traits", {}) or {}
                     if all_traits:
