@@ -6,6 +6,28 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-03-06: Preserve v2 auth trait payloads for passcode key discovery and tighten lock markers
+Why
+- Passcode updates were still failing with `No passcode key candidates validated...` despite prior auth-candidate merge work.
+- v2 parser filtering only retained `ApplicationKeysTrait`, which could drop non-`ApplicationKeysTrait` `weave.trait.auth.*` payloads before candidate extraction.
+- Extra non-lock entries had been observed in Home Assistant, so lock marker inference needed tighter bounds.
+
+Decision
+- Allow all `weave.trait.auth.*` descriptors through `_parse_v2_inner` so downstream auth-candidate extraction can execute on those traits.
+- Treat `weave.trait.auth.*` descriptors as known in `_parse_v2_patch_any` scoring to reduce accidental selection of irrelevant `Any` payloads.
+- Tighten coordinator lock markers by removing generic `actuator_state` as a standalone lock classifier and requiring lock-specific fields/traits.
+- Cut prerelease `2026.02.21b19` with a mandatory first-line HACS description in release notes.
+
+Impact
+- Improves the probability that usable auth key material is available to passcode validation logic.
+- Reduces risk of non-lock devices being materialized as lock entities.
+- Keeps safety behavior unchanged: passcode writes remain blocked unless candidate key material validates (unless explicitly forced by env flag).
+
+Validation
+- `python3 -m unittest tests/test_passcode_crypto.py tests/test_passcode_utils.py`
+- `python3 -m compileall custom_components/nest_yale_lock`
+- `gh release view 2026.02.21b19 --repo krozgrov/ha-nest-yale-integration`
+
 ### 2026-02-26: Expand passcode key-candidate sourcing to all auth traits
 Why
 - `2026.02.21b17` still fails with `No passcode key candidates validated...` after trying all `ApplicationKeysTrait` candidates.
@@ -568,3 +590,4 @@ Validation
 - 2026-02-24: Ignore temporary reverse-engineering sandboxes (`.tmp_check*/`, `.tmp_weave*/`) in `.gitignore` and remove the local `.tmp_*` directories from the workspace.
 - 2026-02-25: Treat `ApplicationKeysTrait` as epoch/master-key material by default (not client-root material); disable 32-byte client-root probing unless explicitly enabled via `NEST_YALE_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES=1`, and only use `candidate_keys_32` as master-key fallback when decoded `master_keys` are unavailable.
 - 2026-02-25: Re-enable 32-byte client-root candidate probing by default, but keep strict validation gate before write; add explicit opt-out (`NEST_YALE_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES=0`) to disable probing on demand.
+- 2026-03-06: Preserve all `weave.trait.auth.*` descriptors through v2 parser filtering/scoring so non-`ApplicationKeysTrait` auth blobs reach passcode key-candidate extraction; tighten coordinator lock markers to prevent non-lock entity bleed-through; publish prerelease `2026.02.21b19` with enforced HACS description and retention cleanup.
