@@ -238,10 +238,14 @@ class NestProtobufHandler:
 
         def _score(candidate: Any) -> tuple[int, int, int]:
             descriptor = _strip_type_prefix(candidate.type_url)
-            is_known = descriptor in _V2_TRAIT_CLASS_MAP or descriptor in {
-                "weave.trait.description.LabelSettingsTrait",
-                "nest.trait.located.CustomLocatedAnnotationsTrait",
-            }
+            is_known = (
+                descriptor in _V2_TRAIT_CLASS_MAP
+                or descriptor in {
+                    "weave.trait.description.LabelSettingsTrait",
+                    "nest.trait.located.CustomLocatedAnnotationsTrait",
+                }
+                or descriptor.startswith("weave.trait.auth.")
+            )
             has_value = bool(candidate.value)
             return (1 if is_known else 0, 1 if has_value else 0, len(candidate.value))
 
@@ -354,7 +358,7 @@ class NestProtobufHandler:
                 if (
                     descriptor != "weave.trait.description.LabelSettingsTrait"
                     and descriptor != "nest.trait.located.CustomLocatedAnnotationsTrait"
-                    and descriptor != "weave.trait.auth.ApplicationKeysTrait"
+                    and not descriptor.startswith("weave.trait.auth.")
                     and descriptor not in _V2_TRAIT_CLASS_MAP
                 ):
                     continue
