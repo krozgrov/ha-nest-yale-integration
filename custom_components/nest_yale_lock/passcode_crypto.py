@@ -19,6 +19,10 @@ APP_INTERMEDIATE_DIVERSIFIER = bytes.fromhex("bcaa95ad")
 FABRIC_ROOT_DIVERSIFIER = bytes.fromhex("21fa8f6a")
 CLIENT_ROOT_DIVERSIFIER = bytes.fromhex("53e3ffe5")
 
+# ApplicationKeysTrait payload variants can wrap key bytes in multiple nested
+# length-delimited envelopes; keep scan depth generous to avoid missing keys.
+APP_KEYS_CANDIDATE_SCAN_DEPTH = 12
+
 ROOT_KEY_FABRIC = 0x00010000
 ROOT_KEY_CLIENT = 0x00010400
 ROOT_KEY_SERVICE = 0x00010800
@@ -246,17 +250,17 @@ def parse_application_keys_trait(payload: bytes) -> dict[str, list[dict[str, int
             entry = _decode_epoch_key(value)
             if entry:
                 decoded["epoch_keys"].append(entry)
-            _scan_length_delimited_keys(value, depth=5)
+            _scan_length_delimited_keys(value, depth=APP_KEYS_CANDIDATE_SCAN_DEPTH)
         elif field == 2:
             entry = _decode_master_key(value)
             if entry:
                 decoded["master_keys"].append(entry)
-            _scan_length_delimited_keys(value, depth=5)
+            _scan_length_delimited_keys(value, depth=APP_KEYS_CANDIDATE_SCAN_DEPTH)
         else:
             _record_candidate(value)
             # Some variants can wrap key bytes in an unknown nested message.
             if len(value) not in (32, 36):
-                _scan_length_delimited_keys(value, depth=5)
+                _scan_length_delimited_keys(value, depth=APP_KEYS_CANDIDATE_SCAN_DEPTH)
     if candidate_32:
         decoded["candidate_keys_32"] = [{"key_hex": key_hex} for key_hex in sorted(candidate_32)]
     if candidate_36:

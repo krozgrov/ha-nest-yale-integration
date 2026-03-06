@@ -28,6 +28,24 @@ Validation
 - `python3 -m compileall custom_components/nest_yale_lock`
 - `gh release view 2026.02.21b19 --repo krozgrov/ha-nest-yale-integration`
 
+### 2026-03-06: Deepen ApplicationKeysTrait recursive scan depth for hidden key blobs
+Why
+- `2026.02.21b19` still reports `candidate36=0` and `No passcode key candidates validated...` on affected accounts.
+- Candidate extraction already recurses nested length-delimited payloads, but existing depth could still miss deeply wrapped key bytes.
+
+Decision
+- Increase recursive `ApplicationKeysTrait` key scan depth from `5` to `12` in `passcode_crypto.parse_application_keys_trait`.
+- Keep candidate filtering unchanged (`32`/`36` byte blobs only) and keep validated-write safety gate unchanged.
+- Cut prerelease `2026.02.21b20` for field verification.
+
+Impact
+- Expands key-material discovery coverage for deeply nested payload variants without changing passcode write safety behavior.
+- If hidden `36`-byte fabric-secret material exists deeper in payloads, it can now be surfaced for validation.
+
+Validation
+- `python3 -m unittest tests/test_passcode_crypto.py tests/test_passcode_utils.py`
+- `python3 -m compileall custom_components/nest_yale_lock`
+
 ### 2026-02-26: Expand passcode key-candidate sourcing to all auth traits
 Why
 - `2026.02.21b17` still fails with `No passcode key candidates validated...` after trying all `ApplicationKeysTrait` candidates.
@@ -591,3 +609,4 @@ Validation
 - 2026-02-25: Treat `ApplicationKeysTrait` as epoch/master-key material by default (not client-root material); disable 32-byte client-root probing unless explicitly enabled via `NEST_YALE_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES=1`, and only use `candidate_keys_32` as master-key fallback when decoded `master_keys` are unavailable.
 - 2026-02-25: Re-enable 32-byte client-root candidate probing by default, but keep strict validation gate before write; add explicit opt-out (`NEST_YALE_ALLOW_APPKEYS_CLIENT_ROOT_CANDIDATES=0`) to disable probing on demand.
 - 2026-03-06: Preserve all `weave.trait.auth.*` descriptors through v2 parser filtering/scoring so non-`ApplicationKeysTrait` auth blobs reach passcode key-candidate extraction; tighten coordinator lock markers to prevent non-lock entity bleed-through; publish prerelease `2026.02.21b19` with enforced HACS description and retention cleanup.
+- 2026-03-06: Increased `ApplicationKeysTrait` recursive key-candidate scan depth (`5 -> 12`) to surface deeply nested `32`/`36` byte candidate blobs; published prerelease `2026.02.21b20` for field validation while keeping validated-write safety gates unchanged.
