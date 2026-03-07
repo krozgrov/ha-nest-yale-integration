@@ -33,6 +33,7 @@ _LOCK_TRAIT_HINTS = (
     "UserPincodesSettingsTrait",
     "UserPincodesCapabilitiesTrait",
 )
+_GUESTS_TRAIT_DESCRIPTOR = "nest.trait.guest.GuestsTrait"
 
 _NEST_TYPE_PREFIX = "type.nestlabs.com/"
 _GOOGLE_TYPE_PREFIX = "type.googleapis.com/"
@@ -243,6 +244,7 @@ class NestProtobufHandler:
                 or descriptor in {
                     "weave.trait.description.LabelSettingsTrait",
                     "nest.trait.located.CustomLocatedAnnotationsTrait",
+                    _GUESTS_TRAIT_DESCRIPTOR,
                 }
                 or descriptor.startswith("weave.trait.auth.")
             )
@@ -358,6 +360,7 @@ class NestProtobufHandler:
                 if (
                     descriptor != "weave.trait.description.LabelSettingsTrait"
                     and descriptor != "nest.trait.located.CustomLocatedAnnotationsTrait"
+                    and descriptor != _GUESTS_TRAIT_DESCRIPTOR
                     and not descriptor.startswith("weave.trait.auth.")
                     and descriptor not in _V2_TRAIT_CLASS_MAP
                 ):
@@ -868,6 +871,111 @@ class NestProtobufHandler:
             pos = self._skip_field(payload, pos, wire_type)
         return None
 
+    @staticmethod
+    def _dedupe_dict_list(entries: list[dict] | None) -> list[dict]:
+        if not isinstance(entries, list):
+            return []
+        deduped: list[dict] = []
+        seen_signatures: set[tuple[tuple[str, str], ...]] = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            signature = tuple((str(key), str(entry.get(key))) for key in sorted(entry.keys()))
+            if signature in seen_signatures:
+                continue
+            seen_signatures.add(signature)
+            deduped.append(entry)
+        return deduped
+
+    def _decode_guest_message(self, payload: bytes) -> dict[str, object] | None:
+        guest: dict[str, object] = {}
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                try:
+                    decoded = value.decode("utf-8").strip()
+                except Exception:
+                    decoded = None
+                if decoded:
+                    guest["name"] = decoded
+                continue
+            if field == 2 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                guest_id = self._decode_resource_id(value)
+                if guest_id:
+                    guest["guest_id"] = guest_id
+                continue
+            if field == 3 and wire_type == 0:
+                value, pos = self._read_varint(payload, pos)
+                if value is not None:
+                    guest["status"] = int(value)
+                continue
+            if field == 6 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                try:
+                    decoded = value.decode("utf-8").strip()
+                except Exception:
+                    decoded = None
+                if decoded:
+                    guest["avatar_url"] = decoded
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+        return guest or None
+
+    def _decode_guest_trait_payload(self, payload: bytes) -> dict[str, object]:
+        guests: list[dict[str, object]] = []
+        max_guests = None
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                guest = self._decode_guest_message(value)
+                if guest:
+                    guests.append(guest)
+                continue
+            if field == 2 and wire_type == 0:
+                value, pos = self._read_varint(payload, pos)
+                if value is not None:
+                    max_guests = int(value)
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+
+        decoded: dict[str, object] = {
+            "guests": self._dedupe_dict_list(guests),
+            "payload_len": len(payload),
+        }
+        if max_guests is not None:
+            decoded["max_guests_per_structure"] = max_guests
+        return decoded
+
+    def _decode_auth_trait_metadata(self, payload: bytes) -> dict[str, object]:
+        candidate_data = parse_application_keys_trait(payload) if payload else {}
+        decoded: dict[str, object] = {
+            "payload_len": len(payload),
+            "candidate_keys_32": self._dedupe_dict_list(candidate_data.get("candidate_keys_32")),
+            "candidate_keys_36": self._dedupe_dict_list(candidate_data.get("candidate_keys_36")),
+        }
+        return decoded
+
     def _decode_device_located_payload(
         self,
         payload: bytes,
@@ -1217,6 +1325,56 @@ class NestProtobufHandler:
                         )
                     continue
 
+                if descriptor_name == _GUESTS_TRAIT_DESCRIPTOR:
+                    decoded_type_url = ""
+                    merged_guest_data = {
+                        "guests": [],
+                        "payload_lens": [],
+                    }
+                    max_guests_per_structure = None
+                    saw_payload = False
+                    for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
+                        any_msg = entry.get("any_msg")
+                        if not any_msg or not any_msg.value:
+                            continue
+                        saw_payload = True
+                        decoded_guest = self._decode_guest_trait_payload(any_msg.value)
+                        merged_guest_data["payload_lens"].append(int(decoded_guest.get("payload_len", 0) or 0))
+                        guests = decoded_guest.get("guests")
+                        if isinstance(guests, list):
+                            merged_guest_data["guests"].extend(
+                                guest for guest in guests if isinstance(guest, dict)
+                            )
+                        raw_max_guests = decoded_guest.get("max_guests_per_structure")
+                        if isinstance(raw_max_guests, int):
+                            max_guests_per_structure = raw_max_guests
+                        if not decoded_type_url:
+                            decoded_type_url = any_msg.type_url or entry.get("type_url") or ""
+
+                    if saw_payload:
+                        merged_guest_data["guests"] = self._dedupe_dict_list(merged_guest_data["guests"])
+                        merged_guest_data["payload_lens"] = sorted(
+                            {value for value in merged_guest_data["payload_lens"] if isinstance(value, int) and value > 0}
+                        )
+                        if isinstance(max_guests_per_structure, int):
+                            merged_guest_data["max_guests_per_structure"] = max_guests_per_structure
+                        type_url = decoded_type_url or f"type.googleapis.com/{descriptor_name}"
+                        trait_key = f"{obj_id}:{type_url}"
+                        all_traits[trait_key] = {
+                            "object_id": obj_id,
+                            "type_url": type_url,
+                            "decoded": True,
+                            "data": merged_guest_data,
+                        }
+                        _LOGGER.debug(
+                            "Decoded GuestsTrait for %s: guests=%d max_guests=%s payloads=%s",
+                            obj_id,
+                            len(merged_guest_data.get("guests", [])),
+                            merged_guest_data.get("max_guests_per_structure"),
+                            merged_guest_data.get("payload_lens", []),
+                        )
+                    continue
+
                 trait_cls = _V2_TRAIT_CLASS_MAP.get(descriptor_name)
                 if not trait_cls:
                     if (
@@ -1229,17 +1387,19 @@ class NestProtobufHandler:
                             continue
 
                         merged_candidates = {
+                            "payload_lens": [],
                             "candidate_keys_32": [],
                             "candidate_keys_36": [],
                         }
                         decoded_type_url = ""
+                        saw_payload = False
                         for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
                             any_msg = entry.get("any_msg")
                             if not any_msg or not any_msg.value:
                                 continue
-                            candidate_data = parse_application_keys_trait(any_msg.value)
-                            if not candidate_data:
-                                continue
+                            saw_payload = True
+                            candidate_data = self._decode_auth_trait_metadata(any_msg.value)
+                            merged_candidates["payload_lens"].append(int(candidate_data.get("payload_len", 0) or 0))
                             for key in ("candidate_keys_32", "candidate_keys_36"):
                                 value = candidate_data.get(key)
                                 if isinstance(value, list):
@@ -1250,24 +1410,16 @@ class NestProtobufHandler:
                                 decoded_type_url = any_msg.type_url or entry.get("type_url") or ""
 
                         for key in ("candidate_keys_32", "candidate_keys_36"):
-                            deduped: list[dict] = []
-                            seen_signatures: set[tuple[tuple[str, str], ...]] = set()
-                            for candidate_entry in merged_candidates[key]:
-                                signature = tuple(
-                                    (str(k), str(candidate_entry.get(k)))
-                                    for k in sorted(candidate_entry.keys())
-                                )
-                                if signature in seen_signatures:
-                                    continue
-                                seen_signatures.add(signature)
-                                deduped.append(candidate_entry)
-                            merged_candidates[key] = deduped
-
-                        has_candidates = bool(
-                            merged_candidates.get("candidate_keys_32")
-                            or merged_candidates.get("candidate_keys_36")
+                            merged_candidates[key] = self._dedupe_dict_list(merged_candidates[key])
+                        merged_candidates["payload_lens"] = sorted(
+                            {
+                                value
+                                for value in merged_candidates["payload_lens"]
+                                if isinstance(value, int) and value > 0
+                            }
                         )
-                        if has_candidates:
+
+                        if saw_payload:
                             type_url = decoded_type_url or f"type.googleapis.com/{descriptor_name}"
                             trait_key = f"{obj_id}:{type_url}"
                             all_traits[trait_key] = {
@@ -1278,13 +1430,14 @@ class NestProtobufHandler:
                             }
                             _LOGGER.debug(
                                 (
-                                    "Decoded auth trait key candidates for %s (%s): "
-                                    "candidate32=%d candidate36=%d"
+                                    "Observed auth trait for %s (%s): "
+                                    "candidate32=%d candidate36=%d payloads=%s"
                                 ),
                                 obj_id,
                                 descriptor_name,
                                 len(merged_candidates.get("candidate_keys_32", [])),
                                 len(merged_candidates.get("candidate_keys_36", [])),
+                                merged_candidates.get("payload_lens", []),
                             )
                     continue
 

@@ -1442,6 +1442,26 @@ class NestAPIClient:
             if obj_id not in source_objects:
                 source_objects.append(obj_id)
 
+        if auth_candidate_sets and _LOGGER.isEnabledFor(logging.DEBUG):
+            auth_summaries: list[dict[str, object]] = []
+            for _, obj_id, data, type_url in auth_candidate_sets:
+                raw_payload_lens = data.get("payload_lens")
+                payload_lens = raw_payload_lens if isinstance(raw_payload_lens, list) else []
+                auth_summaries.append(
+                    {
+                        "object_id": obj_id,
+                        "type_url": type_url,
+                        "payload_lens": payload_lens,
+                        "candidate32": len(data.get("candidate_keys_32", []))
+                        if isinstance(data.get("candidate_keys_32"), list)
+                        else 0,
+                        "candidate36": len(data.get("candidate_keys_36", []))
+                        if isinstance(data.get("candidate_keys_36"), list)
+                        else 0,
+                    }
+                )
+            _LOGGER.debug("Observed supplemental auth traits for %s: %s", device_id, auth_summaries)
+
         _LOGGER.debug(
             (
                 "Resolved ApplicationKeysTrait for %s using sources=%s "

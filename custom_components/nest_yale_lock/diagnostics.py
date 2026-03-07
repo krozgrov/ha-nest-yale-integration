@@ -15,6 +15,75 @@ def _mask(value: str, keep: int = 4) -> str:
         return "***"
 
 
+def _auth_trait_summaries(api) -> list[dict]:
+    all_traits = getattr(api, "current_state", {}).get("all_traits", {}) if api else {}
+    if not isinstance(all_traits, dict):
+        return []
+    summaries: list[dict] = []
+    for trait_info in all_traits.values():
+        if not isinstance(trait_info, dict):
+            continue
+        type_url = trait_info.get("type_url")
+        if not isinstance(type_url, str) or "/weave.trait.auth." not in type_url:
+            continue
+        data = trait_info.get("data")
+        if not isinstance(data, dict):
+            data = {}
+        payload_lens = data.get("payload_lens")
+        summaries.append(
+            {
+                "object_id": trait_info.get("object_id"),
+                "type_url": type_url,
+                "payload_lens": payload_lens if isinstance(payload_lens, list) else [],
+                "candidate32": len(data.get("candidate_keys_32", []))
+                if isinstance(data.get("candidate_keys_32"), list)
+                else 0,
+                "candidate36": len(data.get("candidate_keys_36", []))
+                if isinstance(data.get("candidate_keys_36"), list)
+                else 0,
+            }
+        )
+    return summaries
+
+
+def _guest_trait_summaries(api) -> list[dict]:
+    all_traits = getattr(api, "current_state", {}).get("all_traits", {}) if api else {}
+    if not isinstance(all_traits, dict):
+        return []
+    summaries: list[dict] = []
+    for trait_info in all_traits.values():
+        if not isinstance(trait_info, dict):
+            continue
+        type_url = trait_info.get("type_url")
+        if not isinstance(type_url, str) or not type_url.endswith("/nest.trait.guest.GuestsTrait"):
+            continue
+        data = trait_info.get("data")
+        if not isinstance(data, dict):
+            data = {}
+        guests = data.get("guests")
+        guest_rows = guests if isinstance(guests, list) else []
+        summaries.append(
+            {
+                "object_id": trait_info.get("object_id"),
+                "type_url": type_url,
+                "guest_count": len(guest_rows),
+                "guest_ids": [
+                    _mask(str(guest.get("guest_id")))
+                    for guest in guest_rows
+                    if isinstance(guest, dict) and guest.get("guest_id")
+                ],
+                "guest_names": [
+                    guest.get("name")
+                    for guest in guest_rows
+                    if isinstance(guest, dict) and guest.get("name")
+                ],
+                "payload_lens": data.get("payload_lens", []),
+                "max_guests_per_structure": data.get("max_guests_per_structure"),
+            }
+        )
+    return summaries
+
+
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ):
@@ -62,5 +131,7 @@ async def async_get_config_entry_diagnostics(
             "access_token_present": bool(getattr(api, "access_token", None)),
             "last_command": last_command,
             "last_command_status": last_command_status,
+            "observed_auth_traits": _auth_trait_summaries(api),
+            "observed_guest_traits": _guest_trait_summaries(api),
         },
     }
