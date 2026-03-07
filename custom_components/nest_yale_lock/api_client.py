@@ -276,7 +276,9 @@ class NestAPIClient:
             payload += self._encode_varint(state_type)
         trait_names = [
             "nest.trait.user.UserInfoTrait",
+            "nest.trait.user.UserAccessTrait",
             "nest.trait.structure.StructureInfoTrait",
+            "nest.trait.guest.GuestsTrait",
             "nest.trait.located.LocatedAnnotationsTrait",
             "nest.trait.located.CustomLocatedAnnotationsTrait",
             "nest.trait.located.DeviceLocatedSettingsTrait",
@@ -287,6 +289,7 @@ class NestAPIClient:
             "weave.trait.security.BoltLockCapabilitiesTrait",
             "weave.trait.security.UserPincodesSettingsTrait",
             "weave.trait.security.UserPincodesCapabilitiesTrait",
+            "weave.trait.schedule.BasicUserSchedulesSettingsTrait",
             "weave.trait.auth.ApplicationKeysTrait",
             "weave.trait.security.PincodeInputTrait",
             "weave.trait.security.TamperTrait",
@@ -297,6 +300,7 @@ class NestAPIClient:
         for trait in trait_names:
             trait_param = self._encode_string(1, trait)
             payload += self._encode_length_delimited(3, trait_param)
+        _LOGGER.debug("Observe payload trait subscriptions: %s", trait_names)
         return bytes(payload)
 
     def _get_observe_payload(self):
