@@ -615,6 +615,12 @@ class NestAPIClient:
                                 current_traits = self.current_state.get("all_traits", {}) or {}
                                 merged_traits = {**current_traits, **locks_data["all_traits"]}
                                 self.current_state["all_traits"] = merged_traits
+                            if locks_data.get("trait_inventory"):
+                                current_inventory = self.current_state.get("trait_inventory", {}) or {}
+                                self.current_state["trait_inventory"] = self._merge_trait_inventory(
+                                    current_inventory,
+                                    locks_data["trait_inventory"],
+                                )
                             if locks_data.get("structure_id"):
                                 new_structure_id = locks_data["structure_id"]
                                 if self._is_legacy_structure_id(new_structure_id):
@@ -800,6 +806,12 @@ class NestAPIClient:
                                     **current_traits,
                                     **locks_data["all_traits"],
                                 }
+                            if locks_data.get("trait_inventory"):
+                                current_inventory = self.current_state.get("trait_inventory", {}) or {}
+                                self.current_state["trait_inventory"] = self._merge_trait_inventory(
+                                    current_inventory,
+                                    locks_data["trait_inventory"],
+                                )
                             self._merge_trait_states(locks_data.get("trait_states"))
                             self._merge_trait_labels(locks_data.get("trait_labels"))
                             self._apply_cached_settings_to_update(locks_data)
@@ -1350,6 +1362,23 @@ class NestAPIClient:
             deduped.append(entry)
         return deduped
 
+    @staticmethod
+    def _merge_trait_inventory(current: dict | None, update: dict | None) -> dict[str, list[str]]:
+        merged: dict[str, list[str]] = {}
+        for source in (current, update):
+            if not isinstance(source, dict):
+                continue
+            for object_id, descriptors in source.items():
+                if not isinstance(object_id, str):
+                    continue
+                existing = merged.get(object_id, [])
+                if not isinstance(existing, list):
+                    existing = []
+                if isinstance(descriptors, list):
+                    existing.extend(str(descriptor) for descriptor in descriptors if descriptor)
+                merged[object_id] = sorted({descriptor for descriptor in existing if descriptor})
+        return merged
+
     def _get_application_keys_data(self, device_id: str) -> dict | None:
         all_traits = self.current_state.get("all_traits", {})
         if not isinstance(all_traits, dict):
@@ -1442,7 +1471,7 @@ class NestAPIClient:
             if obj_id not in source_objects:
                 source_objects.append(obj_id)
 
-        if auth_candidate_sets and _LOGGER.isEnabledFor(logging.DEBUG):
+        if _LOGGER.isEnabledFor(logging.DEBUG):
             auth_summaries: list[dict[str, object]] = []
             for _, obj_id, data, type_url in auth_candidate_sets:
                 raw_payload_lens = data.get("payload_lens")

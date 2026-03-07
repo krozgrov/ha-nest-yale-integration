@@ -1164,10 +1164,12 @@ class NestProtobufHandler:
             "structure_id_v2": None,
             "all_traits": {},
             "trait_states": {},
+            "trait_inventory": {},
         }
         all_traits = {}
         trait_states = {}
         trait_labels = {}
+        trait_inventory: dict[str, set[str]] = {}
         lock_device_ids = set()
         known_lock_ids = set(self._known_lock_ids)
         where_map: dict[str, str] = dict(self._where_map_cache)
@@ -1204,6 +1206,7 @@ class NestProtobufHandler:
                     entries = [entries]
                 if not entries:
                     continue
+                trait_inventory.setdefault(obj_id, set()).add(descriptor_name)
 
                 if descriptor_name == "weave.trait.description.LabelSettingsTrait":
                     label = None
@@ -1667,6 +1670,43 @@ class NestProtobufHandler:
         locks_data["all_traits"] = all_traits
         locks_data["trait_states"] = trait_states
         locks_data["trait_labels"] = trait_labels
+        normalized_trait_inventory = {
+            object_id: sorted(descriptors)
+            for object_id, descriptors in trait_inventory.items()
+            if isinstance(object_id, str) and descriptors
+        }
+        locks_data["trait_inventory"] = normalized_trait_inventory
+        supplemental_auth_descriptors = sorted(
+            {
+                descriptor
+                for descriptors in normalized_trait_inventory.values()
+                for descriptor in descriptors
+                if descriptor.startswith("weave.trait.auth.")
+                and descriptor != "weave.trait.auth.ApplicationKeysTrait"
+            }
+        )
+        guest_descriptors = sorted(
+            {
+                descriptor
+                for descriptors in normalized_trait_inventory.values()
+                for descriptor in descriptors
+                if "guest" in descriptor.lower()
+            }
+        )
+        structure_inventory = {
+            object_id: descriptors
+            for object_id, descriptors in normalized_trait_inventory.items()
+            if object_id.startswith("STRUCTURE_")
+        }
+        _LOGGER.debug(
+            "Observed auth/guest descriptor inventory: supplemental_auth=%s guest=%s",
+            supplemental_auth_descriptors,
+            guest_descriptors,
+        )
+        if structure_inventory:
+            _LOGGER.debug("Observed structure trait descriptors: %s", structure_inventory)
+        else:
+            _LOGGER.debug("Observed structure trait descriptors: none")
         fixture_device_ids = set(device_fixtures) | set(device_fixture_labels)
         for device_id in fixture_device_ids:
             if device_id not in lock_device_ids and device_id not in known_lock_ids:

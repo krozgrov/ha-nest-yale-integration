@@ -84,6 +84,18 @@ def _guest_trait_summaries(api) -> list[dict]:
     return summaries
 
 
+def _trait_inventory_summaries(api) -> dict[str, list[str]]:
+    inventory = getattr(api, "current_state", {}).get("trait_inventory", {}) if api else {}
+    if not isinstance(inventory, dict):
+        return {}
+    normalized: dict[str, list[str]] = {}
+    for object_id, descriptors in inventory.items():
+        if not isinstance(object_id, str) or not isinstance(descriptors, list):
+            continue
+        normalized[object_id] = [str(descriptor) for descriptor in descriptors if descriptor]
+    return normalized
+
+
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ):
@@ -133,5 +145,6 @@ async def async_get_config_entry_diagnostics(
             "last_command_status": last_command_status,
             "observed_auth_traits": _auth_trait_summaries(api),
             "observed_guest_traits": _guest_trait_summaries(api),
+            "trait_inventory": _trait_inventory_summaries(api),
         },
     }
