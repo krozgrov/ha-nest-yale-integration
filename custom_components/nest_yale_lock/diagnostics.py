@@ -84,6 +84,141 @@ def _guest_trait_summaries(api) -> list[dict]:
     return summaries
 
 
+def _pincode_trait_summaries(api) -> list[dict]:
+    all_traits = getattr(api, "current_state", {}).get("all_traits", {}) if api else {}
+    if not isinstance(all_traits, dict):
+        return []
+    summaries: list[dict] = []
+    for trait_info in all_traits.values():
+        if not isinstance(trait_info, dict):
+            continue
+        type_url = trait_info.get("type_url")
+        if (
+            not isinstance(type_url, str)
+            or not type_url.endswith("/weave.trait.security.UserPincodesSettingsTrait")
+        ):
+            continue
+        data = trait_info.get("data")
+        if not isinstance(data, dict):
+            data = {}
+        pincodes = data.get("user_pincodes")
+        rows = pincodes if isinstance(pincodes, dict) else {}
+        slots_with_passcodes = sorted(
+            [
+                int(slot)
+                for slot, row in rows.items()
+                if isinstance(row, dict) and row.get("has_passcode")
+            ]
+        )
+        summaries.append(
+            {
+                "object_id": trait_info.get("object_id"),
+                "type_url": type_url,
+                "slot_count": len(rows),
+                "slots_with_passcodes": slots_with_passcodes,
+                "guest_user_ids": [
+                    _mask(str(row.get("user_id")))
+                    for row in rows.values()
+                    if isinstance(row, dict) and row.get("user_id")
+                ],
+            }
+        )
+    return summaries
+
+
+def _user_access_trait_summaries(api) -> list[dict]:
+    all_traits = getattr(api, "current_state", {}).get("all_traits", {}) if api else {}
+    if not isinstance(all_traits, dict):
+        return []
+    summaries: list[dict] = []
+    for trait_info in all_traits.values():
+        if not isinstance(trait_info, dict):
+            continue
+        type_url = trait_info.get("type_url")
+        if not isinstance(type_url, str) or not type_url.endswith("/nest.trait.user.UserAccessTrait"):
+            continue
+        data = trait_info.get("data")
+        if not isinstance(data, dict):
+            data = {}
+        records = data.get("records")
+        rows = records if isinstance(records, list) else []
+        summaries.append(
+            {
+                "object_id": trait_info.get("object_id"),
+                "type_url": type_url,
+                "record_count": len(rows),
+                "user_ids": [
+                    _mask(str(row.get("user_id")))
+                    for row in rows
+                    if isinstance(row, dict) and row.get("user_id")
+                ],
+                "device_ids": sorted(
+                    {
+                        str(row.get("device_id"))
+                        for row in rows
+                        if isinstance(row, dict) and row.get("device_id")
+                    }
+                ),
+                "access_types": sorted(
+                    {
+                        int(row.get("access_type"))
+                        for row in rows
+                        if isinstance(row, dict) and isinstance(row.get("access_type"), int)
+                    }
+                ),
+                "payload_lens": data.get("payload_lens", []),
+            }
+        )
+    return summaries
+
+
+def _schedule_trait_summaries(api) -> list[dict]:
+    all_traits = getattr(api, "current_state", {}).get("all_traits", {}) if api else {}
+    if not isinstance(all_traits, dict):
+        return []
+    summaries: list[dict] = []
+    for trait_info in all_traits.values():
+        if not isinstance(trait_info, dict):
+            continue
+        type_url = trait_info.get("type_url")
+        if (
+            not isinstance(type_url, str)
+            or not type_url.endswith("/weave.trait.schedule.BasicUserSchedulesSettingsTrait")
+        ):
+            continue
+        data = trait_info.get("data")
+        if not isinstance(data, dict):
+            data = {}
+        schedules = data.get("schedules")
+        rows = schedules if isinstance(schedules, list) else []
+        summaries.append(
+            {
+                "object_id": trait_info.get("object_id"),
+                "type_url": type_url,
+                "schedule_count": len(rows),
+                "slots": sorted(
+                    [
+                        int(row.get("slot"))
+                        for row in rows
+                        if isinstance(row, dict) and isinstance(row.get("slot"), int)
+                    ]
+                ),
+                "user_ids": [
+                    _mask(str(row.get("user_id")))
+                    for row in rows
+                    if isinstance(row, dict) and row.get("user_id")
+                ],
+                "window_counts": [
+                    int(row.get("schedule_count", 0))
+                    for row in rows
+                    if isinstance(row, dict)
+                ],
+                "payload_lens": data.get("payload_lens", []),
+            }
+        )
+    return summaries
+
+
 def _trait_inventory_summaries(api) -> dict[str, list[str]]:
     inventory = getattr(api, "current_state", {}).get("trait_inventory", {}) if api else {}
     if not isinstance(inventory, dict):
@@ -145,6 +280,9 @@ async def async_get_config_entry_diagnostics(
             "last_command_status": last_command_status,
             "observed_auth_traits": _auth_trait_summaries(api),
             "observed_guest_traits": _guest_trait_summaries(api),
+            "observed_pincode_traits": _pincode_trait_summaries(api),
+            "observed_user_access_traits": _user_access_trait_summaries(api),
+            "observed_schedule_traits": _schedule_trait_summaries(api),
             "trait_inventory": _trait_inventory_summaries(api),
         },
     }

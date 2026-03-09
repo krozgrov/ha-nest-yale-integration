@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from google.protobuf.message import DecodeError
 from google.protobuf.any_pb2 import Any
 from base64 import b64decode
@@ -34,6 +35,8 @@ _LOCK_TRAIT_HINTS = (
     "UserPincodesCapabilitiesTrait",
 )
 _GUESTS_TRAIT_DESCRIPTOR = "nest.trait.guest.GuestsTrait"
+_USER_ACCESS_TRAIT_DESCRIPTOR = "nest.trait.user.UserAccessTrait"
+_BASIC_USER_SCHEDULES_TRAIT_DESCRIPTOR = "weave.trait.schedule.BasicUserSchedulesSettingsTrait"
 
 _NEST_TYPE_PREFIX = "type.nestlabs.com/"
 _GOOGLE_TYPE_PREFIX = "type.googleapis.com/"
@@ -245,6 +248,8 @@ class NestProtobufHandler:
                     "weave.trait.description.LabelSettingsTrait",
                     "nest.trait.located.CustomLocatedAnnotationsTrait",
                     _GUESTS_TRAIT_DESCRIPTOR,
+                    _USER_ACCESS_TRAIT_DESCRIPTOR,
+                    _BASIC_USER_SCHEDULES_TRAIT_DESCRIPTOR,
                 }
                 or descriptor.startswith("weave.trait.auth.")
             )
@@ -361,6 +366,8 @@ class NestProtobufHandler:
                     descriptor != "weave.trait.description.LabelSettingsTrait"
                     and descriptor != "nest.trait.located.CustomLocatedAnnotationsTrait"
                     and descriptor != _GUESTS_TRAIT_DESCRIPTOR
+                    and descriptor != _USER_ACCESS_TRAIT_DESCRIPTOR
+                    and descriptor != _BASIC_USER_SCHEDULES_TRAIT_DESCRIPTOR
                     and not descriptor.startswith("weave.trait.auth.")
                     and descriptor not in _V2_TRAIT_CLASS_MAP
                 ):
@@ -887,6 +894,53 @@ class NestProtobufHandler:
             deduped.append(entry)
         return deduped
 
+    @staticmethod
+    def _format_epoch_timestamp(seconds: int | None, nanos: int = 0) -> str | None:
+        if seconds is None:
+            return None
+        try:
+            total_seconds = float(seconds) + (float(nanos or 0) / 1_000_000_000)
+            return (
+                datetime.fromtimestamp(total_seconds, tz=timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+        except Exception:
+            return None
+
+    def _decode_timestamp_payload(self, payload: bytes) -> dict[str, object] | None:
+        seconds = None
+        nanos = None
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 0:
+                value, pos = self._read_varint(payload, pos)
+                if value is not None:
+                    seconds = int(value)
+                continue
+            if field == 2 and wire_type == 0:
+                value, pos = self._read_varint(payload, pos)
+                if value is not None:
+                    nanos = int(value)
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+
+        if seconds is None:
+            return None
+
+        decoded: dict[str, object] = {"seconds": seconds}
+        if nanos is not None:
+            decoded["nanos"] = nanos
+        iso_value = self._format_epoch_timestamp(seconds, nanos or 0)
+        if iso_value:
+            decoded["iso8601"] = iso_value
+        return decoded
+
     def _decode_guest_message(self, payload: bytes) -> dict[str, object] | None:
         guest: dict[str, object] = {}
         pos = 0
@@ -966,6 +1020,212 @@ class NestProtobufHandler:
         if max_guests is not None:
             decoded["max_guests_per_structure"] = max_guests
         return decoded
+
+    def _decode_user_access_record(self, payload: bytes) -> dict[str, object] | None:
+        record: dict[str, object] = {}
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                user_id = self._decode_resource_id(value)
+                if user_id:
+                    record["user_id"] = user_id
+                continue
+            if field == 2 and wire_type == 0:
+                value, pos = self._read_varint(payload, pos)
+                if value is not None:
+                    record["access_type"] = int(value)
+                continue
+            if field == 3 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                device_id = self._decode_resource_id(value)
+                if device_id:
+                    record["device_id"] = device_id
+                continue
+            if field == 4 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                timestamp = self._decode_timestamp_payload(value)
+                if isinstance(timestamp, dict):
+                    if timestamp.get("iso8601"):
+                        record["last_used_time"] = timestamp["iso8601"]
+                    if timestamp.get("seconds") is not None:
+                        record["last_used_seconds"] = timestamp["seconds"]
+                    if timestamp.get("nanos") is not None:
+                        record["last_used_nanos"] = timestamp["nanos"]
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+        return record or None
+
+    def _decode_user_access_trait_payload(self, payload: bytes) -> dict[str, object]:
+        records: list[dict[str, object]] = []
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                record = self._decode_user_access_record(value)
+                if record:
+                    records.append(record)
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+
+        return {
+            "records": self._dedupe_dict_list(records),
+            "payload_len": len(payload),
+        }
+
+    def _decode_schedule_window_payload(
+        self, payload: bytes, depth: int = 2
+    ) -> dict[str, object] | None:
+        start_seconds = None
+        end_seconds = None
+        pos = 0
+        nested_candidates: list[dict[str, object]] = []
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 0:
+                value, pos = self._read_varint(payload, pos)
+                if value is not None:
+                    start_seconds = int(value)
+                continue
+            if field == 2 and wire_type == 0:
+                value, pos = self._read_varint(payload, pos)
+                if value is not None:
+                    end_seconds = int(value)
+                continue
+            if wire_type == 2 and depth > 0:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                candidate = self._decode_schedule_window_payload(value, depth=depth - 1)
+                if candidate:
+                    nested_candidates.append(candidate)
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+
+        if start_seconds is not None or end_seconds is not None:
+            decoded: dict[str, object] = {}
+            if start_seconds is not None:
+                decoded["start_seconds"] = start_seconds
+                start_iso = self._format_epoch_timestamp(start_seconds)
+                if start_iso:
+                    decoded["start_time"] = start_iso
+            if end_seconds is not None:
+                decoded["end_seconds"] = end_seconds
+                end_iso = self._format_epoch_timestamp(end_seconds)
+                if end_iso:
+                    decoded["end_time"] = end_iso
+            return decoded or None
+
+        return nested_candidates[0] if nested_candidates else None
+
+    def _decode_basic_user_schedule_entry(self, payload: bytes) -> dict[str, object] | None:
+        schedule: dict[str, object] = {}
+        windows: list[dict[str, object]] = []
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                user_id = self._decode_resource_id(value)
+                if user_id:
+                    schedule["user_id"] = user_id
+                continue
+            if field in (2, 3) and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                decoded_window = self._decode_schedule_window_payload(value)
+                if decoded_window:
+                    windows.append(decoded_window)
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+
+        deduped_windows = self._dedupe_dict_list(windows)
+        if deduped_windows:
+            schedule["schedule_windows"] = deduped_windows
+            schedule["schedule_count"] = len(deduped_windows)
+        return schedule or None
+
+    def _decode_basic_user_schedule_map_entry(self, payload: bytes) -> dict[str, object] | None:
+        slot = None
+        schedule: dict[str, object] | None = None
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 0:
+                value, pos = self._read_varint(payload, pos)
+                if value is not None:
+                    slot = int(value)
+                continue
+            if field == 2 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                schedule = self._decode_basic_user_schedule_entry(value)
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+
+        if schedule is None:
+            schedule = {}
+        if slot is not None:
+            schedule["slot"] = slot
+        return schedule or None
+
+    def _decode_basic_user_schedules_trait_payload(self, payload: bytes) -> dict[str, object]:
+        schedules: list[dict[str, object]] = []
+        pos = 0
+        while pos < len(payload):
+            tag, pos = self._read_varint(payload, pos)
+            if tag is None:
+                break
+            field = tag >> 3
+            wire_type = tag & 0x07
+            if field == 1 and wire_type == 2:
+                value, pos = self._read_length_delimited(payload, pos)
+                if value is None:
+                    break
+                schedule = self._decode_basic_user_schedule_map_entry(value)
+                if schedule:
+                    schedules.append(schedule)
+                continue
+            pos = self._skip_field(payload, pos, wire_type)
+
+        return {
+            "schedules": self._dedupe_dict_list(schedules),
+            "payload_len": len(payload),
+        }
 
     def _decode_auth_trait_metadata(self, payload: bytes) -> dict[str, object]:
         candidate_data = parse_application_keys_trait(payload) if payload else {}
@@ -1378,6 +1638,108 @@ class NestProtobufHandler:
                         )
                     continue
 
+                if descriptor_name == _USER_ACCESS_TRAIT_DESCRIPTOR:
+                    decoded_type_url = ""
+                    merged_access_data = {
+                        "records": [],
+                        "payload_lens": [],
+                    }
+                    saw_payload = False
+                    for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
+                        any_msg = entry.get("any_msg")
+                        if not any_msg or not any_msg.value:
+                            continue
+                        saw_payload = True
+                        decoded_access = self._decode_user_access_trait_payload(any_msg.value)
+                        merged_access_data["payload_lens"].append(
+                            int(decoded_access.get("payload_len", 0) or 0)
+                        )
+                        records = decoded_access.get("records")
+                        if isinstance(records, list):
+                            merged_access_data["records"].extend(
+                                record for record in records if isinstance(record, dict)
+                            )
+                        if not decoded_type_url:
+                            decoded_type_url = any_msg.type_url or entry.get("type_url") or ""
+
+                    if saw_payload:
+                        merged_access_data["records"] = self._dedupe_dict_list(
+                            merged_access_data["records"]
+                        )
+                        merged_access_data["payload_lens"] = sorted(
+                            {
+                                value
+                                for value in merged_access_data["payload_lens"]
+                                if isinstance(value, int) and value > 0
+                            }
+                        )
+                        type_url = decoded_type_url or f"type.googleapis.com/{descriptor_name}"
+                        trait_key = f"{obj_id}:{type_url}"
+                        all_traits[trait_key] = {
+                            "object_id": obj_id,
+                            "type_url": type_url,
+                            "decoded": True,
+                            "data": merged_access_data,
+                        }
+                        _LOGGER.debug(
+                            "Decoded UserAccessTrait for %s: records=%d payloads=%s",
+                            obj_id,
+                            len(merged_access_data.get("records", [])),
+                            merged_access_data.get("payload_lens", []),
+                        )
+                    continue
+
+                if descriptor_name == _BASIC_USER_SCHEDULES_TRAIT_DESCRIPTOR:
+                    decoded_type_url = ""
+                    merged_schedule_data = {
+                        "schedules": [],
+                        "payload_lens": [],
+                    }
+                    saw_payload = False
+                    for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
+                        any_msg = entry.get("any_msg")
+                        if not any_msg or not any_msg.value:
+                            continue
+                        saw_payload = True
+                        decoded_schedule = self._decode_basic_user_schedules_trait_payload(any_msg.value)
+                        merged_schedule_data["payload_lens"].append(
+                            int(decoded_schedule.get("payload_len", 0) or 0)
+                        )
+                        schedules = decoded_schedule.get("schedules")
+                        if isinstance(schedules, list):
+                            merged_schedule_data["schedules"].extend(
+                                schedule for schedule in schedules if isinstance(schedule, dict)
+                            )
+                        if not decoded_type_url:
+                            decoded_type_url = any_msg.type_url or entry.get("type_url") or ""
+
+                    if saw_payload:
+                        merged_schedule_data["schedules"] = self._dedupe_dict_list(
+                            merged_schedule_data["schedules"]
+                        )
+                        merged_schedule_data["payload_lens"] = sorted(
+                            {
+                                value
+                                for value in merged_schedule_data["payload_lens"]
+                                if isinstance(value, int) and value > 0
+                            }
+                        )
+                        type_url = decoded_type_url or f"type.googleapis.com/{descriptor_name}"
+                        trait_key = f"{obj_id}:{type_url}"
+                        all_traits[trait_key] = {
+                            "object_id": obj_id,
+                            "type_url": type_url,
+                            "decoded": True,
+                            "data": merged_schedule_data,
+                        }
+                        _LOGGER.debug(
+                            "Decoded BasicUserSchedulesSettingsTrait for %s: schedules=%d payloads=%s",
+                            obj_id,
+                            len(merged_schedule_data.get("schedules", [])),
+                            merged_schedule_data.get("payload_lens", []),
+                        )
+                    continue
+
                 trait_cls = _V2_TRAIT_CLASS_MAP.get(descriptor_name)
                 if not trait_cls:
                     if (
@@ -1524,9 +1886,11 @@ class NestProtobufHandler:
                         },
                     }
                 elif "UserPincodesSettingsTrait" in descriptor_name:
-                    if not _is_device_lock_id(obj_id):
+                    is_structure_resource = isinstance(obj_id, str) and obj_id.startswith("STRUCTURE_")
+                    if not _is_device_lock_id(obj_id) and not is_structure_resource:
                         continue
-                    lock_device_ids.add(obj_id)
+                    if _is_device_lock_id(obj_id):
+                        lock_device_ids.add(obj_id)
                     sanitized_pincodes = {}
                     try:
                         for slot, user_pincode in merged_msg.userPincodes.items():
@@ -1693,15 +2057,36 @@ class NestProtobufHandler:
                 if "guest" in descriptor.lower()
             }
         )
+        user_descriptors = sorted(
+            {
+                descriptor
+                for descriptors in normalized_trait_inventory.values()
+                for descriptor in descriptors
+                if descriptor.startswith("nest.trait.user.")
+            }
+        )
+        schedule_descriptors = sorted(
+            {
+                descriptor
+                for descriptors in normalized_trait_inventory.values()
+                for descriptor in descriptors
+                if descriptor.startswith("weave.trait.schedule.")
+            }
+        )
         structure_inventory = {
             object_id: descriptors
             for object_id, descriptors in normalized_trait_inventory.items()
             if object_id.startswith("STRUCTURE_")
         }
         _LOGGER.debug(
-            "Observed auth/guest descriptor inventory: supplemental_auth=%s guest=%s",
+            (
+                "Observed auth/guest/user/schedule descriptor inventory: "
+                "supplemental_auth=%s guest=%s user=%s schedule=%s"
+            ),
             supplemental_auth_descriptors,
             guest_descriptors,
+            user_descriptors,
+            schedule_descriptors,
         )
         if structure_inventory:
             _LOGGER.debug("Observed structure trait descriptors: %s", structure_inventory)
