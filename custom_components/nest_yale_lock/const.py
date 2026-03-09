@@ -77,6 +77,7 @@ CONF_STALE_STATE_MAX_SECONDS = "stale_state_max_seconds"
 SERVICE_RESET_CONNECTION = "reset_connection"
 SERVICE_SET_GUEST_PASSCODE = "set_guest_passcode"
 SERVICE_DELETE_GUEST_PASSCODE = "delete_guest_passcode"
+SERVICE_EXPERIMENTAL_CREATE_GUEST = "experimental_create_guest"
 
 # Guest passcode defaults (can be overridden by device capabilities when available)
 DEFAULT_MIN_PASSCODE_LENGTH = 4

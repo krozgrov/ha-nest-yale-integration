@@ -62,6 +62,44 @@ set_guest_passcode:
       selector:
         boolean:
 
+experimental_create_guest:
+  name: Experimental Create Guest
+  description: Experimental. Try creating a structure guest via `nest.trait.guest.GuestsTrait.CreateGuestRequest` using a plaintext passcode. Use a new temporary guest name while testing; this does not modify the existing `set_guest_passcode` path.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: Optional config entry id to target; when omitted, all active entries are targeted.
+      example: "01ABCDEF1234567890"
+      selector:
+        text:
+    entity_id:
+      name: Lock Entity
+      description: Recommended. Select the lock entity to target; this resolves the coordinator and structure automatically.
+      selector:
+        entity:
+          domain: lock
+          integration: nest_yale_lock
+    device_id:
+      name: Device ID
+      description: Advanced fallback. Optional lock device id (DEVICE_*). Required only when you do not use lock entity selection.
+      example: "DEVICE_1234567890"
+      selector:
+        text:
+    guest_name:
+      name: Guest Name
+      description: Name for the new temporary guest to create in Nest.
+      example: "Codex Probe"
+      required: true
+      selector:
+        text:
+    passcode:
+      name: Passcode
+      description: Numeric passcode to try for the new guest.
+      example: "123456"
+      required: true
+      selector:
+        text:
+
 delete_guest_passcode:
   name: Delete Guest Passcode
   description: Delete the guest passcode using either a guest user id or an existing slot number on a Nest x Yale lock.

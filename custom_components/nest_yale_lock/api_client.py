@@ -2147,6 +2147,128 @@ class NestAPIClient:
         )
         return payload
 
+    def _observed_structure_guests(self) -> list[dict[str, object]]:
+        all_traits = self.current_state.get("all_traits", {}) or {}
+        if not isinstance(all_traits, dict):
+            return []
+        guests: list[dict[str, object]] = []
+        for trait_info in all_traits.values():
+            if not isinstance(trait_info, dict):
+                continue
+            type_url = trait_info.get("type_url")
+            if not isinstance(type_url, str) or not type_url.endswith("/nest.trait.guest.GuestsTrait"):
+                continue
+            data = trait_info.get("data")
+            if not isinstance(data, dict):
+                continue
+            entries = data.get("guests")
+            if isinstance(entries, list):
+                guests.extend(entry for entry in entries if isinstance(entry, dict))
+        return guests
+
+    def _encode_create_guest_request(self, guest_name: str, passcode_text: str) -> bytes:
+        payload = bytearray()
+        payload += self._encode_string(1, guest_name)
+        payload += self._encode_length_delimited(2, passcode_text.encode("utf-8"))
+        return bytes(payload)
+
+    async def experimental_create_guest(
+        self,
+        device_id: str,
+        guest_name: str,
+        passcode: str,
+    ):
+        """Experimentally create a structure guest using GuestsTrait.CreateGuestRequest."""
+        if not isinstance(guest_name, str) or not guest_name.strip():
+            raise ValueError("guest_name is required")
+        if not isinstance(passcode, str):
+            raise ValueError("passcode must be a string")
+        passcode_text = passcode.strip()
+        if not passcode_text.isdigit():
+            raise ValueError("passcode must contain digits only")
+
+        structure_resource_id = self._structure_resource_id()
+        if not isinstance(structure_resource_id, str) or not structure_resource_id:
+            raise RuntimeError("No structure resource id is available for experimental guest creation.")
+
+        request_bytes = self._encode_create_guest_request(guest_name.strip(), passcode_text)
+        command_type_urls = [
+            "type.nestlabs.com/nest.trait.guest.GuestsTrait.CreateGuestRequest",
+            "type.googleapis.com/nest.trait.guest.GuestsTrait.CreateGuestRequest",
+        ]
+        trait_label_options = ["guests", None]
+        before_guest_ids = {
+            str(entry.get("guest_id"))
+            for entry in self._observed_structure_guests()
+            if entry.get("guest_id")
+        }
+
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Experimental guest create for %s via structure %s name=%s attempts=%s",
+                device_id,
+                structure_resource_id,
+                guest_name.strip(),
+                [
+                    f"{'label' if trait_label else 'no-label'}:{type_url}"
+                    for type_url in command_type_urls
+                    for trait_label in trait_label_options
+                ],
+            )
+
+        last_error: Exception | None = None
+        for type_url in command_type_urls:
+            for trait_label in trait_label_options:
+                cmd_any = {
+                    "command": {
+                        "type_url": type_url,
+                        "value": request_bytes,
+                    },
+                }
+                if trait_label:
+                    cmd_any["traitLabel"] = trait_label
+                try:
+                    result = await self.send_command(
+                        cmd_any,
+                        structure_resource_id,
+                        structure_id=self._structure_id,
+                    )
+                    try:
+                        await self.refresh_state()
+                    except Exception as err:
+                        _LOGGER.debug("refresh_state after experimental guest create failed: %s", err)
+                    after_guests = self._observed_structure_guests()
+                    after_guest_ids = {
+                        str(entry.get("guest_id"))
+                        for entry in after_guests
+                        if entry.get("guest_id")
+                    }
+                    new_guest_ids = sorted(after_guest_ids - before_guest_ids)
+                    _LOGGER.info(
+                        "Experimental guest create command accepted for structure %s (name=%s, new_guest_ids=%s)",
+                        structure_resource_id,
+                        guest_name.strip(),
+                        new_guest_ids,
+                    )
+                    return result
+                except Exception as err:
+                    last_error = err
+                    _LOGGER.warning(
+                        (
+                            "Experimental guest create failed for structure %s "
+                            "(trait_label=%s, type_url=%s): %s"
+                        ),
+                        structure_resource_id,
+                        trait_label,
+                        type_url,
+                        err,
+                    )
+                    continue
+
+        raise RuntimeError(
+            "Experimental guest create failed for all trait-label/type-url variants."
+        ) from last_error
+
     async def set_guest_passcode(
         self,
         device_id: str,

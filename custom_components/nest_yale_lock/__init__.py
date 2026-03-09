@@ -23,6 +23,7 @@ from .const import (
     SERVICE_RESET_CONNECTION,
     SERVICE_SET_GUEST_PASSCODE,
     SERVICE_DELETE_GUEST_PASSCODE,
+    SERVICE_EXPERIMENTAL_CREATE_GUEST,
     DEFAULT_MIN_PASSCODE_LENGTH,
     DEFAULT_MAX_PASSCODE_LENGTH,
 )
@@ -68,6 +69,16 @@ SERVICE_DELETE_GUEST_PASSCODE_SCHEMA = vol.Schema(
         vol.Optional("device_id"): cv.string,
         vol.Optional("guest_user_id"): cv.string,
         vol.Optional("slot"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+    }
+)
+
+SERVICE_EXPERIMENTAL_CREATE_GUEST_SCHEMA = vol.Schema(
+    {
+        vol.Optional("entry_id"): cv.string,
+        vol.Optional("entity_id"): vol.Any(cv.entity_id, [cv.entity_id]),
+        vol.Optional("device_id"): cv.string,
+        vol.Required("guest_name"): cv.string,
+        vol.Required("passcode"): cv.string,
     }
 )
 
@@ -465,6 +476,37 @@ def _register_services(hass: HomeAssistant) -> None:
                     raise HomeAssistantError(str(err)) from err
             await coordinator.async_refresh()
 
+    async def handle_experimental_create_guest(call: ServiceCall) -> None:
+        entry_id = call.data.get("entry_id")
+        requested_entity_ids = _normalize_requested_entity_ids(call.data.get("entity_id"))
+        requested_device_id = call.data.get("device_id")
+        guest_name = call.data["guest_name"].strip()
+        passcode = call.data["passcode"].strip()
+        if not guest_name:
+            raise HomeAssistantError("guest_name is required")
+        coordinators = _resolve_target_coordinators(hass, entry_id, requested_entity_ids)
+        for _, coordinator in coordinators.items():
+            target_ids = _resolve_target_device_ids(
+                hass,
+                coordinator,
+                requested_device_id,
+                requested_entity_ids,
+            )
+            if not target_ids:
+                continue
+            for device_id in target_ids:
+                device_data = coordinator.data.get(device_id) if isinstance(coordinator.data, dict) else None
+                _validate_guest_passcode(passcode, device_data)
+                try:
+                    await coordinator.api_client.experimental_create_guest(
+                        device_id,
+                        guest_name,
+                        passcode,
+                    )
+                except (ValueError, RuntimeError) as err:
+                    raise HomeAssistantError(str(err)) from err
+            await coordinator.async_refresh()
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_RESET_CONNECTION,
@@ -483,6 +525,12 @@ def _register_services(hass: HomeAssistant) -> None:
         handle_delete_guest_passcode,
         schema=SERVICE_DELETE_GUEST_PASSCODE_SCHEMA,
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_EXPERIMENTAL_CREATE_GUEST,
+        handle_experimental_create_guest,
+        schema=SERVICE_EXPERIMENTAL_CREATE_GUEST_SCHEMA,
+    )
 
 
 def _unregister_services_if_idle(hass: HomeAssistant) -> None:
@@ -493,6 +541,7 @@ def _unregister_services_if_idle(hass: HomeAssistant) -> None:
         SERVICE_RESET_CONNECTION,
         SERVICE_SET_GUEST_PASSCODE,
         SERVICE_DELETE_GUEST_PASSCODE,
+        SERVICE_EXPERIMENTAL_CREATE_GUEST,
     ):
         if hass.services.has_service(DOMAIN, service_name):
             hass.services.async_remove(DOMAIN, service_name)
