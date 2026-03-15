@@ -92,6 +92,7 @@ if HAS_PROTOBUF:
 
     NestAPIClient = API_CLIENT.NestAPIClient
     weave_security_pb2 = API_CLIENT.weave_security_pb2
+    v1_pb2 = API_CLIENT.v1_pb2
 
 
 class TestApiClientHelpers(unittest.TestCase):
@@ -127,6 +128,59 @@ class TestApiClientHelpers(unittest.TestCase):
         )
         self.assertIn("CreateGuestResponse", hints["type_hints"])
         self.assertIn("GuestsTrait.CreateGuestResponse", hints["type_hints"])
+
+    def test_summarize_send_command_response_extracts_operation_details(self) -> None:
+        response = v1_pb2.SendCommandResponse()
+        command_group = response.sendCommandResponse.add()
+        command_group.resourceRequest.resourceId = "STRUCTURE_018C86E39308F29F"
+        command_group.resourceRequest.requestId = "request-1"
+
+        operation = command_group.traitOperations.add()
+        operation.traitRequest.resourceId = "STRUCTURE_018C86E39308F29F"
+        operation.traitRequest.traitLabel = "guests"
+        operation.traitRequest.requestId = "request-1"
+        operation.progress = 4
+        operation.status.code = 0
+        operation.status.message = "ok"
+        operation.publisherAcceptedStateVersion = 321
+        operation.command.traitRequest.resourceId = "STRUCTURE_018C86E39308F29F"
+        operation.command.traitRequest.traitLabel = "guests"
+        operation.command.command.type_url = (
+            "type.googleapis.com/nest.trait.guest.GuestsTrait.CreateGuestResponse"
+        )
+        operation.command.command.value = b"\x00GUEST_019CF39791A93D05"
+        detail = operation.status.details.add()
+        detail.type_url = "type.googleapis.com/nest.trait.guest.GuestsTrait.CreateGuestResponse"
+        detail.value = b"\x00GUEST_019CF39791A93D05"
+
+        summary = NestAPIClient._summarize_send_command_response(
+            response.SerializeToString()
+        )
+
+        self.assertEqual(1, len(summary["operations"]))
+        self.assertEqual(
+            "STRUCTURE_018C86E39308F29F",
+            summary["operations"][0]["resource_id"],
+        )
+        self.assertEqual("guests", summary["operations"][0]["trait_label"])
+        self.assertEqual("COMPLETE", summary["operations"][0]["progress"])
+        self.assertEqual(321, summary["operations"][0]["publisher_accepted_state_version"])
+        self.assertEqual(
+            "type.googleapis.com/nest.trait.guest.GuestsTrait.CreateGuestResponse",
+            summary["operations"][0]["command_type_url"],
+        )
+        self.assertEqual(
+            ["GUEST_019CF39791A93D05"],
+            summary["operations"][0]["command_resource_ids"],
+        )
+        self.assertEqual(
+            ["type.googleapis.com/nest.trait.guest.GuestsTrait.CreateGuestResponse"],
+            summary["operations"][0]["status_detail_types"],
+        )
+        self.assertEqual(
+            ["GUEST_019CF39791A93D05"],
+            summary["operations"][0]["status_detail_resource_ids"],
+        )
 
     def test_snapshot_user_pincodes_collects_fingerprints(self) -> None:
         client = self._make_client()

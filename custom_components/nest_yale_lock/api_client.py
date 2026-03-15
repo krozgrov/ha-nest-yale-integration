@@ -1006,6 +1006,13 @@ class NestAPIClient:
                         api_url,
                         len(raw_data) if raw_data else 0,
                     )
+                    response_summary = self._summarize_send_command_response(raw_data)
+                    if response_summary.get("operations"):
+                        _LOGGER.debug(
+                            "SendCommandResponse details for %s: %s",
+                            device_id,
+                            response_summary,
+                        )
                     try:
                         self._last_command_info = {
                             "ts": asyncio.get_event_loop().time(),
@@ -1013,6 +1020,7 @@ class NestAPIClient:
                             "type_url": command.get("command", {}).get("type_url"),
                             "status_code": 0,
                             "status_message": None,
+                            "response_summary": response_summary,
                         }
                     except Exception:
                         pass
@@ -2317,10 +2325,10 @@ class NestAPIClient:
         }
 
     @staticmethod
-    def _extract_command_response_hints(raw_data: bytes | None) -> dict[str, list[str]]:
+    def _extract_resource_ids_from_bytes(raw_data: bytes | None) -> list[str]:
         if not raw_data:
-            return {"resource_ids": [], "type_hints": []}
-        resource_ids = sorted(
+            return []
+        return sorted(
             {
                 match.decode("utf-8", errors="ignore")
                 for match in re.findall(
@@ -2329,6 +2337,110 @@ class NestAPIClient:
                 )
             }
         )
+
+    @classmethod
+    def _summarize_send_command_response(cls, raw_data: bytes | None) -> dict[str, object]:
+        if not raw_data:
+            return {"response_status_code": None, "response_status_message": None, "operations": []}
+
+        try:
+            resp = v1_pb2.SendCommandResponse()
+            resp.ParseFromString(raw_data)
+        except Exception:
+            return {"response_status_code": None, "response_status_message": None, "operations": []}
+
+        if not resp.ListFields():
+            return {"response_status_code": None, "response_status_message": None, "operations": []}
+
+        operations: list[dict[str, object]] = []
+        for op_group in getattr(resp, "sendCommandResponse", []):
+            group_request = getattr(op_group, "resourceRequest", None)
+            group_resource_id = getattr(group_request, "resourceId", None) if group_request else None
+            for operation in getattr(op_group, "traitOperations", []):
+                trait_req = getattr(operation, "traitRequest", None)
+                status = getattr(operation, "status", None)
+                detail_type_urls: list[str] = []
+                detail_resource_ids: list[str] = []
+                for detail in getattr(status, "details", []):
+                    type_url = getattr(detail, "type_url", "") or ""
+                    if type_url:
+                        detail_type_urls.append(type_url)
+                    detail_resource_ids.extend(
+                        cls._extract_resource_ids_from_bytes(getattr(detail, "value", b""))
+                    )
+
+                request_case = None
+                try:
+                    request_case = operation.WhichOneof("request")
+                except Exception:
+                    request_case = None
+
+                command_type_url = None
+                command_resource_ids: list[str] = []
+                operation_command = getattr(operation, "command", None)
+                if operation_command is not None:
+                    try:
+                        command_any = getattr(operation_command, "command", None)
+                        command_type_url = getattr(command_any, "type_url", None) or None
+                        command_resource_ids = cls._extract_resource_ids_from_bytes(
+                            getattr(command_any, "value", b"")
+                        )
+                    except Exception:
+                        command_type_url = None
+                        command_resource_ids = []
+
+                progress_value = int(getattr(operation, "progress", 0) or 0)
+                try:
+                    progress_name = v1_pb2.TraitOperation.State.Name(progress_value)
+                except Exception:
+                    progress_name = str(progress_value)
+
+                operation_summary = {
+                    "resource_id": (
+                        getattr(trait_req, "resourceId", None)
+                        or group_resource_id
+                    ),
+                    "trait_label": getattr(trait_req, "traitLabel", None) if trait_req else None,
+                    "progress": progress_name,
+                    "status_code": int(getattr(status, "code", 0) or 0) if status else 0,
+                    "status_message": getattr(status, "message", None) if status else None,
+                    "publisher_accepted_state_version": int(
+                        getattr(operation, "publisherAcceptedStateVersion", 0) or 0
+                    ) or None,
+                    "request_case": request_case,
+                    "command_type_url": command_type_url,
+                    "command_resource_ids": command_resource_ids,
+                    "status_detail_types": sorted(set(detail_type_urls)),
+                    "status_detail_resource_ids": sorted(set(detail_resource_ids)),
+                }
+                operations.append(
+                    {
+                        key: value
+                        for key, value in operation_summary.items()
+                        if value not in (None, [], {}, "")
+                    }
+                )
+
+        response_status = getattr(resp, "status", None)
+        return {
+            "response_status_code": (
+                int(getattr(response_status, "code", 0) or 0)
+                if response_status is not None
+                else None
+            ),
+            "response_status_message": (
+                getattr(response_status, "message", None)
+                if response_status is not None
+                else None
+            ),
+            "operations": operations,
+        }
+
+    @staticmethod
+    def _extract_command_response_hints(raw_data: bytes | None) -> dict[str, list[str]]:
+        if not raw_data:
+            return {"resource_ids": [], "type_hints": []}
+        resource_ids = NestAPIClient._extract_resource_ids_from_bytes(raw_data)
         type_hints = sorted(
             {
                 match.decode("utf-8", errors="ignore")
@@ -2526,6 +2638,7 @@ class NestAPIClient:
                         structure_id=self._structure_id,
                     )
                     response_hints = self._extract_command_response_hints(result)
+                    response_summary = self._summarize_send_command_response(result)
                     snapshot_diff = None
                     for poll_index, delay_seconds in enumerate((0.0, 0.75, 2.0), start=1):
                         if delay_seconds > 0:
@@ -2576,7 +2689,7 @@ class NestAPIClient:
                         "Experimental guest create command accepted for structure %s "
                         "(name=%s, new_guest_ids=%s, matching_guest_ids_before=%s, "
                         "matching_guest_ids_after=%s, new_user_access_ids=%s, "
-                        "response_resource_ids=%s)"
+                        "response_resource_ids=%s, response_operations=%s)"
                     )
                     _LOGGER.info(
                         info_message,
@@ -2587,16 +2700,19 @@ class NestAPIClient:
                         snapshot_diff.get("matching_guest_ids_after", []),
                         snapshot_diff.get("new_user_access_ids", []),
                         response_hints.get("resource_ids", []),
+                        response_summary.get("operations", []),
                     )
                     if not snapshot_diff.get("observable_change"):
                         _LOGGER.warning(
                             (
                                 "Experimental guest create produced no observable state change "
                                 "after command acceptance for structure %s. "
-                                "response_type_hints=%s structure_pincode_changes=%s device_pincode_changes=%s"
+                                "response_type_hints=%s response_operations=%s "
+                                "structure_pincode_changes=%s device_pincode_changes=%s"
                             ),
                             structure_resource_id,
                             response_hints.get("type_hints", []),
+                            response_summary.get("operations", []),
                             snapshot_diff.get("structure_pincode_diff", {}).get("changed", []),
                             snapshot_diff.get("device_pincode_diff", {}).get("changed", []),
                         )
