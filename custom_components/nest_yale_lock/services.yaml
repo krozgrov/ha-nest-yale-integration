@@ -64,7 +64,7 @@ set_guest_passcode:
 
 experimental_create_guest:
   name: Experimental Create Guest
-  description: Experimental. Try creating a structure guest via `nest.trait.guest.GuestsTrait.CreateGuestRequest` using a plaintext passcode. Use a new temporary guest name while testing; this does not modify the existing `set_guest_passcode` path.
+  description: Experimental. Try creating a structure guest via `nest.trait.guest.GuestsTrait.CreateGuestRequest` using a plaintext passcode. Use a new temporary guest name while testing; reusing an existing guest name may be treated by Nest as a no-op or an in-place update. This does not modify the existing `set_guest_passcode` path.
   fields:
     entry_id:
       name: Entry ID

@@ -1,6 +1,8 @@
+import hashlib
 import logging
 import os
 import random
+import re
 import secrets
 import time
 import uuid
@@ -2148,23 +2150,299 @@ class NestAPIClient:
         return payload
 
     def _observed_structure_guests(self) -> list[dict[str, object]]:
+        return self._observed_structure_trait_items(
+            "nest.trait.guest.GuestsTrait",
+            "guests",
+        )
+
+    def _observed_structure_user_access_records(self) -> list[dict[str, object]]:
+        return self._observed_structure_trait_items(
+            "nest.trait.user.UserAccessTrait",
+            "records",
+        )
+
+    def _observed_structure_schedule_entries(self) -> list[dict[str, object]]:
+        return self._observed_structure_trait_items(
+            "weave.trait.schedule.BasicUserSchedulesSettingsTrait",
+            "schedules",
+        )
+
+    def _observed_structure_trait_items(
+        self,
+        descriptor_name: str,
+        data_key: str,
+    ) -> list[dict[str, object]]:
         all_traits = self.current_state.get("all_traits", {}) or {}
         if not isinstance(all_traits, dict):
             return []
-        guests: list[dict[str, object]] = []
+        structure_resource_id = self._structure_resource_id()
+        items: list[dict[str, object]] = []
         for trait_info in all_traits.values():
             if not isinstance(trait_info, dict):
                 continue
+            object_id = trait_info.get("object_id")
+            if structure_resource_id and object_id != structure_resource_id:
+                continue
             type_url = trait_info.get("type_url")
-            if not isinstance(type_url, str) or not type_url.endswith("/nest.trait.guest.GuestsTrait"):
+            if not isinstance(type_url, str) or not type_url.endswith(f"/{descriptor_name}"):
                 continue
             data = trait_info.get("data")
             if not isinstance(data, dict):
                 continue
-            entries = data.get("guests")
+            entries = data.get(data_key)
             if isinstance(entries, list):
-                guests.extend(entry for entry in entries if isinstance(entry, dict))
-        return guests
+                items.extend(entry for entry in entries if isinstance(entry, dict))
+        return items
+
+    @staticmethod
+    def _fingerprint_bytes(value: bytes) -> str | None:
+        if not value:
+            return None
+        return hashlib.sha256(value).hexdigest()[:12]
+
+    def _snapshot_user_pincodes(self, resource_id: str | None) -> list[dict[str, object]]:
+        if not isinstance(resource_id, str) or not resource_id:
+            return []
+        trait_states = self.current_state.get("trait_states", {}) or {}
+        if not isinstance(trait_states, dict):
+            return []
+        resource_traits = trait_states.get(resource_id)
+        if not isinstance(resource_traits, dict):
+            return []
+        trait_msg = resource_traits.get("weave.trait.security.UserPincodesSettingsTrait")
+        if trait_msg is None or not hasattr(trait_msg, "userPincodes"):
+            return []
+
+        snapshots: list[dict[str, object]] = []
+        try:
+            for slot, user_pincode in trait_msg.userPincodes.items():
+                raw_pincode = bytes(getattr(user_pincode, "pincode", b"") or b"")
+                user_id = None
+                if user_pincode.HasField("userId"):
+                    user_id = getattr(user_pincode.userId, "resourceId", None)
+                enabled = None
+                if user_pincode.HasField("pincodeCredentialEnabled"):
+                    enabled = bool(user_pincode.pincodeCredentialEnabled.value)
+                snapshots.append(
+                    {
+                        "slot": int(slot),
+                        "user_id": user_id,
+                        "enabled": enabled,
+                        "has_passcode": bool(raw_pincode),
+                        "pincode_len": len(raw_pincode),
+                        "pincode_fingerprint": self._fingerprint_bytes(raw_pincode),
+                    }
+                )
+        except Exception:
+            return []
+
+        return sorted(snapshots, key=lambda item: int(item.get("slot", 0) or 0))
+
+    @staticmethod
+    def _matching_guest_ids(
+        guests: list[dict[str, object]],
+        guest_name: str,
+    ) -> list[str]:
+        normalized_name = guest_name.strip().casefold()
+        if not normalized_name:
+            return []
+        matches = []
+        for entry in guests:
+            if not isinstance(entry, dict):
+                continue
+            entry_name = entry.get("name")
+            guest_id = entry.get("guest_id")
+            if not isinstance(entry_name, str) or not isinstance(guest_id, str):
+                continue
+            if entry_name.strip().casefold() == normalized_name:
+                matches.append(guest_id)
+        return sorted(set(matches))
+
+    @staticmethod
+    def _collect_record_ids(
+        entries: list[dict[str, object]],
+        field_name: str,
+    ) -> list[str]:
+        ids: set[str] = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            value = entry.get(field_name)
+            if isinstance(value, str) and value:
+                ids.add(value)
+        return sorted(ids)
+
+    @staticmethod
+    def _diff_pincode_snapshots(
+        before: list[dict[str, object]],
+        after: list[dict[str, object]],
+    ) -> dict[str, list[dict[str, object]]]:
+        before_by_slot = {
+            int(entry.get("slot", -1)): entry
+            for entry in before
+            if isinstance(entry, dict) and entry.get("slot") is not None
+        }
+        after_by_slot = {
+            int(entry.get("slot", -1)): entry
+            for entry in after
+            if isinstance(entry, dict) and entry.get("slot") is not None
+        }
+
+        added_slots = sorted(slot for slot in after_by_slot if slot not in before_by_slot)
+        removed_slots = sorted(slot for slot in before_by_slot if slot not in after_by_slot)
+        changed_slots: list[dict[str, object]] = []
+        for slot in sorted(slot for slot in before_by_slot if slot in after_by_slot):
+            before_entry = before_by_slot[slot]
+            after_entry = after_by_slot[slot]
+            if (
+                before_entry.get("user_id") != after_entry.get("user_id")
+                or before_entry.get("enabled") != after_entry.get("enabled")
+                or before_entry.get("has_passcode") != after_entry.get("has_passcode")
+                or before_entry.get("pincode_fingerprint") != after_entry.get("pincode_fingerprint")
+            ):
+                changed_slots.append(
+                    {
+                        "slot": slot,
+                        "before_user_id": before_entry.get("user_id"),
+                        "after_user_id": after_entry.get("user_id"),
+                        "before_fp": before_entry.get("pincode_fingerprint"),
+                        "after_fp": after_entry.get("pincode_fingerprint"),
+                    }
+                )
+
+        return {
+            "added": [after_by_slot[slot] for slot in added_slots],
+            "removed": [before_by_slot[slot] for slot in removed_slots],
+            "changed": changed_slots,
+        }
+
+    @staticmethod
+    def _extract_command_response_hints(raw_data: bytes | None) -> dict[str, list[str]]:
+        if not raw_data:
+            return {"resource_ids": [], "type_hints": []}
+        resource_ids = sorted(
+            {
+                match.decode("utf-8", errors="ignore")
+                for match in re.findall(
+                    rb"(?:GUEST|USER|STRUCTURE|DEVICE)_[A-Z0-9]+",
+                    raw_data,
+                )
+            }
+        )
+        type_hints = sorted(
+            {
+                match.decode("utf-8", errors="ignore")
+                for match in re.findall(
+                    rb"(?:CreateGuestResponse|GuestsTrait(?:\.CreateGuestRequest|\.CreateGuestResponse)?|UserAccessTrait|UserPincodesSettingsTrait)",
+                    raw_data,
+                )
+            }
+        )
+        return {
+            "resource_ids": resource_ids,
+            "type_hints": type_hints,
+        }
+
+    def _capture_experimental_guest_snapshot(
+        self,
+        *,
+        device_id: str,
+        structure_resource_id: str,
+    ) -> dict[str, object]:
+        return {
+            "guests": self._observed_structure_guests(),
+            "user_access_records": self._observed_structure_user_access_records(),
+            "schedule_entries": self._observed_structure_schedule_entries(),
+            "structure_pincodes": self._snapshot_user_pincodes(structure_resource_id),
+            "device_pincodes": self._snapshot_user_pincodes(device_id),
+        }
+
+    def _diff_experimental_guest_snapshot(
+        self,
+        *,
+        before: dict[str, object],
+        after: dict[str, object],
+        guest_name: str,
+    ) -> dict[str, object]:
+        before_guests = before.get("guests", [])
+        after_guests = after.get("guests", [])
+        if not isinstance(before_guests, list):
+            before_guests = []
+        if not isinstance(after_guests, list):
+            after_guests = []
+
+        before_guest_ids = set(self._collect_record_ids(before_guests, "guest_id"))
+        after_guest_ids = set(self._collect_record_ids(after_guests, "guest_id"))
+        before_user_access = before.get("user_access_records", [])
+        after_user_access = after.get("user_access_records", [])
+        if not isinstance(before_user_access, list):
+            before_user_access = []
+        if not isinstance(after_user_access, list):
+            after_user_access = []
+        before_user_ids = {
+            user_id
+            for user_id in self._collect_record_ids(before_user_access, "user_id")
+            if user_id.startswith("GUEST_")
+        }
+        after_user_ids = {
+            user_id
+            for user_id in self._collect_record_ids(after_user_access, "user_id")
+            if user_id.startswith("GUEST_")
+        }
+
+        before_structure_pincodes = before.get("structure_pincodes", [])
+        after_structure_pincodes = after.get("structure_pincodes", [])
+        before_device_pincodes = before.get("device_pincodes", [])
+        after_device_pincodes = after.get("device_pincodes", [])
+        if not isinstance(before_structure_pincodes, list):
+            before_structure_pincodes = []
+        if not isinstance(after_structure_pincodes, list):
+            after_structure_pincodes = []
+        if not isinstance(before_device_pincodes, list):
+            before_device_pincodes = []
+        if not isinstance(after_device_pincodes, list):
+            after_device_pincodes = []
+
+        structure_pincode_diff = self._diff_pincode_snapshots(
+            before_structure_pincodes,
+            after_structure_pincodes,
+        )
+        device_pincode_diff = self._diff_pincode_snapshots(
+            before_device_pincodes,
+            after_device_pincodes,
+        )
+
+        matching_guest_ids_before = self._matching_guest_ids(before_guests, guest_name)
+        matching_guest_ids_after = self._matching_guest_ids(after_guests, guest_name)
+        observable_change = any(
+            (
+                after_guest_ids - before_guest_ids,
+                before_guest_ids - after_guest_ids,
+                after_user_ids - before_user_ids,
+                before_user_ids - after_user_ids,
+                structure_pincode_diff["added"],
+                structure_pincode_diff["removed"],
+                structure_pincode_diff["changed"],
+                device_pincode_diff["added"],
+                device_pincode_diff["removed"],
+                device_pincode_diff["changed"],
+                len(matching_guest_ids_after) > len(matching_guest_ids_before),
+            )
+        )
+
+        return {
+            "guest_count_before": len(before_guests),
+            "guest_count_after": len(after_guests),
+            "matching_guest_ids_before": matching_guest_ids_before,
+            "matching_guest_ids_after": matching_guest_ids_after,
+            "new_guest_ids": sorted(after_guest_ids - before_guest_ids),
+            "removed_guest_ids": sorted(before_guest_ids - after_guest_ids),
+            "new_user_access_ids": sorted(after_user_ids - before_user_ids),
+            "removed_user_access_ids": sorted(before_user_ids - after_user_ids),
+            "structure_pincode_diff": structure_pincode_diff,
+            "device_pincode_diff": device_pincode_diff,
+            "observable_change": observable_change,
+        }
 
     def _encode_create_guest_request(self, guest_name: str, passcode_text: str) -> bytes:
         payload = bytearray()
@@ -2197,18 +2475,32 @@ class NestAPIClient:
             "type.googleapis.com/nest.trait.guest.GuestsTrait.CreateGuestRequest",
         ]
         trait_label_options = ["guests", None]
-        before_guest_ids = {
-            str(entry.get("guest_id"))
-            for entry in self._observed_structure_guests()
-            if entry.get("guest_id")
-        }
+        normalized_guest_name = guest_name.strip()
+        before_snapshot = self._capture_experimental_guest_snapshot(
+            device_id=device_id,
+            structure_resource_id=structure_resource_id,
+        )
+        duplicate_guest_ids = self._matching_guest_ids(
+            before_snapshot.get("guests", []),
+            normalized_guest_name,
+        )
+        if duplicate_guest_ids:
+            _LOGGER.warning(
+                (
+                    "Experimental guest create requested with existing guest name %s "
+                    "on structure %s; Nest may treat this as a no-op or update. matching_guest_ids=%s"
+                ),
+                normalized_guest_name,
+                structure_resource_id,
+                duplicate_guest_ids,
+            )
 
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "Experimental guest create for %s via structure %s name=%s attempts=%s",
                 device_id,
                 structure_resource_id,
-                guest_name.strip(),
+                normalized_guest_name,
                 [
                     f"{'label' if trait_label else 'no-label'}:{type_url}"
                     for type_url in command_type_urls
@@ -2233,23 +2525,81 @@ class NestAPIClient:
                         structure_resource_id,
                         structure_id=self._structure_id,
                     )
-                    try:
-                        await self.refresh_state()
-                    except Exception as err:
-                        _LOGGER.debug("refresh_state after experimental guest create failed: %s", err)
-                    after_guests = self._observed_structure_guests()
-                    after_guest_ids = {
-                        str(entry.get("guest_id"))
-                        for entry in after_guests
-                        if entry.get("guest_id")
-                    }
-                    new_guest_ids = sorted(after_guest_ids - before_guest_ids)
-                    _LOGGER.info(
-                        "Experimental guest create command accepted for structure %s (name=%s, new_guest_ids=%s)",
-                        structure_resource_id,
-                        guest_name.strip(),
-                        new_guest_ids,
+                    response_hints = self._extract_command_response_hints(result)
+                    snapshot_diff = None
+                    for poll_index, delay_seconds in enumerate((0.0, 0.75, 2.0), start=1):
+                        if delay_seconds > 0:
+                            await asyncio.sleep(delay_seconds)
+                        try:
+                            await self.refresh_state()
+                        except Exception as err:
+                            _LOGGER.debug(
+                                "refresh_state after experimental guest create failed on poll %d: %s",
+                                poll_index,
+                                err,
+                            )
+                            continue
+                        after_snapshot = self._capture_experimental_guest_snapshot(
+                            device_id=device_id,
+                            structure_resource_id=structure_resource_id,
+                        )
+                        snapshot_diff = self._diff_experimental_guest_snapshot(
+                            before=before_snapshot,
+                            after=after_snapshot,
+                            guest_name=normalized_guest_name,
+                        )
+                        _LOGGER.debug(
+                            "Experimental guest create poll %d diff for structure %s: %s",
+                            poll_index,
+                            structure_resource_id,
+                            snapshot_diff,
+                        )
+                        if snapshot_diff.get("observable_change"):
+                            break
+
+                    if snapshot_diff is None:
+                        snapshot_diff = {
+                            "guest_count_before": len(before_snapshot.get("guests", [])),
+                            "guest_count_after": len(before_snapshot.get("guests", [])),
+                            "matching_guest_ids_before": duplicate_guest_ids,
+                            "matching_guest_ids_after": duplicate_guest_ids,
+                            "new_guest_ids": [],
+                            "removed_guest_ids": [],
+                            "new_user_access_ids": [],
+                            "removed_user_access_ids": [],
+                            "structure_pincode_diff": {"added": [], "removed": [], "changed": []},
+                            "device_pincode_diff": {"added": [], "removed": [], "changed": []},
+                            "observable_change": False,
+                        }
+
+                    info_message = (
+                        "Experimental guest create command accepted for structure %s "
+                        "(name=%s, new_guest_ids=%s, matching_guest_ids_before=%s, "
+                        "matching_guest_ids_after=%s, new_user_access_ids=%s, "
+                        "response_resource_ids=%s)"
                     )
+                    _LOGGER.info(
+                        info_message,
+                        structure_resource_id,
+                        normalized_guest_name,
+                        snapshot_diff.get("new_guest_ids", []),
+                        snapshot_diff.get("matching_guest_ids_before", []),
+                        snapshot_diff.get("matching_guest_ids_after", []),
+                        snapshot_diff.get("new_user_access_ids", []),
+                        response_hints.get("resource_ids", []),
+                    )
+                    if not snapshot_diff.get("observable_change"):
+                        _LOGGER.warning(
+                            (
+                                "Experimental guest create produced no observable state change "
+                                "after command acceptance for structure %s. "
+                                "response_type_hints=%s structure_pincode_changes=%s device_pincode_changes=%s"
+                            ),
+                            structure_resource_id,
+                            response_hints.get("type_hints", []),
+                            snapshot_diff.get("structure_pincode_diff", {}).get("changed", []),
+                            snapshot_diff.get("device_pincode_diff", {}).get("changed", []),
+                        )
                     return result
                 except Exception as err:
                     last_error = err
