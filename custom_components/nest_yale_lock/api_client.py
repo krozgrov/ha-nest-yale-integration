@@ -2674,6 +2674,9 @@ class NestAPIClient:
         passcode: str,
     ):
         """Experimentally create a structure guest using GuestsTrait.CreateGuestRequest."""
+        raise RuntimeError(
+            "experimental_create_guest is disabled pending investigation after field testing knocked a Nest device offline."
+        )
         if not isinstance(guest_name, str) or not guest_name.strip():
             raise ValueError("guest_name is required")
         if not isinstance(passcode, str):

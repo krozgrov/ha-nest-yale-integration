@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
@@ -318,6 +319,18 @@ class TestApiClientHelpers(unittest.TestCase):
         self.assertEqual(["GUEST_NEW"], diff["matching_guest_ids_after"])
         self.assertEqual(1, len(diff["structure_pincode_diff"]["added"]))
         self.assertEqual(1, len(diff["structure_pincode_diff"]["changed"]))
+
+    def test_experimental_create_guest_is_disabled(self) -> None:
+        client = self._make_client()
+
+        with self.assertRaisesRegex(RuntimeError, "disabled pending investigation"):
+            asyncio.run(
+                client.experimental_create_guest(
+                    "DEVICE_00177A0000060303",
+                    "Probe",
+                    "1234",
+                )
+            )
 
 
 if __name__ == "__main__":
