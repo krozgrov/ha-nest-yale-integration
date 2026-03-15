@@ -387,12 +387,12 @@ class NestProtobufHandler:
                         if entry.get("rank") == state_rank:
                             trait_entries[idx] = {
                                 "rank": state_rank,
-                            "any_msg": any_msg,
-                            "type_url": any_msg.type_url,
-                            "trait_label": trait_label,
-                        }
-                        replaced = True
-                        break
+                                "any_msg": any_msg,
+                                "type_url": any_msg.type_url,
+                                "trait_label": trait_label,
+                            }
+                            replaced = True
+                            break
                     if replaced:
                         continue
                     trait_entries.append({

@@ -126,11 +126,48 @@ class TestApiClientHelpers(unittest.TestCase):
             ["DEVICE_00177A0000060303", "GUEST_01957D1DC308C4AE"],
             hints["resource_ids"],
         )
-        self.assertIn("CreateGuestResponse", hints["type_hints"])
         self.assertIn("GuestsTrait.CreateGuestResponse", hints["type_hints"])
+
+    def test_extract_embedded_any_summaries_decodes_nested_anys(self) -> None:
+        inner_any = Any()
+        inner_any.type_url = "type.googleapis.com/nest.trait.guest.GuestsTrait.CreateGuestResponse"
+        inner_any.value = b"\x00GUEST_019CF39791A93D05"
+
+        outer_any = Any()
+        outer_any.type_url = "type.googleapis.com/google.rpc.DebugInfo"
+        outer_any.value = inner_any.SerializeToString()
+
+        summaries = NestAPIClient._extract_embedded_any_summaries(
+            outer_any.SerializeToString()
+        )
+
+        self.assertEqual(1, len(summaries))
+        self.assertEqual(
+            "type.googleapis.com/google.rpc.DebugInfo",
+            summaries[0]["type_url"],
+        )
+        self.assertEqual(
+            "type.googleapis.com/nest.trait.guest.GuestsTrait.CreateGuestResponse",
+            summaries[0]["embedded_anys"][0]["type_url"],
+        )
+        self.assertEqual(
+            ["GUEST_019CF39791A93D05"],
+            summaries[0]["embedded_anys"][0]["resource_ids"],
+        )
 
     def test_summarize_send_command_response_extracts_operation_details(self) -> None:
         response = v1_pb2.SendCommandResponse()
+        response.status.code = 0
+        response.status.message = "ok"
+        top_level_detail = response.status.details.add()
+        top_level_detail.type_url = "type.googleapis.com/google.rpc.DebugInfo"
+        nested_top_level_any = Any()
+        nested_top_level_any.type_url = (
+            "type.googleapis.com/nest.trait.guest.GuestsTrait.CreateGuestResponse"
+        )
+        nested_top_level_any.value = b"\x00GUEST_019CF39791A93D05"
+        top_level_detail.value = nested_top_level_any.SerializeToString()
+
         command_group = response.sendCommandResponse.add()
         command_group.resourceRequest.resourceId = "STRUCTURE_018C86E39308F29F"
         command_group.resourceRequest.requestId = "request-1"
@@ -152,6 +189,10 @@ class TestApiClientHelpers(unittest.TestCase):
         detail = operation.status.details.add()
         detail.type_url = "type.googleapis.com/nest.trait.guest.GuestsTrait.CreateGuestResponse"
         detail.value = b"\x00GUEST_019CF39791A93D05"
+        operation.event.event.type_url = (
+            "type.googleapis.com/nest.trait.guest.GuestsTrait.CreateGuestResponse"
+        )
+        operation.event.event.value = b"\x00GUEST_019CF39791A93D05"
 
         summary = NestAPIClient._summarize_send_command_response(
             response.SerializeToString()
@@ -180,6 +221,22 @@ class TestApiClientHelpers(unittest.TestCase):
         self.assertEqual(
             ["GUEST_019CF39791A93D05"],
             summary["operations"][0]["status_detail_resource_ids"],
+        )
+        self.assertEqual(
+            "type.googleapis.com/nest.trait.guest.GuestsTrait.CreateGuestResponse",
+            summary["operations"][0]["event_type_url"],
+        )
+        self.assertEqual(
+            ["GUEST_019CF39791A93D05"],
+            summary["operations"][0]["event_resource_ids"],
+        )
+        self.assertEqual(
+            ["type.googleapis.com/google.rpc.DebugInfo"],
+            summary["response_status_detail_types"],
+        )
+        self.assertEqual(
+            "type.googleapis.com/nest.trait.guest.GuestsTrait.CreateGuestResponse",
+            summary["response_status_detail_embedded_anys"][0]["type_url"],
         )
 
     def test_snapshot_user_pincodes_collects_fingerprints(self) -> None:

@@ -1007,7 +1007,11 @@ class NestAPIClient:
                         len(raw_data) if raw_data else 0,
                     )
                     response_summary = self._summarize_send_command_response(raw_data)
-                    if response_summary.get("operations"):
+                    if (
+                        response_summary.get("operations")
+                        or response_summary.get("response_status_detail_types")
+                        or response_summary.get("response_status_detail_embedded_anys")
+                    ):
                         _LOGGER.debug(
                             "SendCommandResponse details for %s: %s",
                             device_id,
@@ -2339,6 +2343,72 @@ class NestAPIClient:
         )
 
     @classmethod
+    def _extract_embedded_any_summaries(
+        cls,
+        raw_data: bytes | None,
+        *,
+        max_depth: int = 2,
+    ) -> list[dict[str, object]]:
+        if not raw_data or max_depth <= 0:
+            return []
+        try:
+            embedded_any = any_pb2.Any()
+            embedded_any.ParseFromString(raw_data)
+        except Exception:
+            return []
+
+        if not embedded_any.ListFields():
+            return []
+
+        embedded_type_url = getattr(embedded_any, "type_url", "") or ""
+        if not embedded_type_url:
+            return []
+
+        embedded_value = getattr(embedded_any, "value", b"") or b""
+        summary: dict[str, object] = {
+            "type_url": embedded_type_url,
+            "value_len": len(embedded_value),
+        }
+        embedded_resource_ids = cls._extract_resource_ids_from_bytes(embedded_value)
+        if embedded_resource_ids:
+            summary["resource_ids"] = embedded_resource_ids
+        nested_embedded_anys = cls._extract_embedded_any_summaries(
+            embedded_value,
+            max_depth=max_depth - 1,
+        )
+        if nested_embedded_anys:
+            summary["embedded_anys"] = nested_embedded_anys
+        return [summary]
+
+    @classmethod
+    def _summarize_any_message(
+        cls,
+        any_message: any_pb2.Any | None,
+        *,
+        max_depth: int = 2,
+    ) -> dict[str, object]:
+        if any_message is None:
+            return {}
+
+        type_url = getattr(any_message, "type_url", "") or ""
+        value = getattr(any_message, "value", b"") or b""
+        if not type_url and not value:
+            return {}
+
+        summary: dict[str, object] = {}
+        if type_url:
+            summary["type_url"] = type_url
+        if value:
+            summary["value_len"] = len(value)
+            resource_ids = cls._extract_resource_ids_from_bytes(value)
+            if resource_ids:
+                summary["resource_ids"] = resource_ids
+            embedded_anys = cls._extract_embedded_any_summaries(value, max_depth=max_depth)
+            if embedded_anys:
+                summary["embedded_anys"] = embedded_anys
+        return summary
+
+    @classmethod
     def _summarize_send_command_response(cls, raw_data: bytes | None) -> dict[str, object]:
         if not raw_data:
             return {"response_status_code": None, "response_status_message": None, "operations": []}
@@ -2352,6 +2422,21 @@ class NestAPIClient:
         if not resp.ListFields():
             return {"response_status_code": None, "response_status_message": None, "operations": []}
 
+        response_status = getattr(resp, "status", None)
+        response_detail_types: list[str] = []
+        response_detail_resource_ids: list[str] = []
+        response_detail_embedded_anys: list[dict[str, object]] = []
+        for detail in getattr(response_status, "details", []):
+            type_url = getattr(detail, "type_url", "") or ""
+            if type_url:
+                response_detail_types.append(type_url)
+            response_detail_resource_ids.extend(
+                cls._extract_resource_ids_from_bytes(getattr(detail, "value", b""))
+            )
+            response_detail_embedded_anys.extend(
+                cls._extract_embedded_any_summaries(getattr(detail, "value", b""))
+            )
+
         operations: list[dict[str, object]] = []
         for op_group in getattr(resp, "sendCommandResponse", []):
             group_request = getattr(op_group, "resourceRequest", None)
@@ -2361,12 +2446,16 @@ class NestAPIClient:
                 status = getattr(operation, "status", None)
                 detail_type_urls: list[str] = []
                 detail_resource_ids: list[str] = []
+                detail_embedded_anys: list[dict[str, object]] = []
                 for detail in getattr(status, "details", []):
                     type_url = getattr(detail, "type_url", "") or ""
                     if type_url:
                         detail_type_urls.append(type_url)
                     detail_resource_ids.extend(
                         cls._extract_resource_ids_from_bytes(getattr(detail, "value", b""))
+                    )
+                    detail_embedded_anys.extend(
+                        cls._extract_embedded_any_summaries(getattr(detail, "value", b""))
                     )
 
                 request_case = None
@@ -2389,6 +2478,13 @@ class NestAPIClient:
                         command_type_url = None
                         command_resource_ids = []
 
+                command_summary = cls._summarize_any_message(
+                    getattr(operation_command, "command", None) if operation_command is not None else None
+                )
+                event_summary = cls._summarize_any_message(
+                    getattr(getattr(operation, "event", None), "event", None)
+                )
+
                 progress_value = int(getattr(operation, "progress", 0) or 0)
                 try:
                     progress_name = v1_pb2.TraitOperation.State.Name(progress_value)
@@ -2410,8 +2506,15 @@ class NestAPIClient:
                     "request_case": request_case,
                     "command_type_url": command_type_url,
                     "command_resource_ids": command_resource_ids,
+                    "command_value_len": command_summary.get("value_len"),
+                    "command_embedded_anys": command_summary.get("embedded_anys"),
+                    "event_type_url": event_summary.get("type_url"),
+                    "event_resource_ids": event_summary.get("resource_ids"),
+                    "event_value_len": event_summary.get("value_len"),
+                    "event_embedded_anys": event_summary.get("embedded_anys"),
                     "status_detail_types": sorted(set(detail_type_urls)),
                     "status_detail_resource_ids": sorted(set(detail_resource_ids)),
+                    "status_detail_embedded_anys": detail_embedded_anys,
                 }
                 operations.append(
                     {
@@ -2421,7 +2524,6 @@ class NestAPIClient:
                     }
                 )
 
-        response_status = getattr(resp, "status", None)
         return {
             "response_status_code": (
                 int(getattr(response_status, "code", 0) or 0)
@@ -2433,6 +2535,9 @@ class NestAPIClient:
                 if response_status is not None
                 else None
             ),
+            "response_status_detail_types": sorted(set(response_detail_types)),
+            "response_status_detail_resource_ids": sorted(set(response_detail_resource_ids)),
+            "response_status_detail_embedded_anys": response_detail_embedded_anys,
             "operations": operations,
         }
 
