@@ -695,6 +695,50 @@ class NestProtobufHandler:
         return 3
 
     @staticmethod
+    def _trait_state_rank_label(rank: int | None) -> str:
+        if rank == _V2_STATE_CONFIRMED:
+            return "confirmed"
+        if rank == _V2_STATE_ACCEPTED:
+            return "accepted"
+        if rank in (None, 0):
+            return "unranked"
+        return f"rank_{rank}"
+
+    @staticmethod
+    def _sorted_unique_strings(values) -> list[str]:
+        return sorted({value for value in values if isinstance(value, str) and value})
+
+    @classmethod
+    def _build_trait_state_summary(
+        cls,
+        *,
+        rank: int | None,
+        payload_len: int,
+        count_key: str,
+        count_value: int,
+        detail_key: str | None = None,
+        detail_values: list[str] | None = None,
+        extra: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        summary: dict[str, object] = {
+            "state": cls._trait_state_rank_label(rank),
+            count_key: count_value,
+        }
+        if payload_len > 0:
+            summary["payload_len"] = payload_len
+        if detail_key and detail_values:
+            summary[detail_key] = detail_values
+        if extra:
+            summary.update(
+                {
+                    key: value
+                    for key, value in extra.items()
+                    if value not in (None, [], {}, "")
+                }
+            )
+        return summary
+
+    @staticmethod
     def _normalize_label_value(value: str | None) -> str | None:
         if not isinstance(value, str):
             return None
@@ -1595,6 +1639,7 @@ class NestProtobufHandler:
                         "payload_lens": [],
                     }
                     max_guests_per_structure = None
+                    rank_summaries: list[dict[str, object]] = []
                     saw_payload = False
                     for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
                         any_msg = entry.get("any_msg")
@@ -1602,8 +1647,10 @@ class NestProtobufHandler:
                             continue
                         saw_payload = True
                         decoded_guest = self._decode_guest_trait_payload(any_msg.value)
-                        merged_guest_data["payload_lens"].append(int(decoded_guest.get("payload_len", 0) or 0))
+                        payload_len = int(decoded_guest.get("payload_len", 0) or 0)
+                        merged_guest_data["payload_lens"].append(payload_len)
                         guests = decoded_guest.get("guests")
+                        guest_items = guests if isinstance(guests, list) else []
                         if isinstance(guests, list):
                             merged_guest_data["guests"].extend(
                                 guest for guest in guests if isinstance(guest, dict)
@@ -1613,6 +1660,28 @@ class NestProtobufHandler:
                             max_guests_per_structure = raw_max_guests
                         if not decoded_type_url:
                             decoded_type_url = any_msg.type_url or entry.get("type_url") or ""
+                        rank_summaries.append(
+                            self._build_trait_state_summary(
+                                rank=entry.get("rank"),
+                                payload_len=payload_len,
+                                count_key="guests",
+                                count_value=len(guest_items),
+                                detail_key="guest_ids",
+                                detail_values=self._sorted_unique_strings(
+                                    guest.get("guest_id")
+                                    for guest in guest_items
+                                    if isinstance(guest, dict)
+                                ),
+                                extra={
+                                    "guest_names": self._sorted_unique_strings(
+                                        guest.get("name")
+                                        for guest in guest_items
+                                        if isinstance(guest, dict)
+                                    ),
+                                    "max_guests": raw_max_guests,
+                                },
+                            )
+                        )
 
                     if saw_payload:
                         merged_guest_data["guests"] = self._dedupe_dict_list(merged_guest_data["guests"])
@@ -1636,6 +1705,11 @@ class NestProtobufHandler:
                             merged_guest_data.get("max_guests_per_structure"),
                             merged_guest_data.get("payload_lens", []),
                         )
+                        _LOGGER.debug(
+                            "Decoded GuestsTrait states for %s: %s",
+                            obj_id,
+                            rank_summaries,
+                        )
                     continue
 
                 if descriptor_name == _USER_ACCESS_TRAIT_DESCRIPTOR:
@@ -1644,6 +1718,7 @@ class NestProtobufHandler:
                         "records": [],
                         "payload_lens": [],
                     }
+                    rank_summaries: list[dict[str, object]] = []
                     saw_payload = False
                     for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
                         any_msg = entry.get("any_msg")
@@ -1651,16 +1726,30 @@ class NestProtobufHandler:
                             continue
                         saw_payload = True
                         decoded_access = self._decode_user_access_trait_payload(any_msg.value)
-                        merged_access_data["payload_lens"].append(
-                            int(decoded_access.get("payload_len", 0) or 0)
-                        )
+                        payload_len = int(decoded_access.get("payload_len", 0) or 0)
+                        merged_access_data["payload_lens"].append(payload_len)
                         records = decoded_access.get("records")
+                        record_items = records if isinstance(records, list) else []
                         if isinstance(records, list):
                             merged_access_data["records"].extend(
                                 record for record in records if isinstance(record, dict)
                             )
                         if not decoded_type_url:
                             decoded_type_url = any_msg.type_url or entry.get("type_url") or ""
+                        rank_summaries.append(
+                            self._build_trait_state_summary(
+                                rank=entry.get("rank"),
+                                payload_len=payload_len,
+                                count_key="records",
+                                count_value=len(record_items),
+                                detail_key="user_ids",
+                                detail_values=self._sorted_unique_strings(
+                                    record.get("user_id")
+                                    for record in record_items
+                                    if isinstance(record, dict)
+                                ),
+                            )
+                        )
 
                     if saw_payload:
                         merged_access_data["records"] = self._dedupe_dict_list(
@@ -1687,6 +1776,11 @@ class NestProtobufHandler:
                             len(merged_access_data.get("records", [])),
                             merged_access_data.get("payload_lens", []),
                         )
+                        _LOGGER.debug(
+                            "Decoded UserAccessTrait states for %s: %s",
+                            obj_id,
+                            rank_summaries,
+                        )
                     continue
 
                 if descriptor_name == _BASIC_USER_SCHEDULES_TRAIT_DESCRIPTOR:
@@ -1695,6 +1789,7 @@ class NestProtobufHandler:
                         "schedules": [],
                         "payload_lens": [],
                     }
+                    rank_summaries: list[dict[str, object]] = []
                     saw_payload = False
                     for entry in sorted(entries, key=lambda item: item.get("rank", 0), reverse=True):
                         any_msg = entry.get("any_msg")
@@ -1702,16 +1797,43 @@ class NestProtobufHandler:
                             continue
                         saw_payload = True
                         decoded_schedule = self._decode_basic_user_schedules_trait_payload(any_msg.value)
-                        merged_schedule_data["payload_lens"].append(
-                            int(decoded_schedule.get("payload_len", 0) or 0)
-                        )
+                        payload_len = int(decoded_schedule.get("payload_len", 0) or 0)
+                        merged_schedule_data["payload_lens"].append(payload_len)
                         schedules = decoded_schedule.get("schedules")
+                        schedule_items = schedules if isinstance(schedules, list) else []
                         if isinstance(schedules, list):
                             merged_schedule_data["schedules"].extend(
                                 schedule for schedule in schedules if isinstance(schedule, dict)
                             )
                         if not decoded_type_url:
                             decoded_type_url = any_msg.type_url or entry.get("type_url") or ""
+                        rank_summaries.append(
+                            self._build_trait_state_summary(
+                                rank=entry.get("rank"),
+                                payload_len=payload_len,
+                                count_key="schedules",
+                                count_value=len(schedule_items),
+                                detail_key="user_ids",
+                                detail_values=self._sorted_unique_strings(
+                                    schedule.get("user_id")
+                                    for schedule in schedule_items
+                                    if isinstance(schedule, dict)
+                                ),
+                                extra={
+                                    "slots": sorted(
+                                        {
+                                            slot
+                                            for slot in (
+                                                schedule.get("slot")
+                                                for schedule in schedule_items
+                                                if isinstance(schedule, dict)
+                                            )
+                                            if isinstance(slot, int)
+                                        }
+                                    )
+                                },
+                            )
+                        )
 
                     if saw_payload:
                         merged_schedule_data["schedules"] = self._dedupe_dict_list(
@@ -1737,6 +1859,11 @@ class NestProtobufHandler:
                             obj_id,
                             len(merged_schedule_data.get("schedules", [])),
                             merged_schedule_data.get("payload_lens", []),
+                        )
+                        _LOGGER.debug(
+                            "Decoded BasicUserSchedulesSettingsTrait states for %s: %s",
+                            obj_id,
+                            rank_summaries,
                         )
                     continue
 

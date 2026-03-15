@@ -73,6 +73,13 @@ class TestProtobufHandler(unittest.TestCase):
             self.skipTest("google.protobuf runtime is required")
         self.handler = NestProtobufHandler()
 
+    def test_trait_state_rank_label(self) -> None:
+        self.assertEqual("confirmed", self.handler._trait_state_rank_label(1))
+        self.assertEqual("accepted", self.handler._trait_state_rank_label(2))
+        self.assertEqual("unranked", self.handler._trait_state_rank_label(0))
+        self.assertEqual("unranked", self.handler._trait_state_rank_label(None))
+        self.assertEqual("rank_7", self.handler._trait_state_rank_label(7))
+
     def test_decode_user_access_trait_payload(self) -> None:
         timestamp = b"".join(
             [
@@ -157,6 +164,45 @@ class TestProtobufHandler(unittest.TestCase):
             "nest.trait.user.UserAccessTrait",
             updates["STRUCTURE_018C86E39308F29F"],
         )
+
+    def test_parse_v2_observe_keeps_accepted_and_confirmed_trait_entries(self) -> None:
+        any_msg = Any(
+            type_url="type.googleapis.com/nest.trait.guest.GuestsTrait",
+            value=_len_field(1, b""),
+        )
+        patch = _len_field(1, any_msg.SerializeToString())
+        trait_id = b"".join(
+            [
+                _len_field(1, b"STRUCTURE_018C86E39308F29F"),
+                _len_field(2, b"guests"),
+            ]
+        )
+        accepted_trait_state = b"".join(
+            [
+                _len_field(1, trait_id),
+                _uint_field(2, 2),
+                _len_field(3, patch),
+            ]
+        )
+        confirmed_trait_state = b"".join(
+            [
+                _len_field(1, trait_id),
+                _uint_field(2, 1),
+                _len_field(3, patch),
+            ]
+        )
+        inner = b"".join(
+            [
+                _len_field(3, accepted_trait_state),
+                _len_field(3, confirmed_trait_state),
+            ]
+        )
+        message = _len_field(1, inner)
+
+        updates = self.handler._parse_v2_observe(message)
+
+        entries = updates["STRUCTURE_018C86E39308F29F"]["nest.trait.guest.GuestsTrait"]
+        self.assertEqual({1, 2}, {entry["rank"] for entry in entries})
 
 
 if __name__ == "__main__":
