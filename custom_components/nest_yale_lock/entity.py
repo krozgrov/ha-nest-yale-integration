@@ -265,6 +265,31 @@ class NestYaleEntity(CoordinatorEntity):
             return None
         return self._battery_level_to_percent(battery_trait.get("battery_level"))
 
+    @staticmethod
+    def _default_stale_max() -> int:
+        from .const import STALE_STATE_MAX_SECONDS
+        return STALE_STATE_MAX_SECONDS
+
+    def _stream_available(self) -> bool:
+        """Mirror push-stream availability across all entity types."""
+        if not self._device_data:
+            return False
+        age = self._coordinator.last_good_update_age() if hasattr(self._coordinator, "last_good_update_age") else None
+        coordinator_hass = getattr(self._coordinator, "hass", None)
+        hass_data = getattr(coordinator_hass, "data", {}) if coordinator_hass is not None else {}
+        stale_limit = hass_data.get(
+            "nest_yale_lock_stale_max",
+            getattr(self._coordinator, "_stale_max_seconds", None) or self._default_stale_max(),
+        )
+        if age is None:
+            return True
+        return age < stale_limit
+
+    @property
+    def available(self) -> bool:
+        """Return entity availability based on the push stream."""
+        return self._stream_available()
+
     def _apply_device_identity_to_attr_info(
         self,
         new_serial,

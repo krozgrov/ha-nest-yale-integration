@@ -123,19 +123,7 @@ class NestYaleBatterySensor(NestYaleEntity, SensorEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        # DataUpdateCoordinator.last_update_success is based on polling refreshes;
-        # this integration is push-first. Mirror the lock entity behavior so the
-        # battery sensor doesn't get stuck in UNKNOWN/UNAVAILABLE.
-        if not self._device_data:
-            return False
-        age = self._coordinator.last_good_update_age() if hasattr(self._coordinator, "last_good_update_age") else None
-        stale_limit = self._coordinator.hass.data.get(
-            "nest_yale_lock_stale_max",  # optional override
-            getattr(self._coordinator, "_stale_max_seconds", None) or 900,
-        )
-        if age is None:
-            return True
-        return age < stale_limit
+        return self._stream_available()
 
 
 class NestYaleLastActionSensor(NestYaleEntity, SensorEntity):

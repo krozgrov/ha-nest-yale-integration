@@ -99,6 +99,10 @@ class FakeCoordinator:
         self.data = data or {}
         self.debug_attributes_enabled = False
         self.hass = None
+        self._stale_max_seconds = 900
+
+    def last_good_update_age(self):
+        return None
 
 
 class FakeDeviceRegistry:
@@ -233,6 +237,16 @@ class TestNestYaleEntity(unittest.TestCase):
 
         self.assertEqual({"name": "Side Door"}, update_kwargs)
         self.assertNotIn("area_id", update_kwargs)
+
+    def test_base_entity_available_uses_stream_health(self):
+        _, entity = self._make_entity()
+
+        self.assertTrue(entity.available)
+
+        entity._coordinator.last_good_update_age = lambda: 901
+        entity._coordinator.hass = SimpleNamespace(data={})
+
+        self.assertFalse(entity.available)
 
 
 if __name__ == "__main__":
