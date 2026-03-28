@@ -230,6 +230,20 @@ class TestProtobufHandler(unittest.TestCase):
             decoded,
         )
 
+    def test_apply_structure_info_trait_supports_camel_case_legacy_id(self) -> None:
+        class _Structure:
+            legacyId = "STRUCTURE.018C86E39308F29F"
+
+        locks_data = {"yale": {}}
+
+        self.handler._apply_structure_info_trait(
+            "STRUCTURE_018C86E39308F29F",
+            _Structure(),
+            locks_data,
+        )
+
+        self.assertEqual("018C86E39308F29F", locks_data["structure_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

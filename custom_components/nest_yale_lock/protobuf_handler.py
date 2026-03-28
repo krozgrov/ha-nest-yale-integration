@@ -596,8 +596,8 @@ class NestProtobufHandler:
         device["tamper_detected"] = state_val == 2
 
     def _apply_structure_info_trait(self, obj_id, structure, locks_data):
-        if structure.legacy_id:
-            legacy_id = structure.legacy_id
+        legacy_id = _proto_attr(structure, "legacy_id", "legacyId")
+        if legacy_id:
             parts = legacy_id.split(".")
             resolved = parts[-1] if len(parts) > 1 else legacy_id
             if "-" in resolved:
