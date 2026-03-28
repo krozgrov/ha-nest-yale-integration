@@ -8,6 +8,12 @@ from contextlib import nullcontext
 from google.protobuf import any_pb2
 from .auth import NestAuthenticator
 from .protobuf_handler import NestProtobufHandler
+from .protobuf_compat import (
+    load_nest_rpc_pb2,
+    load_nest_trait_security_pb2,
+    load_nestlabs_gateway_v1_pb2,
+    load_weave_trait_security_pb2,
+)
 from .const import (
     API_RETRY_DELAY_SECONDS,
     URL_PROTOBUF,
@@ -22,12 +28,13 @@ from .const import (
     GRPC_CODE_INTERNAL,
     API_TIMEOUT_SECONDS,
 )
-from .proto.nestlabs.gateway import v1_pb2
-from .proto.nest import rpc_pb2
-from .proto.weave.trait import security_pb2 as weave_security_pb2
-from .proto.nest.trait import security_pb2 as nest_security_pb2
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.exceptions import ConfigEntryAuthFailed
+
+v1_pb2 = load_nestlabs_gateway_v1_pb2()
+rpc_pb2 = load_nest_rpc_pb2()
+weave_security_pb2 = load_weave_trait_security_pb2()
+nest_security_pb2 = load_nest_trait_security_pb2()
 
 
 def _normalize_base(url):

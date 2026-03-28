@@ -4,19 +4,29 @@ from google.protobuf.any_pb2 import Any
 from base64 import b64decode
 import binascii
 
-from .proto.weave.trait import security_pb2 as weave_security_pb2
-from .proto.nest.trait import structure_pb2 as nest_structure_pb2
-from .proto.nest.trait import security_pb2 as nest_security_pb2
-from .proto.nest.trait import located_pb2 as nest_located_pb2
-from .proto.nest import rpc_pb2 as rpc_pb2
+from .protobuf_compat import (
+    load_nest_rpc_pb2,
+    load_nest_trait_located_pb2,
+    load_nest_trait_security_pb2,
+    load_nest_trait_structure_pb2,
+    load_weave_trait_description_pb2,
+    load_weave_trait_power_pb2,
+    load_weave_trait_security_pb2,
+)
 _LOGGER = logging.getLogger(__name__)
+
+weave_security_pb2 = load_weave_trait_security_pb2()
+nest_structure_pb2 = load_nest_trait_structure_pb2()
+nest_security_pb2 = load_nest_trait_security_pb2()
+nest_located_pb2 = load_nest_trait_located_pb2()
+rpc_pb2 = load_nest_rpc_pb2()
 
 # Import HomeKit trait decoders
 try:
-    from .proto.weave.trait import description_pb2
-    from .proto.weave.trait import power_pb2
+    description_pb2 = load_weave_trait_description_pb2()
+    power_pb2 = load_weave_trait_power_pb2()
     PROTO_AVAILABLE = True
-except ImportError:
+except Exception:
     PROTO_AVAILABLE = False
     _LOGGER.warning("HomeKit trait proto files not available - DeviceIdentityTrait and BatteryPowerSourceTrait decoding disabled")
 
