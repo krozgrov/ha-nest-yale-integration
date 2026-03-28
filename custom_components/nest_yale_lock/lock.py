@@ -6,10 +6,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from .const import DOMAIN
 from .entity import NestYaleEntity
-from .proto.weave.trait import security_pb2 as weave_security_pb2
-from .proto.nest import rpc_pb2
+from .protobuf_compat import load_nest_rpc_pb2, load_weave_trait_security_pb2
 
 _LOGGER = logging.getLogger(__name__)
+
+weave_security_pb2 = load_weave_trait_security_pb2()
+rpc_pb2 = load_nest_rpc_pb2()
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
