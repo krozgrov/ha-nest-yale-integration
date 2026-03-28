@@ -3,7 +3,6 @@ import logging
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from .const import DOMAIN
 
@@ -244,31 +243,6 @@ class NestYaleEntity(CoordinatorEntity):
             return base
         return None
 
-    def _desired_area_id(self) -> str | None:
-        """Resolve (or create) an HA area id from where_label."""
-        where = _normalize_device_name(self._where_label)
-        if not where or not self.hass:
-            return None
-        try:
-            area_registry = ar.async_get(self.hass)
-            area = area_registry.async_get_area_by_name(where)
-            if area is None:
-                area = area_registry.async_create(where)
-                _LOGGER.info(
-                    "Created area from where_label for %s: %s",
-                    self._attr_unique_id,
-                    where,
-                )
-            return area.id if area else None
-        except Exception as err:
-            _LOGGER.debug(
-                "Failed resolving area for %s (%s): %s",
-                self._attr_unique_id,
-                where,
-                err,
-            )
-            return None
-
     def _battery_trait(self) -> dict:
         """Return BatteryPowerSourceTrait data when available."""
         traits = self._device_data.get("traits", {})
@@ -350,15 +324,6 @@ class NestYaleEntity(CoordinatorEntity):
         if new_serial and device.serial_number != new_serial:
             update_kwargs["serial_number"] = new_serial
             _LOGGER.info("Updating device serial_number: %s -> %s", device.serial_number, new_serial)
-
-        desired_area_id = self._desired_area_id()
-        if desired_area_id and device.area_id != desired_area_id:
-            update_kwargs["area_id"] = desired_area_id
-            _LOGGER.info(
-                "Updating device area for %s to where_label=%s",
-                self._attr_unique_id,
-                self._where_label,
-            )
 
         return update_kwargs
 

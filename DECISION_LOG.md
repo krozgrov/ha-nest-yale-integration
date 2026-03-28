@@ -6,6 +6,25 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-03-28: Stop auto-creating and reasserting Home Assistant areas
+Why
+- Issue #31 showed the integration was recreating HA areas and undoing manual area placement whenever Nest `where_label` updates arrived.
+- Home Assistant areas should remain user-owned even when the Nest app exposes location metadata.
+
+Decision
+- Remove the base-entity path that resolved or created HA areas from `where_label`.
+- Stop writing `device.area_id` during device-registry updates, including later coordinator refreshes.
+- Keep `where_label` exposed in entity attributes for reference and diagnostics only.
+- Preserve existing HA area assignments during upgrade by making this a forward-only behavior change.
+
+Impact
+- Non-breaking behavior change that stops area churn in Home Assistant.
+- Manual HA area placement now persists across coordinator refreshes and Nest app location edits.
+
+Validation
+- Add entity unit coverage showing `where_label`-only changes no longer mutate the device registry.
+- Add entity unit coverage showing door/name updates still sync without changing manual `area_id`.
+
 ### 2026-03-06: Preserve v2 auth trait payloads for passcode key discovery and tighten lock markers
 Why
 - Passcode updates were still failing with `No passcode key candidates validated...` despite prior auth-candidate merge work.

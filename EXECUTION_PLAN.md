@@ -11,6 +11,24 @@ Goal
 - Ensure lock naming in Home Assistant matches current Nest app labels.
 - Keep guest passcode workflows stable after recent parser/trait changes.
 
+### Issue #31 Area Ownership Fix
+Goal
+- Preserve manual Home Assistant area placement for Nest Yale devices.
+- Keep Nest `where_label` visible without mutating HA areas.
+
+Execution Outline
+1. Remove automatic area sync
+- Drop the base-entity path that creates or resolves HA areas from `where_label`.
+- Stop writing `area_id` during device-registry updates.
+
+2. Keep location metadata visible
+- Preserve `where_label` in entity attributes and diagnostics.
+- Avoid migrations or cleanup that alter existing HA area assignments.
+
+3. Validate regression coverage
+- Add focused entity tests for `where_label`-only updates.
+- Verify door/name updates still sync while manual `area_id` remains untouched.
+
 Execution Outline
 1. Stabilize data ingestion and lock identity
 - Keep lock resources constrained to `DEVICE_*`.
