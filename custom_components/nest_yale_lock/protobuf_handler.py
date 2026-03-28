@@ -120,6 +120,43 @@ def _pick_object_id(obj) -> str | None:
     return None
 
 
+def _proto_attr(message, *names: str):
+    """Return the first available protobuf attribute across naming variants."""
+    for name in names:
+        if hasattr(message, name):
+            return getattr(message, name)
+    return None
+
+
+def _proto_message_value(message, *names: str):
+    """Return `.value` for wrapper/message fields across naming variants."""
+    for name in names:
+        field = _proto_attr(message, name)
+        if field is None:
+            continue
+        try:
+            if hasattr(message, "HasField") and message.HasField(name):
+                return getattr(field, "value", field)
+        except Exception:
+            pass
+        value = getattr(field, "value", None)
+        if value is not None:
+            return value
+    return None
+
+
+def _decode_device_identity_data(message) -> dict[str, str | None]:
+    """Normalize DeviceIdentityTrait fields across generated protobuf variants."""
+    serial_number = _proto_attr(message, "serial_number", "serialNumber")
+    firmware_version = _proto_attr(message, "fw_version", "fwVersion")
+    return {
+        "serial_number": serial_number if serial_number else None,
+        "firmware_version": firmware_version if firmware_version else None,
+        "manufacturer": _proto_message_value(message, "manufacturer"),
+        "model": _proto_message_value(message, "model_name", "modelName"),
+    }
+
+
 def _is_device_lock_id(object_id: str | None) -> bool:
     return isinstance(object_id, str) and object_id.startswith("DEVICE_")
 
@@ -2069,12 +2106,7 @@ class NestProtobufHandler:
                         "object_id": obj_id,
                         "type_url": type_url,
                         "decoded": True,
-                        "data": {
-                            "serial_number": merged_msg.serial_number if merged_msg.serial_number else None,
-                            "firmware_version": merged_msg.fw_version if merged_msg.fw_version else None,
-                            "manufacturer": merged_msg.manufacturer.value if merged_msg.HasField("manufacturer") else None,
-                            "model": merged_msg.model_name.value if merged_msg.HasField("model_name") else None,
-                        },
+                        "data": _decode_device_identity_data(merged_msg),
                     }
                 elif "BatteryPowerSourceTrait" in descriptor_name and PROTO_AVAILABLE:
                     trait_key = f"{obj_id}:{type_url}"
@@ -2577,12 +2609,7 @@ class NestProtobufHandler:
                                 trait = description_pb2.DeviceIdentityTrait()
                                 property_any.Unpack(trait)
                                 trait_info["decoded"] = True
-                                trait_info["data"] = {
-                                    "serial_number": trait.serial_number if trait.serial_number else None,
-                                    "firmware_version": trait.fw_version if trait.fw_version else None,
-                                    "manufacturer": trait.manufacturer.value if trait.HasField("manufacturer") else None,
-                                    "model": trait.model_name.value if trait.HasField("model_name") else None,
-                                }
+                                trait_info["data"] = _decode_device_identity_data(trait)
                                 _LOGGER.info("✅ Decoded DeviceIdentityTrait for %s: serial=%s, fw=%s", 
                                            obj_id, trait_info["data"].get("serial_number"), trait_info["data"].get("firmware_version"))
                             

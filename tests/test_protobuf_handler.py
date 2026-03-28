@@ -204,6 +204,32 @@ class TestProtobufHandler(unittest.TestCase):
         entries = updates["STRUCTURE_018C86E39308F29F"]["nest.trait.guest.GuestsTrait"]
         self.assertEqual({1, 2}, {entry["rank"] for entry in entries})
 
+    def test_decode_device_identity_data_supports_camel_case_fields(self) -> None:
+        class _Wrapper:
+            def __init__(self, value):
+                self.value = value
+
+        class _Trait:
+            serialNumber = "SERIAL123"
+            fwVersion = "1.2.3"
+            manufacturer = _Wrapper("Yale")
+            modelName = _Wrapper("Nest x Yale")
+
+            def HasField(self, name):
+                return name in {"manufacturer", "modelName"}
+
+        decoded = PROTOBUF_HANDLER._decode_device_identity_data(_Trait())
+
+        self.assertEqual(
+            {
+                "serial_number": "SERIAL123",
+                "firmware_version": "1.2.3",
+                "manufacturer": "Yale",
+                "model": "Nest x Yale",
+            },
+            decoded,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
