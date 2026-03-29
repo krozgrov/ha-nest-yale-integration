@@ -36,10 +36,16 @@ Pre-release testing: `2026.02.16b1` validated naming-path hardening with live Do
 ## Release 2026.02.16 - Door/Where/Label mapping stabilization (latest stable)
 
 - Door selection in the Nest app now drives the HA lock entry name
-- Where selection in the Nest app now drives the HA area assignment
+- Where selection in the Nest app remains available as `where_label` metadata for reference
 - Label selection remains exposed as an entity attribute (`label_name`)
 - Door/Where/Label changes now auto-update in Home Assistant when edited in the Nest app
 - Fixed stale door labels on located-only stream updates by resolving fixture annotation IDs first
+
+## Current Area Behavior
+
+- Home Assistant owns final area assignment for Nest Yale devices.
+- The integration does not create Home Assistant areas or overwrite manual area placement from Nest `where_label`.
+- Nest `where_label` remains available in entity attributes so the app-side location is still visible for reference.
 
 ## Known Limitations
 
