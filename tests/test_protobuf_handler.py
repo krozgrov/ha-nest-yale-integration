@@ -230,6 +230,24 @@ class TestProtobufHandler(unittest.TestCase):
             decoded,
         )
 
+    def test_decode_device_identity_data_supports_software_version_field(self) -> None:
+        class _Wrapper:
+            def __init__(self, value):
+                self.value = value
+
+        class _Trait:
+            serialNumber = "SERIAL123"
+            softwareVersion = "1.2-7"
+            manufacturer = _Wrapper("Yale")
+            modelName = _Wrapper("Nest x Yale")
+
+            def HasField(self, name):
+                return name in {"manufacturer", "modelName"}
+
+        decoded = PROTOBUF_HANDLER._decode_device_identity_data(_Trait())
+
+        self.assertEqual("1.2-7", decoded["firmware_version"])
+
     def test_apply_structure_info_trait_supports_camel_case_legacy_id(self) -> None:
         class _Structure:
             legacyId = "STRUCTURE.018C86E39308F29F"

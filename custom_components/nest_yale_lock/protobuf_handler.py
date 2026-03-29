@@ -154,7 +154,15 @@ def _proto_has_field(message, *names: str) -> bool:
 def _decode_device_identity_data(message) -> dict[str, str | None]:
     """Normalize DeviceIdentityTrait fields across generated protobuf variants."""
     serial_number = _proto_attr(message, "serial_number", "serialNumber")
-    firmware_version = _proto_attr(message, "fw_version", "fwVersion")
+    firmware_version = _proto_attr(
+        message,
+        "fw_version",
+        "fwVersion",
+        "sw_version",
+        "swVersion",
+        "software_version",
+        "softwareVersion",
+    )
     return {
         "serial_number": serial_number if serial_number else None,
         "firmware_version": firmware_version if firmware_version else None,
