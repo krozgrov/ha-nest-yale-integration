@@ -5,20 +5,30 @@ from google.protobuf.any_pb2 import Any
 from base64 import b64decode
 import binascii
 
-from .proto.weave.trait import security_pb2 as weave_security_pb2
-from .proto.nest.trait import structure_pb2 as nest_structure_pb2
-from .proto.nest.trait import security_pb2 as nest_security_pb2
-from .proto.nest.trait import located_pb2 as nest_located_pb2
-from .proto.nest import rpc_pb2 as rpc_pb2
 from .passcode_crypto import parse_application_keys_trait
+from .protobuf_compat import (
+    load_nest_rpc_pb2,
+    load_nest_trait_located_pb2,
+    load_nest_trait_security_pb2,
+    load_nest_trait_structure_pb2,
+    load_weave_trait_description_pb2,
+    load_weave_trait_power_pb2,
+    load_weave_trait_security_pb2,
+)
 _LOGGER = logging.getLogger(__name__)
+
+weave_security_pb2 = load_weave_trait_security_pb2()
+nest_structure_pb2 = load_nest_trait_structure_pb2()
+nest_security_pb2 = load_nest_trait_security_pb2()
+nest_located_pb2 = load_nest_trait_located_pb2()
+rpc_pb2 = load_nest_rpc_pb2()
 
 # Import HomeKit trait decoders
 try:
-    from .proto.weave.trait import description_pb2
-    from .proto.weave.trait import power_pb2
+    description_pb2 = load_weave_trait_description_pb2()
+    power_pb2 = load_weave_trait_power_pb2()
     PROTO_AVAILABLE = True
-except ImportError:
+except Exception:
     PROTO_AVAILABLE = False
     _LOGGER.warning("HomeKit trait proto files not available - DeviceIdentityTrait and BatteryPowerSourceTrait decoding disabled")
 
@@ -108,6 +118,65 @@ def _pick_object_id(obj) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _proto_attr(message, *names: str):
+    """Return the first available protobuf attribute across naming variants."""
+    for name in names:
+        if hasattr(message, name):
+            return getattr(message, name)
+    return None
+
+
+def _proto_message_value(message, *names: str):
+    """Return `.value` for wrapper/message fields across naming variants."""
+    for name in names:
+        field = _proto_attr(message, name)
+        if field is None:
+            continue
+        try:
+            if hasattr(message, "HasField") and message.HasField(name):
+                return getattr(field, "value", field)
+        except Exception:
+            pass
+        value = getattr(field, "value", None)
+        if value is not None:
+            return value
+    return None
+
+
+def _proto_has_field(message, *names: str) -> bool:
+    """Return True when any protobuf field variant is explicitly present."""
+    has_field = getattr(message, "HasField", None)
+    if not callable(has_field):
+        return False
+    for name in names:
+        try:
+            if has_field(name):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _decode_device_identity_data(message) -> dict[str, str | None]:
+    """Normalize DeviceIdentityTrait fields across generated protobuf variants."""
+    serial_number = _proto_attr(message, "serial_number", "serialNumber")
+    firmware_version = _proto_attr(
+        message,
+        "fw_version",
+        "fwVersion",
+        "sw_version",
+        "swVersion",
+        "software_version",
+        "softwareVersion",
+    )
+    return {
+        "serial_number": serial_number if serial_number else None,
+        "firmware_version": firmware_version if firmware_version else None,
+        "manufacturer": _proto_message_value(message, "manufacturer"),
+        "model": _proto_message_value(message, "model_name", "modelName"),
+    }
 
 
 def _is_device_lock_id(object_id: str | None) -> bool:
@@ -470,7 +539,7 @@ class NestProtobufHandler:
 
     def _apply_bolt_lock_trait(self, obj_id, bolt_lock, locks_data):
         # Only publish bolt_locked when the stream explicitly reports LOCKED or UNLOCKED.
-        locked_state = bolt_lock.lockedState
+        locked_state = _proto_attr(bolt_lock, "lockedState", "locked_state")
         bolt_locked_value = None
         if locked_state == weave_security_pb2.BoltLockTrait.BOLT_LOCKED_STATE_LOCKED:
             bolt_locked_value = True
@@ -479,7 +548,7 @@ class NestProtobufHandler:
 
         device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
         device["device_id"] = obj_id
-        actuator_state = bolt_lock.actuatorState
+        actuator_state = _proto_attr(bolt_lock, "actuatorState", "actuator_state")
         moving_states = {
             weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_LOCKING,
             weave_security_pb2.BoltLockTrait.BOLT_ACTUATOR_STATE_UNLOCKING,
@@ -495,12 +564,15 @@ class NestProtobufHandler:
                 obj_id,
                 locked_state,
             )
-        if bolt_lock.boltLockActor.originator.resourceId:
-            locks_data["user_id"] = bolt_lock.boltLockActor.originator.resourceId
+        actor = _proto_attr(bolt_lock, "boltLockActor", "bolt_lock_actor")
+        originator = _proto_attr(actor, "originator") if actor is not None else None
+        originator_id = _proto_attr(originator, "resourceId", "resource_id") if originator is not None else None
+        if originator_id:
+            locks_data["user_id"] = originator_id
 
         # Capture last action (who/what caused the change).
         try:
-            method = bolt_lock.boltLockActor.method
+            method = _proto_attr(actor, "method")
             method_map = {
                 weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_PHYSICAL: "Physical",
                 weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_KEYPAD_PIN: "Keypad",
@@ -515,8 +587,8 @@ class NestProtobufHandler:
         except Exception:
             pass
         try:
-            if bolt_lock.HasField("lockedStateLastChangedAt"):
-                ts = bolt_lock.lockedStateLastChangedAt
+            if _proto_has_field(bolt_lock, "lockedStateLastChangedAt", "locked_state_last_changed_at"):
+                ts = _proto_attr(bolt_lock, "lockedStateLastChangedAt", "locked_state_last_changed_at")
                 device["last_action_timestamp"] = ts.ToJsonString()
         except Exception:
             pass
@@ -529,28 +601,29 @@ class NestProtobufHandler:
 
     def _apply_bolt_lock_settings_trait(self, obj_id, settings, locks_data):
         device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
-        if hasattr(settings, "autoRelockOn"):
-            device["auto_relock_on"] = bool(getattr(settings, "autoRelockOn", False))
-        duration = getattr(settings, "autoRelockDuration", None)
-        if settings.HasField("autoRelockDuration") and duration is not None:
+        auto_relock_on = _proto_attr(settings, "autoRelockOn", "auto_relock_on")
+        if auto_relock_on is not None:
+            device["auto_relock_on"] = bool(auto_relock_on)
+        duration = _proto_attr(settings, "autoRelockDuration", "auto_relock_duration")
+        if _proto_has_field(settings, "autoRelockDuration", "auto_relock_duration") and duration is not None:
             device["auto_relock_duration"] = int(getattr(duration, "seconds", 0) or 0)
 
     def _apply_bolt_lock_capabilities_trait(self, obj_id, caps, locks_data):
         device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
-        max_dur = getattr(caps, "maxAutoRelockDuration", None)
+        max_dur = _proto_attr(caps, "maxAutoRelockDuration", "max_auto_relock_duration")
         device["max_auto_relock_duration"] = int(getattr(max_dur, "seconds", 0) or 0) if max_dur else 0
 
     def _apply_tamper_trait(self, obj_id, tamper, locks_data):
         device = locks_data["yale"].setdefault(obj_id, {"device_id": obj_id})
         # tamperState enum: CLEAR=1, TAMPERED=2, UNKNOWN=3 (0=UNSPECIFIED)
-        state_val = int(getattr(tamper, "tamperState", 0) or 0)
+        state_val = int(_proto_attr(tamper, "tamperState", "tamper_state") or 0)
         device["tamper_state"] = state_val
         device["tamper"] = "Clear" if state_val == 1 else ("Tampered" if state_val == 2 else "Unknown")
         device["tamper_detected"] = state_val == 2
 
     def _apply_structure_info_trait(self, obj_id, structure, locks_data):
-        if structure.legacy_id:
-            legacy_id = structure.legacy_id
+        legacy_id = _proto_attr(structure, "legacy_id", "legacyId")
+        if legacy_id:
             parts = legacy_id.split(".")
             resolved = parts[-1] if len(parts) > 1 else legacy_id
             if "-" in resolved:
@@ -2059,12 +2132,7 @@ class NestProtobufHandler:
                         "object_id": obj_id,
                         "type_url": type_url,
                         "decoded": True,
-                        "data": {
-                            "serial_number": merged_msg.serial_number if merged_msg.serial_number else None,
-                            "firmware_version": merged_msg.fw_version if merged_msg.fw_version else None,
-                            "manufacturer": merged_msg.manufacturer.value if merged_msg.HasField("manufacturer") else None,
-                            "model": merged_msg.model_name.value if merged_msg.HasField("model_name") else None,
-                        },
+                        "data": _decode_device_identity_data(merged_msg),
                     }
                 elif "BatteryPowerSourceTrait" in descriptor_name and PROTO_AVAILABLE:
                     trait_key = f"{obj_id}:{type_url}"
@@ -2567,12 +2635,7 @@ class NestProtobufHandler:
                                 trait = description_pb2.DeviceIdentityTrait()
                                 property_any.Unpack(trait)
                                 trait_info["decoded"] = True
-                                trait_info["data"] = {
-                                    "serial_number": trait.serial_number if trait.serial_number else None,
-                                    "firmware_version": trait.fw_version if trait.fw_version else None,
-                                    "manufacturer": trait.manufacturer.value if trait.HasField("manufacturer") else None,
-                                    "model": trait.model_name.value if trait.HasField("model_name") else None,
-                                }
+                                trait_info["data"] = _decode_device_identity_data(trait)
                                 _LOGGER.info("✅ Decoded DeviceIdentityTrait for %s: serial=%s, fw=%s", 
                                            obj_id, trait_info["data"].get("serial_number"), trait_info["data"].get("firmware_version"))
                             

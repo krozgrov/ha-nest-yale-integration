@@ -109,7 +109,7 @@ class NestCoordinator(DataUpdateCoordinator):
         return lock_count > 0
 
     def _maybe_schedule_startup_backfill(self) -> None:
-        """Schedule a one-shot refresh when observer data is still partial at startup."""
+        """Schedule fast refresh retries when observer data is partial at startup."""
         if self._startup_backfill_complete:
             return
         if self._has_required_lock_fields(self.data):
@@ -121,14 +121,22 @@ class NestCoordinator(DataUpdateCoordinator):
             return
 
         async def _run_backfill() -> None:
-            await asyncio.sleep(2)
-            try:
-                await asyncio.wait_for(self.async_refresh(), timeout=20)
-            except Exception as err:
-                _LOGGER.debug("Startup companion-field backfill refresh failed: %s", err)
+            for delay in (0.5, 1.5, 4.0):
+                if self._startup_backfill_complete or self._has_required_lock_fields(self.data):
+                    self._startup_backfill_complete = True
+                    return
+                if self._startup_backfill_attempts >= 3:
+                    return
+                await asyncio.sleep(delay)
+                try:
+                    await asyncio.wait_for(self.async_refresh(), timeout=20)
+                except Exception as err:
+                    _LOGGER.debug("Startup companion-field backfill refresh failed: %s", err)
+                if self._startup_backfill_complete or self._has_required_lock_fields(self.data):
+                    self._startup_backfill_complete = True
+                    return
 
         self._startup_backfill_task = self.hass.loop.create_task(_run_backfill())
-
     async def async_setup(self):
         """Set up the coordinator."""
         _LOGGER.debug("Starting async_setup for coordinator")

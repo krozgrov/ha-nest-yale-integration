@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from .const import DOMAIN
-from .entity import NestYaleEntity
+from .entity import NestYaleEntity, _has_defined_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
                 # Last Action (sensor)
                 last_action_uid = f"{DOMAIN}_last_action_{device_id}"
-                if last_action_uid not in added:
+                if last_action_uid not in added and _has_defined_value(device, "last_action"):
                     new_entities.append(NestYaleLastActionSensor(coordinator, device))
                     added.add(last_action_uid)
                     _LOGGER.debug("Prepared new last action sensor entity: %s", last_action_uid)
@@ -123,19 +123,7 @@ class NestYaleBatterySensor(NestYaleEntity, SensorEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        # DataUpdateCoordinator.last_update_success is based on polling refreshes;
-        # this integration is push-first. Mirror the lock entity behavior so the
-        # battery sensor doesn't get stuck in UNKNOWN/UNAVAILABLE.
-        if not self._device_data:
-            return False
-        age = self._coordinator.last_good_update_age() if hasattr(self._coordinator, "last_good_update_age") else None
-        stale_limit = self._coordinator.hass.data.get(
-            "nest_yale_lock_stale_max",  # optional override
-            getattr(self._coordinator, "_stale_max_seconds", None) or 900,
-        )
-        if age is None:
-            return True
-        return age < stale_limit
+        return self._stream_available()
 
 
 class NestYaleLastActionSensor(NestYaleEntity, SensorEntity):

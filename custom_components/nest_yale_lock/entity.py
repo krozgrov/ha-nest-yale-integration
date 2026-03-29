@@ -3,7 +3,6 @@ import logging
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from .const import DOMAIN
 
@@ -29,6 +28,11 @@ def _normalize_device_name(name):
     if value.lower() == "undefined":
         return None
     return value
+
+
+def _has_defined_value(device: dict | None, key: str) -> bool:
+    """Return True when a device payload includes a non-null source value."""
+    return isinstance(device, dict) and key in device and device.get(key) is not None
 
 
 class NestYaleEntity(CoordinatorEntity):
@@ -244,31 +248,6 @@ class NestYaleEntity(CoordinatorEntity):
             return base
         return None
 
-    def _desired_area_id(self) -> str | None:
-        """Resolve (or create) an HA area id from where_label."""
-        where = _normalize_device_name(self._where_label)
-        if not where or not self.hass:
-            return None
-        try:
-            area_registry = ar.async_get(self.hass)
-            area = area_registry.async_get_area_by_name(where)
-            if area is None:
-                area = area_registry.async_create(where)
-                _LOGGER.info(
-                    "Created area from where_label for %s: %s",
-                    self._attr_unique_id,
-                    where,
-                )
-            return area.id if area else None
-        except Exception as err:
-            _LOGGER.debug(
-                "Failed resolving area for %s (%s): %s",
-                self._attr_unique_id,
-                where,
-                err,
-            )
-            return None
-
     def _battery_trait(self) -> dict:
         """Return BatteryPowerSourceTrait data when available."""
         traits = self._device_data.get("traits", {})
@@ -290,6 +269,31 @@ class NestYaleEntity(CoordinatorEntity):
         if not battery_trait:
             return None
         return self._battery_level_to_percent(battery_trait.get("battery_level"))
+
+    @staticmethod
+    def _default_stale_max() -> int:
+        from .const import STALE_STATE_MAX_SECONDS
+        return STALE_STATE_MAX_SECONDS
+
+    def _stream_available(self) -> bool:
+        """Mirror push-stream availability across all entity types."""
+        if not self._device_data:
+            return False
+        age = self._coordinator.last_good_update_age() if hasattr(self._coordinator, "last_good_update_age") else None
+        coordinator_hass = getattr(self._coordinator, "hass", None)
+        hass_data = getattr(coordinator_hass, "data", {}) if coordinator_hass is not None else {}
+        stale_limit = hass_data.get(
+            "nest_yale_lock_stale_max",
+            getattr(self._coordinator, "_stale_max_seconds", None) or self._default_stale_max(),
+        )
+        if age is None:
+            return True
+        return age < stale_limit
+
+    @property
+    def available(self) -> bool:
+        """Return entity availability based on the push stream."""
+        return self._stream_available()
 
     def _apply_device_identity_to_attr_info(
         self,
@@ -350,15 +354,6 @@ class NestYaleEntity(CoordinatorEntity):
         if new_serial and device.serial_number != new_serial:
             update_kwargs["serial_number"] = new_serial
             _LOGGER.info("Updating device serial_number: %s -> %s", device.serial_number, new_serial)
-
-        desired_area_id = self._desired_area_id()
-        if desired_area_id and device.area_id != desired_area_id:
-            update_kwargs["area_id"] = desired_area_id
-            _LOGGER.info(
-                "Updating device area for %s to where_label=%s",
-                self._attr_unique_id,
-                self._where_label,
-            )
 
         return update_kwargs
 

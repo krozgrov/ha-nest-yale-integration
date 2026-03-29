@@ -6,10 +6,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from .const import DOMAIN
 from .entity import NestYaleEntity
-from .proto.weave.trait import security_pb2 as weave_security_pb2
-from .proto.nest import rpc_pb2
+from .protobuf_compat import load_nest_rpc_pb2, load_weave_trait_security_pb2
 
 _LOGGER = logging.getLogger(__name__)
+
+weave_security_pb2 = load_weave_trait_security_pb2()
+rpc_pb2 = load_nest_rpc_pb2()
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
@@ -376,25 +378,10 @@ class NestYaleLock(NestYaleEntity, LockEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
+        available = self._stream_available()
         age = self._coordinator.last_good_update_age() if hasattr(self._coordinator, "last_good_update_age") else None
-        stale_limit = self._coordinator.hass.data.get(
-                "nest_yale_lock_stale_max",  # optional override
-                getattr(self._coordinator, "_stale_max_seconds", None) or self._default_stale_max(),
-            )
-        if not self._device_data:
-            available = False
-        elif age is None:
-            # If we have data but no timestamp yet, stay available (we seeded above on init)
-            available = True
-        else:
-            available = age < stale_limit
         _LOGGER.debug("Availability check for %s: %s (age=%s)", self._attr_unique_id, available, age)
         return available
-
-    @staticmethod
-    def _default_stale_max() -> int:
-        from .const import STALE_STATE_MAX_SECONDS
-        return STALE_STATE_MAX_SECONDS
 
     @property
     def state(self) -> LockState:
