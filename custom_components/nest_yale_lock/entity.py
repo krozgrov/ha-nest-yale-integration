@@ -30,6 +30,11 @@ def _normalize_device_name(name):
     return value
 
 
+def _has_defined_value(device: dict | None, key: str) -> bool:
+    """Return True when a device payload includes a non-null source value."""
+    return isinstance(device, dict) and key in device and device.get(key) is not None
+
+
 class NestYaleEntity(CoordinatorEntity):
     """Base entity class for Nest Yale devices."""
 
