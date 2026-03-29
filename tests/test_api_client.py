@@ -105,6 +105,7 @@ class TestApiClientHelpers(unittest.TestCase):
         client = NestAPIClient.__new__(NestAPIClient)
         client._structure_id = "018C86E39308F29F"
         client.current_state = {
+            "devices": {"locks": {}},
             "all_traits": {},
             "trait_labels": {
                 "STRUCTURE_018C86E39308F29F": {
@@ -113,6 +114,7 @@ class TestApiClientHelpers(unittest.TestCase):
             },
             "trait_states": {},
         }
+        client.auth_data = {}
         return client
 
     def test_extract_command_response_hints_collects_resource_ids_and_types(self) -> None:
@@ -239,6 +241,38 @@ class TestApiClientHelpers(unittest.TestCase):
             "type.googleapis.com/nest.trait.guest.GuestsTrait.CreateGuestResponse",
             summary["response_status_detail_embedded_anys"][0]["type_url"],
         )
+
+    def test_get_device_metadata_accepts_software_version_keys(self) -> None:
+        client = self._make_client()
+        client.current_state["devices"]["locks"]["DEVICE_1"] = {
+            "device_id": "DEVICE_1",
+            "serial_number": "SERIAL123",
+            "softwareVersion": "1.2-7",
+        }
+
+        metadata = client.get_device_metadata("DEVICE_1")
+
+        self.assertEqual("1.2-7", metadata["firmware_revision"])
+
+    def test_get_device_metadata_falls_back_to_auth_data_software_version(self) -> None:
+        client = self._make_client()
+        client.current_state["devices"]["locks"]["DEVICE_1"] = {
+            "device_id": "DEVICE_1",
+            "serial_number": "SERIAL123",
+        }
+        client.auth_data = {
+            "devices": [
+                {
+                    "device_id": "DEVICE_1",
+                    "serial_number": "SERIAL123",
+                    "softwareVersion": "1.2-7",
+                }
+            ]
+        }
+
+        metadata = client.get_device_metadata("DEVICE_1")
+
+        self.assertEqual("1.2-7", metadata["firmware_revision"])
 
     def test_snapshot_user_pincodes_collects_fingerprints(self) -> None:
         client = self._make_client()

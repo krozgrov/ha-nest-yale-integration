@@ -3392,6 +3392,28 @@ class NestAPIClient:
                     return nested
         return None
 
+    @classmethod
+    def _extract_firmware_value(cls, node: dict | None) -> str | None:
+        if not isinstance(node, dict):
+            return None
+        for key in (
+            "firmware_revision",
+            "firmwareRevision",
+            "firmware_version",
+            "firmwareVersion",
+            "fw_version",
+            "fwVersion",
+            "sw_version",
+            "swVersion",
+            "software_version",
+            "softwareVersion",
+        ):
+            value = node.get(key)
+            firmware = cls._extract_value_string(value)
+            if firmware:
+                return firmware
+        return None
+
     def _serial_map_from_traits(self) -> dict[str, str]:
         serial_map: dict[str, str] = {}
         all_traits = self.current_state.get("all_traits", {}) or {}
@@ -3436,7 +3458,7 @@ class NestAPIClient:
         name = self._normalize_device_name(lock_data.get("name"))
         metadata = {
             "serial_number": lock_data.get("serial_number", device_id),
-            "firmware_revision": lock_data.get("firmware_revision", "unknown"),
+            "firmware_revision": self._extract_firmware_value(lock_data) or "unknown",
             "name": name,
             "structure_id": self._structure_id if self._structure_id else "unknown",
         }
@@ -3494,7 +3516,9 @@ class NestAPIClient:
                     if metadata["serial_number"] == device_id:  # Only update if not set from traits
                         metadata["serial_number"] = dev.get("serial_number", device_id)
                     if metadata["firmware_revision"] == "unknown":  # Only update if not set from traits
-                        metadata["firmware_revision"] = dev.get("firmware_revision", "unknown")
+                        metadata["firmware_revision"] = (
+                            self._extract_firmware_value(dev) or "unknown"
+                        )
                     candidate_name = self._normalize_device_name(dev.get("name"))
                     if candidate_name and not metadata.get("name"):
                         metadata["name"] = candidate_name
