@@ -12,7 +12,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
-from .entity import NestYaleEntity
+from .entity import NestYaleEntity, _has_defined_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ async def async_setup_entry(
                 continue
             device.setdefault("device_id", device_id)
             uid = f"{DOMAIN}_tamper_{device_id}"
-            if uid in added:
+            if uid in added or not _has_defined_value(device, "tamper_detected"):
                 continue
             try:
                 new_entities.append(NestYaleTamperBinarySensor(coordinator, device))

@@ -80,6 +80,7 @@ SPEC.loader.exec_module(ENTITY_MODULE)
 
 NestYaleEntity = ENTITY_MODULE.NestYaleEntity
 DOMAIN = ENTITY_MODULE.DOMAIN
+_has_defined_value = ENTITY_MODULE._has_defined_value
 
 
 class FakeApiClient:
@@ -247,6 +248,11 @@ class TestNestYaleEntity(unittest.TestCase):
         entity._coordinator.hass = SimpleNamespace(data={})
 
         self.assertFalse(entity.available)
+
+    def test_has_defined_value_requires_non_null_source_field(self):
+        self.assertTrue(_has_defined_value({"last_action": "Physical"}, "last_action"))
+        self.assertFalse(_has_defined_value({"last_action": None}, "last_action"))
+        self.assertFalse(_has_defined_value({}, "last_action"))
 
 
 if __name__ == "__main__":
