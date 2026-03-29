@@ -53,6 +53,26 @@ def _transport_candidates(session_base):
     default = _normalize_base(URL_PROTOBUF.format(grpc_hostname=PRODUCTION_HOSTNAME["grpc_hostname"]))
     return [default] if default else []
 
+
+def _proto_attr(message, *names: str):
+    for name in names:
+        if hasattr(message, name):
+            return getattr(message, name)
+    return None
+
+
+def _proto_has_field(message, *names: str) -> bool:
+    has_field = getattr(message, "HasField", None)
+    if not callable(has_field):
+        return False
+    for name in names:
+        try:
+            if has_field(name):
+                return True
+        except Exception:
+            continue
+    return False
+
 _LOGGER = logging.getLogger(__name__)
 
 _APP_LAUNCH_URL_FORMAT = "https://{host}/api/0.1/user/{user_id}/app_launch"
@@ -358,23 +378,29 @@ class NestAPIClient:
             settings = trait_cache.get(device_id, {}).get("weave.trait.security.BoltLockSettingsTrait")
             if not settings:
                 continue
-            if settings.HasField("autoRelockDuration"):
-                device["auto_relock_duration"] = int(settings.autoRelockDuration.seconds)
-            if hasattr(settings, "autoRelockOn"):
-                device["auto_relock_on"] = bool(settings.autoRelockOn)
+            duration = _proto_attr(settings, "autoRelockDuration", "auto_relock_duration")
+            if _proto_has_field(settings, "autoRelockDuration", "auto_relock_duration") and duration is not None:
+                device["auto_relock_duration"] = int(getattr(duration, "seconds", 0) or 0)
+            auto_relock_on = _proto_attr(settings, "autoRelockOn", "auto_relock_on")
+            if auto_relock_on is not None:
+                device["auto_relock_on"] = bool(auto_relock_on)
             nest_settings = trait_cache.get(device_id, {}).get("nest.trait.security.BoltLockSettingsTrait")
             if nest_settings and hasattr(nest_security_pb2, "BoltLockSettingsTrait"):
-                if nest_settings.HasField("autoRelockDuration"):
-                    device["auto_relock_duration"] = int(nest_settings.autoRelockDuration.seconds)
-                if hasattr(nest_settings, "autoRelockOn"):
-                    device["auto_relock_on"] = bool(nest_settings.autoRelockOn)
+                duration = _proto_attr(nest_settings, "autoRelockDuration", "auto_relock_duration")
+                if _proto_has_field(nest_settings, "autoRelockDuration", "auto_relock_duration") and duration is not None:
+                    device["auto_relock_duration"] = int(getattr(duration, "seconds", 0) or 0)
+                auto_relock_on = _proto_attr(nest_settings, "autoRelockOn", "auto_relock_on")
+                if auto_relock_on is not None:
+                    device["auto_relock_on"] = bool(auto_relock_on)
 
             enhanced = trait_cache.get(device_id, {}).get("nest.trait.security.EnhancedBoltLockSettingsTrait")
             if enhanced:
-                if enhanced.HasField("autoRelockDuration"):
-                    device["auto_relock_duration"] = int(enhanced.autoRelockDuration.seconds)
-                if hasattr(enhanced, "autoRelockOn"):
-                    device["auto_relock_on"] = bool(enhanced.autoRelockOn)
+                duration = _proto_attr(enhanced, "autoRelockDuration", "auto_relock_duration")
+                if _proto_has_field(enhanced, "autoRelockDuration", "auto_relock_duration") and duration is not None:
+                    device["auto_relock_duration"] = int(getattr(duration, "seconds", 0) or 0)
+                auto_relock_on = _proto_attr(enhanced, "autoRelockOn", "auto_relock_on")
+                if auto_relock_on is not None:
+                    device["auto_relock_on"] = bool(auto_relock_on)
 
     @classmethod
     async def create(
