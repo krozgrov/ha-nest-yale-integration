@@ -31,15 +31,15 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Pre-release testing: `2026.02.16b1` validated naming-path hardening with live Door/Where/Label updates from the Nest app.
+Latest stable release: `2026.03.28`.
 
-## Release 2026.02.16 - Door/Where/Label mapping stabilization (latest stable)
+## Release 2026.03.28 - Area ownership and reliability fixes (latest stable)
 
-- Door selection in the Nest app now drives the HA lock entry name
-- Where selection in the Nest app remains available as `where_label` metadata for reference
-- Label selection remains exposed as an entity attribute (`label_name`)
-- Door/Where/Label changes now auto-update in Home Assistant when edited in the Nest app
-- Fixed stale door labels on located-only stream updates by resolving fixture annotation IDs first
+- Home Assistant now owns final area placement for Nest Yale devices.
+- The integration no longer creates Home Assistant areas or reassigns devices from Nest `where_label`.
+- Shared protobuf imports now avoid duplicate descriptor collisions when another custom integration ships the same Nest/Weave schemas.
+- Firmware metadata now normalizes additional field aliases so the Home Assistant Device Info card shows the correct firmware version.
+- Companion entities now populate faster at startup and avoid lingering temporary unavailable states.
 
 ## Current Area Behavior
 
