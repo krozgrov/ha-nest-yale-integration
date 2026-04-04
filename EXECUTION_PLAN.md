@@ -6,6 +6,47 @@ Purpose
 
 ## Active Workstream
 
+### Native Nest Coexistence RC
+Goal
+- Remove the protobuf descriptor collision between this integration and Home Assistant's native Nest integration.
+- Cut a HACS-testable prerelease before the next stable tag.
+
+Execution Outline
+1. Fix the runtime protobuf source of truth
+- Import `google.rpc.status_pb2` from the installed runtime in gateway v1 gencode.
+- Keep shared protobuf reuse limited to overlapping `nest.*` / `weave.*` modules.
+
+2. Restore prerelease tooling
+- Restore `scripts/cut_prerelease.sh` with branch-aware defaults and retention cleanup.
+- Restore `release-notes/TEMPLATE.md` and add release notes for `2026.04.04b1`.
+
+3. Prepare release metadata
+- Bump `custom_components/nest_yale_lock/manifest.json` to `2026.04.04b1`.
+- Update `README.md` to document that `2026.03.28` is still latest stable while `2026.04.04b1` is the native-Nest coexistence prerelease.
+- Record the protobuf decision in `DECISION_LOG.md`.
+
+4. Validate before publish
+- Add a regression test that proves gateway v1 imports the runtime `google.rpc.status_pb2`.
+- Run targeted unit coverage and `compileall`.
+- Publish the RC from `rc/2026.04.04b1-native-nest` only after local validation passes.
+
+Risks
+- The runtime environment must provide the official `google.rpc.status_pb2` module.
+- Release automation depends on `gh` authentication and GitHub release permissions.
+
+Validation Expectations
+- Local validation:
+  - `python3 -m unittest tests.test_protobuf_compat`
+  - `python3 -m compileall custom_components/nest_yale_lock tests`
+- Manual HA validation after install from HACS prerelease:
+  - native `nest` imports cleanly
+  - `nest_yale_lock` imports cleanly
+  - no `duplicate file name google/rpc/status.proto`
+  - lock entity still loads and functions
+
+Status
+- In progress.
+
 ### Name Sync and Passcode Reliability
 Goal
 - Ensure lock naming in Home Assistant matches current Nest app labels.
@@ -171,3 +212,4 @@ Status updates
 - 2026-02-15: Re-aligned naming with reference behavior by reverting canonical name to `LabelSettingsTrait` (`name`) plus location prefix (`where_label`) for display; `door_label` remains attribute context and no longer drives name composition.
 - 2026-02-15: Finalized requested mapping: Door value drives HA lock name, Where value drives HA area assignment, and Label remains attribute-only context.
 - 2026-02-16: Added persistent located-annotation caches and fixture-ID-first door label resolution so located-only deltas can update `door_label` even when embedded fixture text is stale.
+- 2026-04-04: Started the `2026.04.04b1` RC workstream to fix native Nest coexistence by importing runtime `google.rpc.status_pb2`, restoring prerelease tooling, and publishing from `rc/2026.04.04b1-native-nest`.

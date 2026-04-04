@@ -33,11 +33,14 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 Latest stable release: `2026.03.28`.
 
+Pre-release testing: `2026.04.04b1` fixes the native Home Assistant Nest import collision caused by vendored `google.rpc` descriptors so HACS beta testers can validate coexistence before the next stable cut.
+
 ## Release 2026.03.28 - Area ownership and reliability fixes (latest stable)
 
 - Home Assistant now owns final area placement for Nest Yale devices.
 - The integration no longer creates Home Assistant areas or reassigns devices from Nest `where_label`.
 - Shared protobuf imports now avoid duplicate descriptor collisions when another custom integration ships the same Nest/Weave schemas.
+- Native Nest coexistence with `google.rpc` descriptors is fixed in prerelease `2026.04.04b1`; `2026.03.28` does not include that hotfix.
 - Firmware metadata now normalizes additional field aliases so the Home Assistant Device Info card shows the correct firmware version.
 - Companion entities now populate faster at startup and avoid lingering temporary unavailable states.
 
@@ -120,6 +123,19 @@ Notes:
 
 - This integration currently requires the guest user id instead of creating guest identities automatically.
 - Passcode data is never exposed as entity attributes; only non-sensitive capability/slot metadata is stored.
+
+## Maintainer Prerelease Workflow
+
+1. Copy the release-notes template:
+   ```bash
+   cp release-notes/TEMPLATE.md release-notes/<tag>.md
+   ```
+2. Make the first non-empty line in `release-notes/<tag>.md` a plain-text HACS summary.
+3. Update `custom_components/nest_yale_lock/manifest.json` so `version` matches `<tag>`.
+4. Cut the GitHub prerelease from the release-candidate branch:
+   ```bash
+   scripts/cut_prerelease.sh <tag> release-notes/<tag>.md <target_branch>
+   ```
 
 ## License
 

@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from google.protobuf import any_pb2 as google_dot_protobuf_dot_any__pb2
 from google.protobuf import field_mask_pb2 as google_dot_protobuf_dot_field__mask__pb2
 from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2
-from ...zzzgoogle.rpc import status_pb2 as google_dot_rpc_dot_status__pb2
+from google.rpc import status_pb2 as google_dot_rpc_dot_status__pb2
 from ...nest import messages_pb2 as nest_dot_messages__pb2
 from ... import wdl_event_importance_pb2 as wdl__event__importance__pb2
 

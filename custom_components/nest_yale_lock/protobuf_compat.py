@@ -6,6 +6,10 @@ Those generated files all register descriptors into protobuf's global default
 descriptor pool, so importing two copies under different module paths raises
 duplicate symbol errors. Prefer reusing an already-installed shared protobuf
 tree when available, and fall back to the local generated modules otherwise.
+
+Do not route ``google.*`` proto imports through this compatibility layer.
+Well-known Google descriptors must come from the runtime-installed modules so
+Home Assistant integrations can share the same descriptor pool safely.
 """
 
 from __future__ import annotations

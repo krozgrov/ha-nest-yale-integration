@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from importlib import import_module
 from pathlib import Path
 import sys
@@ -188,6 +189,29 @@ def _install_runtime_stubs() -> None:
     jwt_pkg.decode = lambda *args, **kwargs: {}
 
 
+def _install_google_rpc_status_alias() -> types.ModuleType:
+    google_pkg = import_module("google")
+    import_module("google.protobuf")
+
+    rpc_pkg = types.ModuleType("google.rpc")
+    rpc_pkg.__path__ = []
+    sys.modules["google.rpc"] = rpc_pkg
+    google_pkg.rpc = rpc_pkg
+
+    module_name = "google.rpc.status_pb2"
+    module_path = (
+        PACKAGE_ROOT / "nest_yale_lock" / "proto" / "zzzgoogle" / "rpc" / "status_pb2.py"
+    )
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise AssertionError("Unable to build test spec for google.rpc.status_pb2")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    rpc_pkg.status_pb2 = module
+    return module
+
+
 class TestProtobufCompat(unittest.TestCase):
     def setUp(self) -> None:
         _clear_modules(
@@ -197,6 +221,7 @@ class TestProtobufCompat(unittest.TestCase):
             "custom_components.nest_yale_lock.config_flow",
             "custom_components.nest_yale_lock.proto",
             "custom_components.nest_legacy",
+            "google.rpc",
             "homeassistant",
             "aiohttp",
             "jwt",
@@ -222,6 +247,7 @@ class TestProtobufCompat(unittest.TestCase):
         )
 
     def test_falls_back_to_local_modules_without_shared_install(self) -> None:
+        _install_google_rpc_status_alias()
         compat = import_module("custom_components.nest_yale_lock.protobuf_compat")
 
         weave_security_pb2 = compat.load_weave_trait_security_pb2()
@@ -269,6 +295,23 @@ class TestProtobufCompat(unittest.TestCase):
         )
         self.assertNotIn(
             "custom_components.nest_yale_lock.proto.weave.trait.security_pb2",
+            sys.modules,
+        )
+
+    def test_local_gateway_import_uses_runtime_google_rpc_status(self) -> None:
+        runtime_status_pb2 = _install_google_rpc_status_alias()
+
+        gateway_v1 = import_module(
+            "custom_components.nest_yale_lock.proto.nestlabs.gateway.v1_pb2"
+        )
+
+        self.assertIsNotNone(gateway_v1)
+        self.assertIs(
+            runtime_status_pb2,
+            gateway_v1.google_dot_rpc_dot_status__pb2,
+        )
+        self.assertNotIn(
+            "custom_components.nest_yale_lock.proto.zzzgoogle.rpc.status_pb2",
             sys.modules,
         )
 

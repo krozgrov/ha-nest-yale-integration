@@ -6,6 +6,25 @@ Purpose
 
 ## Structured Decisions
 
+### 2026-04-04: Use runtime google.rpc.status_pb2 for gateway v1 protobufs
+Why
+- Home Assistant's native Nest integration imports the official `google.rpc.status_pb2` module.
+- This integration's vendored `zzzgoogle.rpc.status_pb2` copy registers the same `google/rpc/status.proto` descriptor into protobuf's default pool, which causes `duplicate file name google/rpc/status.proto` when both integrations load.
+
+Decision
+- Keep shared-module reuse limited to overlapping `nest.*` and `weave.*` protobuf trees.
+- Import `google.rpc.status_pb2` from the runtime-installed package in `nestlabs.gateway.v1_pb2` instead of the vendored `zzzgoogle` path.
+- Treat vendored `zzzgoogle` modules as non-authoritative for coexistence with Home Assistant core integrations.
+
+Impact
+- Non-breaking runtime compatibility fix.
+- Native Home Assistant Nest and this custom integration can now share one `google/rpc/status.proto` descriptor pool.
+- No service schema, coordinator behavior, or lock command behavior changes are required for this fix.
+
+Validation
+- `python3 -m unittest tests.test_protobuf_compat`
+- `python3 -m compileall custom_components/nest_yale_lock tests`
+
 ### 2026-02-16: Resolve door names from fixture IDs on located-only stream updates
 Why
 - Door changes in the Nest app were not propagating reliably when observe updates only carried `DeviceLocatedSettingsTrait`.
@@ -307,3 +326,4 @@ Validation
 - 2026-02-14: Preserve literal trait-provided `fixture_label` as primary `door_label`, and only use annotation-id lookup as fallback (with fixture-map lookup last) to avoid stale/custom mapping precedence over current app values.
 - 2026-02-14: Treat partial varints in observe stream framing as normal chunk-boundary behavior and stop logging them per-chunk at DEBUG to reduce noise; keep only true varint errors.
 - 2026-02-15: Allow post-pass annotation-ID resolution to overwrite stale early `where_label`/`door_label` values when annotation catalogs arrive later in the same observe batch, preventing lock labels from sticking to another device's earlier location text.
+- 2026-04-04: Route gateway v1 status imports to runtime `google.rpc.status_pb2` so native Home Assistant Nest and this integration can share one `google/rpc/status.proto` descriptor pool.
