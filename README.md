@@ -23,7 +23,6 @@ A lot of effort is going into this integration. So if you can afford it and want
 - Serial number and firmware shown in the Device Info card
 - Options: stale state timeout + masked debug attributes
 - Translated entity names (no hardcoded English labels)
-- Guest passcode services (`set_guest_passcode`, `delete_guest_passcode`)
 
 ## Status
 
@@ -31,16 +30,20 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Latest stable release: `2026.03.28`.
+Latest stable release: `2026.04.06`.
 
-Pre-release testing: `2026.04.04b1` fixes the native Home Assistant Nest import collision caused by vendored `google.rpc` descriptors so HACS beta testers can validate coexistence before the next stable cut.
+## Release 2026.04.06 - Native Nest coexistence hotfix (latest stable)
 
-## Release 2026.03.28 - Area ownership and reliability fixes (latest stable)
+- Fixes the native Home Assistant Nest import collision caused by vendored `google.rpc` descriptors.
+- Gateway v1 protobufs now use the runtime-installed `google.rpc.status_pb2` module so Home Assistant core and this integration share a single `google/rpc/status.proto` descriptor pool.
+- Shared protobuf reuse remains limited to overlapping `nest.*` / `weave.*` modules.
+- Removes unsupported guest passcode feature claims from this README until that workflow is validated end-to-end.
+
+## Release 2026.03.28 - Area ownership and reliability fixes
 
 - Home Assistant now owns final area placement for Nest Yale devices.
 - The integration no longer creates Home Assistant areas or reassigns devices from Nest `where_label`.
 - Shared protobuf imports now avoid duplicate descriptor collisions when another custom integration ships the same Nest/Weave schemas.
-- Native Nest coexistence with `google.rpc` descriptors is fixed in prerelease `2026.04.04b1`; `2026.03.28` does not include that hotfix.
 - Firmware metadata now normalizes additional field aliases so the Home Assistant Device Info card shows the correct firmware version.
 - Companion entities now populate faster at startup and avoid lingering temporary unavailable states.
 
@@ -104,25 +107,6 @@ After onboarding:
 - `lock.unlock`
 service calls.
  - Verify entities: Battery sensor, Last Action sensor, Tamper binary sensor, Auto-Lock switch, Auto-Lock Duration select.
-
-### Guest Passcode Services
-
-Guest passcode management is available via Home Assistant services:
-
-- `nest_yale_lock.set_guest_passcode`
-- `nest_yale_lock.delete_guest_passcode`
-
-Inputs:
-
-- `guest_user_id` (required): Nest guest/user resource id (for example `USER_123...`)
-- `passcode` (required for set): numeric code; length is validated against lock capabilities when available
-- `device_id` (optional): required when multiple locks are present
-- `entry_id` (optional): target a specific config entry
-
-Notes:
-
-- This integration currently requires the guest user id instead of creating guest identities automatically.
-- Passcode data is never exposed as entity attributes; only non-sensitive capability/slot metadata is stored.
 
 ## Maintainer Prerelease Workflow
 
