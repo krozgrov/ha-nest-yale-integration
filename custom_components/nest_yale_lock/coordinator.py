@@ -4,6 +4,7 @@ import asyncio
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from .action import new_lock_action_events
 from .const import DOMAIN, UPDATE_INTERVAL_SECONDS, STALE_STATE_MAX_SECONDS
 
 _LOGGER = logging.getLogger(__name__)
@@ -256,6 +257,11 @@ class NestCoordinator(DataUpdateCoordinator):
                     device_traits[trait_name] = trait_info["data"]
         return device_traits
 
+    def _fire_lock_action_events(self, update: dict, previous_data: dict) -> None:
+        """Fire once for a newly timestamped, completed action on each lock."""
+        for event_data in new_lock_action_events(update, previous_data):
+            self.hass.bus.async_fire(f"{DOMAIN}_action", event_data)
+
     async def _async_update_data(self):
         """Fetch data from API client (fallback only when observe stream is unhealthy)."""
         # If observer claims healthy but we still have no data, force a fallback once
@@ -424,7 +430,7 @@ class NestCoordinator(DataUpdateCoordinator):
                                 device["bolt_moving"] = False
                             if device.get("bolt_moving"):
                                 prior = self.data.get(device_id) or {}
-                                for key in ("last_action", "last_action_method", "last_action_timestamp"):
+                                for key in ("last_action", "last_action_method", "last_action_timestamp", "last_action_user_id"):
                                     if key not in device:
                                         continue
                                     if key in prior:
@@ -450,11 +456,14 @@ class NestCoordinator(DataUpdateCoordinator):
                         except Exception:
                             pass
 
-                        self.api_client.current_state["user_id"] = update.get("user_id")  # Persist user_id
+                        if update.get("user_id"):
+                            self.api_client.current_state["user_id"] = update["user_id"]
                         self.api_client.current_state["all_traits"] = all_traits  # Persist trait data
                         self._empty_refresh_attempts = 0
                         self._last_good_update = asyncio.get_event_loop().time()
+                        previous_data = self.data or {}
                         self.async_set_updated_data(self._merge_device_update(normalized_update))
+                        self._fire_lock_action_events(normalized_update, previous_data)
                         self._initial_data_event.set()
                         if self._has_required_lock_fields(self.data):
                             self._startup_backfill_complete = True

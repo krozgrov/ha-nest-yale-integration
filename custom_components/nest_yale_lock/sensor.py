@@ -11,6 +11,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from .action import last_action_attributes
 from .const import DOMAIN
 from .entity import NestYaleEntity, _has_defined_value
 
@@ -143,6 +144,11 @@ class NestYaleLastActionSensor(NestYaleEntity, SensorEntity):
     def native_value(self) -> str | None:
         # Populated by protobuf_handler (BoltLockTrait.boltLockActor.method mapping)
         return self._device_data.get("last_action")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Expose the action actor and PIN slot owners without PIN digits."""
+        return last_action_attributes(self._device_data)
 
     def _handle_coordinator_update(self) -> None:
         self._apply_coordinator_update()
