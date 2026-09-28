@@ -61,6 +61,7 @@ class TestActionExposure(unittest.TestCase):
             "device_id": "DEVICE_1",
             "method": "Keypad",
             "user_id": "USER_CLEANER",
+            "agent_id": None,
             "timestamp": "2026-09-25T10:01:00Z",
         }], events)
         self.assertEqual([], ACTION.new_lock_action_events(update, {"DEVICE_1": update["DEVICE_1"]}))

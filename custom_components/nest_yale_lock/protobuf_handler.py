@@ -548,6 +548,9 @@ class NestProtobufHandler:
         actor = _proto_attr(bolt_lock, "boltLockActor", "bolt_lock_actor")
         originator = _proto_attr(actor, "originator") if actor is not None else None
         originator_id = _proto_attr(originator, "resourceId", "resource_id") if originator is not None else None
+        # Remote/app actions may leave originator empty and identify the user via agent instead.
+        agent = _proto_attr(actor, "agent") if actor is not None else None
+        agent_id = _proto_attr(agent, "resourceId", "resource_id") if agent is not None else None
 
         # Capture last action (who/what caused the change).
         try:
@@ -563,7 +566,12 @@ class NestProtobufHandler:
             }
             device["last_action"] = method_map.get(method, "Other")
             device["last_action_method"] = int(method)
+            if not originator_id and isinstance(agent_id, str) and agent_id.startswith("USER_"):
+                originator_id = agent_id
             device["last_action_user_id"] = originator_id or None
+            device["last_action_agent_id"] = agent_id or None
+            if method_map.get(method) == "Remote" and not originator_id:
+                _LOGGER.debug("Remote action on %s has no user originator; actor=%s", obj_id, actor)
         except Exception:
             pass
         try:

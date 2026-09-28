@@ -153,6 +153,23 @@ class TestProtobufHandler(unittest.TestCase):
         self.handler._apply_bolt_lock_trait("DEVICE_2", other_lock, locks_data)
         self.assertIsNone(locks_data["yale"]["DEVICE_2"]["last_action_user_id"])
 
+        remote = PROTOBUF_HANDLER.weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_EXPLICIT
+        other_lock.bolt_lock_actor = types.SimpleNamespace(
+            method=remote,
+            originator=None,
+            agent=types.SimpleNamespace(resource_id="USER_789"),
+        )
+        self.handler._apply_bolt_lock_trait("DEVICE_2", other_lock, locks_data)
+        device = locks_data["yale"]["DEVICE_2"]
+        self.assertEqual("Remote", device["last_action"])
+        self.assertEqual("USER_789", device["last_action_user_id"])
+        self.assertEqual("USER_789", device["last_action_agent_id"])
+
+        other_lock.bolt_lock_actor.agent = types.SimpleNamespace(resource_id="DEVICE_PHONE")
+        self.handler._apply_bolt_lock_trait("DEVICE_2", other_lock, locks_data)
+        self.assertIsNone(locks_data["yale"]["DEVICE_2"]["last_action_user_id"])
+        self.assertEqual("DEVICE_PHONE", locks_data["yale"]["DEVICE_2"]["last_action_agent_id"])
+
     def test_apply_bolt_lock_settings_trait_supports_snake_case_fields(self) -> None:
         class _Duration:
             seconds = 60
