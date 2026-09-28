@@ -52,3 +52,4 @@ htmlcov/
 
 # Local research / comparisons (do not commit)
 _research/
+.claude/settings.local.json
