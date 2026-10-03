@@ -19,8 +19,7 @@
     "custom_components.nest_yale_lock.protobuf_manager"
   ],
   "requirements": [
-    "protobuf==6.32.0",
-    "PyJWT>=2.8.0,<3.0"
+    "protobuf>=6.32.0,<8.0"
   ],
   "version": "2026.09.28"
 }
