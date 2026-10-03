@@ -19,6 +19,7 @@ def last_action_attributes(device: dict) -> dict:
     }
     return {
         "user_id": device.get("last_action_user_id"),
+        "agent_id": device.get("last_action_agent_id"),
         "code_users": code_users,
     }
 
@@ -40,6 +41,7 @@ def new_lock_action_events(update: dict, previous_data: dict) -> list[dict]:
                 "device_id": device_id,
                 "method": method,
                 "user_id": device.get("last_action_user_id"),
+                "agent_id": device.get("last_action_agent_id"),
                 "timestamp": timestamp,
             })
     return events

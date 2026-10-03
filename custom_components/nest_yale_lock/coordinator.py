@@ -430,7 +430,7 @@ class NestCoordinator(DataUpdateCoordinator):
                                 device["bolt_moving"] = False
                             if device.get("bolt_moving"):
                                 prior = self.data.get(device_id) or {}
-                                for key in ("last_action", "last_action_method", "last_action_timestamp", "last_action_user_id"):
+                                for key in ("last_action", "last_action_method", "last_action_timestamp", "last_action_user_id", "last_action_agent_id"):
                                     if key not in device:
                                         continue
                                     if key in prior:
