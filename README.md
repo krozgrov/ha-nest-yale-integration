@@ -30,13 +30,13 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Latest stable release: `2026.04.06`.
+Latest stable release: `2026.09.28`.
 
-Beta release: `2026.09.27b1` adds the acting user ID to each lock's Last Action sensor and a `nest_yale_lock_action` event for newly timestamped completed actions. In HACS, enable pre-releases for this repository and select the beta version to test it. Restart Home Assistant after downloading.
+Release `2026.09.28` adds the acting user ID to each lock's Last Action sensor and a `nest_yale_lock_action` event for newly timestamped completed actions. Restart Home Assistant after updating.
 
 The Last Action sensor's `user_id` attribute identifies the actor. Its `code_users` attribute maps PIN slot numbers to user IDs without exposing passcode digits. The `agent_id` attribute reports the raw acting agent from Nest; for app or remote actions where Nest omits the originator, `user_id` falls back to the agent when it is a user. The event includes `device_id`, `method`, `user_id`, `agent_id`, and `timestamp`. The first observed action after startup establishes the event baseline; subsequent newly timestamped actions fire an event, even if the same user unlocks twice.
 
-## Release 2026.04.06 - Native Nest coexistence hotfix (latest stable)
+## Release 2026.04.06 - Native Nest coexistence hotfix
 
 - Fixes the native Home Assistant Nest import collision caused by vendored `google.rpc` descriptors.
 - Gateway v1 protobufs now use the runtime-installed `google.rpc.status_pb2` module so Home Assistant core and this integration share a single `google/rpc/status.proto` descriptor pool.
