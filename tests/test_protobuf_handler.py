@@ -124,7 +124,7 @@ class TestProtobufHandler(unittest.TestCase):
             def HasField(self, name):
                 return name == "locked_state_last_changed_at"
 
-        locks_data = {"yale": {}, "user_id": None}
+        locks_data = {"yale": {}, "user_id": "USER_ACCOUNT"}
 
         self.handler._apply_bolt_lock_trait("DEVICE_1", _BoltLock(), locks_data)
 
@@ -132,8 +132,43 @@ class TestProtobufHandler(unittest.TestCase):
         self.assertTrue(device["bolt_locked"])
         self.assertFalse(device["bolt_moving"])
         self.assertEqual("Physical", device["last_action"])
+        self.assertEqual("USER_123", device["last_action_user_id"])
         self.assertEqual("2026-03-28T13:00:00Z", device["last_action_timestamp"])
-        self.assertEqual("USER_123", locks_data["user_id"])
+        self.assertEqual("USER_ACCOUNT", locks_data["user_id"])
+
+        other_lock = types.SimpleNamespace(
+            locked_state=_BoltLock.locked_state,
+            actuator_state=_BoltLock.actuator_state,
+            bolt_lock_actor=types.SimpleNamespace(
+                method=_Actor.method,
+                originator=types.SimpleNamespace(resource_id="USER_456"),
+            ),
+        )
+        self.handler._apply_bolt_lock_trait("DEVICE_2", other_lock, locks_data)
+        self.assertEqual("USER_456", locks_data["yale"]["DEVICE_2"]["last_action_user_id"])
+        self.assertEqual("USER_123", locks_data["yale"]["DEVICE_1"]["last_action_user_id"])
+        self.assertEqual("USER_ACCOUNT", locks_data["user_id"])
+
+        other_lock.bolt_lock_actor.originator = None
+        self.handler._apply_bolt_lock_trait("DEVICE_2", other_lock, locks_data)
+        self.assertIsNone(locks_data["yale"]["DEVICE_2"]["last_action_user_id"])
+
+        remote = PROTOBUF_HANDLER.weave_security_pb2.BoltLockTrait.BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_EXPLICIT
+        other_lock.bolt_lock_actor = types.SimpleNamespace(
+            method=remote,
+            originator=None,
+            agent=types.SimpleNamespace(resource_id="USER_789"),
+        )
+        self.handler._apply_bolt_lock_trait("DEVICE_2", other_lock, locks_data)
+        device = locks_data["yale"]["DEVICE_2"]
+        self.assertEqual("Remote", device["last_action"])
+        self.assertEqual("USER_789", device["last_action_user_id"])
+        self.assertEqual("USER_789", device["last_action_agent_id"])
+
+        other_lock.bolt_lock_actor.agent = types.SimpleNamespace(resource_id="DEVICE_PHONE")
+        self.handler._apply_bolt_lock_trait("DEVICE_2", other_lock, locks_data)
+        self.assertIsNone(locks_data["yale"]["DEVICE_2"]["last_action_user_id"])
+        self.assertEqual("DEVICE_PHONE", locks_data["yale"]["DEVICE_2"]["last_action_agent_id"])
 
     def test_apply_bolt_lock_settings_trait_supports_snake_case_fields(self) -> None:
         class _Duration:

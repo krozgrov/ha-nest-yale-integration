@@ -32,6 +32,10 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 Latest stable release: `2026.04.06`.
 
+Beta release: `2026.09.27b1` adds the acting user ID to each lock's Last Action sensor and a `nest_yale_lock_action` event for newly timestamped completed actions. In HACS, enable pre-releases for this repository and select the beta version to test it. Restart Home Assistant after downloading.
+
+The Last Action sensor's `user_id` attribute identifies the actor. Its `code_users` attribute maps PIN slot numbers to user IDs without exposing passcode digits. The `agent_id` attribute reports the raw acting agent from Nest; for app or remote actions where Nest omits the originator, `user_id` falls back to the agent when it is a user. The event includes `device_id`, `method`, `user_id`, `agent_id`, and `timestamp`. The first observed action after startup establishes the event baseline; subsequent newly timestamped actions fire an event, even if the same user unlocks twice.
+
 ## Release 2026.04.06 - Native Nest coexistence hotfix (latest stable)
 
 - Fixes the native Home Assistant Nest import collision caused by vendored `google.rpc` descriptors.
@@ -109,6 +113,14 @@ service calls.
  - Verify entities: Battery sensor, Last Action sensor, Tamper binary sensor, Auto-Lock switch, Auto-Lock Duration select.
 
 ## Maintainer Prerelease Workflow
+
+For local development, create a virtual environment and install the test dependencies:
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m unittest discover -s tests -v
+```
 
 1. Copy the release-notes template:
    ```bash

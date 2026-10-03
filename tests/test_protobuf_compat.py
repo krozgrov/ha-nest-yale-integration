@@ -12,6 +12,11 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = REPO_ROOT / "custom_components"
 
+try:
+    _STATUS_MODULE = import_module("google.rpc.status_pb2")
+except ModuleNotFoundError:
+    _STATUS_MODULE = None
+
 
 def _clear_modules(*prefixes: str) -> None:
     for module_name in list(sys.modules):
@@ -199,6 +204,12 @@ def _install_google_rpc_status_alias() -> types.ModuleType:
     google_pkg.rpc = rpc_pkg
 
     module_name = "google.rpc.status_pb2"
+    global _STATUS_MODULE
+    if _STATUS_MODULE is not None:
+        sys.modules[module_name] = _STATUS_MODULE
+        rpc_pkg.status_pb2 = _STATUS_MODULE
+        return _STATUS_MODULE
+
     module_path = (
         PACKAGE_ROOT / "nest_yale_lock" / "proto" / "zzzgoogle" / "rpc" / "status_pb2.py"
     )
@@ -209,6 +220,7 @@ def _install_google_rpc_status_alias() -> types.ModuleType:
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     rpc_pkg.status_pb2 = module
+    _STATUS_MODULE = module
     return module
 
 
