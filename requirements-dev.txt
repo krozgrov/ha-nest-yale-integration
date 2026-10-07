@@ -1,2 +1,2 @@
 -r requirements.txt
-googleapis-common-protos==1.74.0
+googleapis-common-protos==1.75.5
