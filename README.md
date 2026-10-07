@@ -30,7 +30,11 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Latest stable release: `2026.09.28`.
+Latest stable release: `2026.10.07`.
+
+Release `2026.10.07` fixes state refresh failures on Home Assistant 2026.10 by replacing removed protobuf field descriptor checks. Restart Home Assistant after updating.
+
+## Release 2026.09.28 - Lock action user IDs and automation events
 
 Release `2026.09.28` adds the acting user ID to each lock's Last Action sensor and a `nest_yale_lock_action` event for newly timestamped completed actions. Restart Home Assistant after updating.
 
