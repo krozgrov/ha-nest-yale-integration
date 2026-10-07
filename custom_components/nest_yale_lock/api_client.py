@@ -305,7 +305,7 @@ class NestAPIClient:
 
     @staticmethod
     def _is_map_field(field) -> bool:
-        if field.label != field.LABEL_REPEATED or field.type != field.TYPE_MESSAGE:
+        if not field.is_repeated or field.type != field.TYPE_MESSAGE:
             return False
         message_type = getattr(field, "message_type", None)
         if message_type is None:
@@ -325,7 +325,7 @@ class NestAPIClient:
         merged = existing.__class__()
         merged.CopyFrom(existing)
         for field, value in incoming.ListFields():
-            if field.label == field.LABEL_REPEATED:
+            if field.is_repeated:
                 target = getattr(merged, field.name)
                 target.clear()
                 if self._is_map_field(field):
