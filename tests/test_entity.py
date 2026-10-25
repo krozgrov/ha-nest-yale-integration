@@ -99,6 +99,7 @@ class FakeCoordinator:
         self.api_client = FakeApiClient(metadata)
         self.data = data or {}
         self.debug_attributes_enabled = False
+        self.entry_id = "entry-1"
         self.hass = None
         self._stale_max_seconds = 900
 
@@ -110,10 +111,17 @@ class FakeDeviceRegistry:
     def __init__(self, device):
         self._device = device
         self.updated_calls: list[tuple[str, dict]] = []
+        self.lookup_calls: list[tuple[tuple[str, str], str]] = []
 
-    def async_get_device(self, identifiers):
-        del identifiers
-        return self._device
+    def async_get_device_by_identifier(self, identifier, config_entry_id):
+        self.lookup_calls.append((identifier, config_entry_id))
+        if (
+            self._device is not None
+            and identifier in self._device.identifiers
+            and config_entry_id == getattr(self._device, "config_entry_id", "entry-1")
+        ):
+            return self._device
+        return None
 
     def async_update_device(self, device_id, **kwargs):
         self.updated_calls.append((device_id, kwargs))
@@ -213,6 +221,79 @@ class TestNestYaleEntity(unittest.TestCase):
         self.assertEqual("manual-area", device.area_id)
         self.assertEqual("Side Door", entity._device_name)
         self.assertEqual("Garage", entity._where_label)
+        self.assertEqual([((DOMAIN, "DEVICE_1"), "entry-1")], registry.lookup_calls)
+
+    def test_identity_update_falls_back_to_serial_within_config_entry(self):
+        _, entity = self._make_entity()
+        device = SimpleNamespace(
+            id="registry-device",
+            name="Front Door",
+            name_by_user=None,
+            sw_version="1.0",
+            manufacturer="Nest",
+            model="Nest x Yale Lock",
+            serial_number="SERIAL_1",
+            identifiers={(DOMAIN, "SERIAL_1")},
+        )
+        registry = self._attach_hass(entity, device)
+        entity._device_data["traits"] = {
+            "DeviceIdentityTrait": {
+                "serial_number": "SERIAL_1",
+                "firmware_version": "2.0",
+            }
+        }
+
+        entity._update_device_info_from_traits()
+
+        self.assertEqual(
+            [((DOMAIN, "DEVICE_1"), "entry-1"), ((DOMAIN, "SERIAL_1"), "entry-1")],
+            registry.lookup_calls,
+        )
+        self.assertEqual("2.0", device.sw_version)
+        self.assertTrue(entity._device_info_updated)
+
+    def test_identity_update_does_not_modify_another_config_entry(self):
+        _, entity = self._make_entity()
+        device = SimpleNamespace(
+            identifiers={(DOMAIN, "DEVICE_1"), (DOMAIN, "SERIAL_1")},
+            config_entry_id="other-entry",
+        )
+        registry = self._attach_hass(entity, device)
+        entity._device_data["traits"] = {
+            "DeviceIdentityTrait": {
+                "serial_number": "SERIAL_1",
+                "firmware_version": "2.0",
+            }
+        }
+
+        entity._update_device_info_from_traits()
+
+        self.assertEqual([], registry.updated_calls)
+        self.assertEqual(2, len(registry.lookup_calls))
+        self.assertTrue(entity._device_registry_update_pending)
+        self.assertFalse(entity._device_info_updated)
+
+    def test_modern_lookup_without_config_entry_does_not_search_globally(self):
+        coordinator, entity = self._make_entity()
+        coordinator.entry_id = None
+        registry = FakeDeviceRegistry(None)
+
+        self.assertIsNone(entity._get_registry_device(registry, "DEVICE_1"))
+        self.assertEqual([], registry.lookup_calls)
+
+    def test_legacy_registry_lookup_remains_supported(self):
+        _, entity = self._make_entity()
+        device = SimpleNamespace(id="legacy-device")
+        calls = []
+
+        def legacy_lookup(*, identifiers):
+            calls.append(identifiers)
+            return device
+
+        registry = SimpleNamespace(async_get_device=legacy_lookup)
+
+        self.assertIs(device, entity._get_registry_device(registry, "DEVICE_1"))
+        self.assertEqual([{(DOMAIN, "DEVICE_1")}], calls)
 
     def test_build_device_registry_updates_only_name_without_area_sync(self):
         _, entity = self._make_entity(door_label="Side Door", where_label="Kitchen")

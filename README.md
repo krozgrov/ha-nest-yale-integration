@@ -32,6 +32,8 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 Latest stable release: `2026.10.07`.
 
+Testing prerelease: `2026.10.25b1` updates device-registry lookups for Home Assistant 2026.8 and later, addressing the `async_get_device` deprecation warning. In HACS, enable **Show beta versions**, select this version under **Redownload**, then restart Home Assistant. Verify that the warning no longer appears and lock names, firmware, and serial numbers still display correctly.
+
 Release `2026.10.07` fixes state refresh failures on Home Assistant 2026.10 by replacing removed protobuf field descriptor checks. Restart Home Assistant after updating.
 
 ## Release 2026.09.28 - Lock action user IDs and automation events
