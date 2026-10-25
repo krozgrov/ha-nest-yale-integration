@@ -191,6 +191,17 @@ class NestYaleEntity(CoordinatorEntity):
             return new_data
         return None
 
+    def _get_registry_device(self, device_registry, identifier):
+        """Look up a device within this integration's config entry."""
+        if hasattr(device_registry, "async_get_device_by_identifier"):
+            if not self._coordinator.entry_id:
+                return None
+            return device_registry.async_get_device_by_identifier(
+                (DOMAIN, identifier), self._coordinator.entry_id
+            )
+        # Home Assistant versions before 2026.8 use globally unique identifiers.
+        return device_registry.async_get_device(identifiers={(DOMAIN, identifier)})
+
     def _update_device_name_from_data(self) -> None:
         base_name = (
             _normalize_device_name(self._device_data.get("door_label"))
@@ -217,7 +228,7 @@ class NestYaleEntity(CoordinatorEntity):
             return
         try:
             device_registry = dr.async_get(self.hass)
-            device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
+            device = self._get_registry_device(device_registry, self._device_id)
             if not device:
                 self._device_registry_update_pending = True
                 return
@@ -412,10 +423,10 @@ class NestYaleEntity(CoordinatorEntity):
                          self._attr_unique_id, self._device_id, new_serial)
             
             # Find device by checking both device_id and serial number
-            device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
+            device = self._get_registry_device(device_registry, self._device_id)
             if not device and new_serial:
                 _LOGGER.debug("Device not found by device_id, trying serial number")
-                device = device_registry.async_get_device(identifiers={(DOMAIN, new_serial)})
+                device = self._get_registry_device(device_registry, new_serial)
             
             if device:
                 _LOGGER.debug("Found device in registry: id=%s, identifiers=%s, sw_version=%s", 
