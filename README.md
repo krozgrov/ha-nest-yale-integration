@@ -30,7 +30,9 @@ Core lock and unlock commands work reliably, and state updates are handled via a
 
 > **Note**: This integration depends on reverse-engineered protobuf messages from the [Homebridge Nest Plugin](https://github.com/chrisjshull/homebridge-nest). While the core functionality is stable, some advanced features may be limited due to incomplete protobuf message mappings.
 
-Latest stable release: `2026.10.25`.
+Latest stable release: `2026.11.16`.
+
+Release `2026.11.16` makes protobuf type URL normalization explicit and limits GitHub Actions token permissions, resolving all four CodeQL alerts. Protobuf decoding behavior is preserved. Restart Home Assistant after updating.
 
 Release `2026.10.25` updates device-registry lookups for Home Assistant 2026.8 and later, addressing the `async_get_device` deprecation warning while retaining compatibility with older supported Home Assistant versions. Restart Home Assistant after updating.
 
