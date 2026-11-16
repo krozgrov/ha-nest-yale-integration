@@ -45,6 +45,53 @@ class TestProtobufHandler(unittest.TestCase):
             self.skipTest("google.protobuf runtime is required")
         self.handler = NestProtobufHandler()
 
+    def test_normalize_any_type_preserves_payload_and_unpacking(self) -> None:
+        trait = PROTOBUF_HANDLER.weave_security_pb2.BoltLockTrait()
+        trait.lockedState = trait.BOLT_LOCKED_STATE_LOCKED
+        message = Any()
+        message.Pack(trait, type_url_prefix="type.nestlabs.com/")
+        original = message.SerializeToString()
+
+        normalized = PROTOBUF_HANDLER._normalize_any_type(message)
+
+        self.assertEqual(
+            "type.googleapis.com/" + trait.DESCRIPTOR.full_name,
+            normalized.type_url,
+        )
+        self.assertEqual(message.value, normalized.value)
+        decoded = type(trait)()
+        self.assertTrue(normalized.Unpack(decoded))
+        self.assertEqual(trait, decoded)
+        self.assertEqual(original, message.SerializeToString())
+
+    def test_normalize_any_type_leaves_other_prefixes_unchanged(self) -> None:
+        for type_url in (
+            "",
+            "type.googleapis.com/weave.trait.security.BoltLockTrait",
+            "https://example.com/type.nestlabs.com/weave.trait.security.BoltLockTrait",
+            "type.nestlabs.com.evil.example/weave.trait.security.BoltLockTrait",
+            "evil.type.nestlabs.com/weave.trait.security.BoltLockTrait",
+        ):
+            with self.subTest(type_url=type_url):
+                message = Any(type_url=type_url, value=b"payload")
+                self.assertIs(message, PROTOBUF_HANDLER._normalize_any_type(message))
+                self.assertEqual(type_url, message.type_url)
+                self.assertEqual(b"payload", message.value)
+
+    def test_normalize_any_type_replaces_only_leading_prefix(self) -> None:
+        message = Any(
+            type_url="type.nestlabs.com/example/type.nestlabs.com/Trait",
+            value=b"payload",
+        )
+
+        normalized = PROTOBUF_HANDLER._normalize_any_type(message)
+
+        self.assertEqual(
+            "type.googleapis.com/example/type.nestlabs.com/Trait",
+            normalized.type_url,
+        )
+        self.assertEqual(b"payload", normalized.value)
+
     def test_decode_device_identity_data_supports_camel_case_fields(self) -> None:
         class _Wrapper:
             def __init__(self, value):

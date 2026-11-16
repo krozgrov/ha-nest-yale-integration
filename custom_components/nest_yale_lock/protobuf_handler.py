@@ -76,10 +76,10 @@ def _normalize_any_type(any_message: Any) -> Any:
     if not isinstance(any_message, Any):
         return any_message
     type_url = any_message.type_url or ""
-    if type_url.startswith("type.nestlabs.com/"):
+    if type_url.startswith(_NEST_TYPE_PREFIX):
         normalized = Any()
         normalized.value = any_message.value
-        normalized.type_url = type_url.replace("type.nestlabs.com/", "type.googleapis.com/", 1)
+        normalized.type_url = _GOOGLE_TYPE_PREFIX + type_url[len(_NEST_TYPE_PREFIX):]
         return normalized
     return any_message
 
